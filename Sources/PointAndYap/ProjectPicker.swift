@@ -9,39 +9,41 @@ enum ProjectPicker {
     static func ask(_ projects: [Project]) async -> Project? {
         let choices = Array(projects.prefix(9))
         return await withCheckedContinuation { continuation in
-            var finished = false
-            func finish(_ project: Project?) {
-                guard !finished else { return }
-                finished = true
-                panel?.orderOut(nil)
-                panel = nil
-                continuation.resume(returning: project)
-            }
-            let view = PickerView(projects: choices, pick: { finish($0) })
-            let host = NSHostingView(rootView: view)
-            let height = CGFloat(choices.count) * 34 + 78
-            host.frame = NSRect(x: 0, y: 0, width: 340, height: height)
-            let picker = PickerPanel(contentRect: host.frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-            picker.level = .statusBar
-            picker.isFloatingPanel = true
-            picker.hasShadow = true
-            picker.backgroundColor = .clear
-            picker.isOpaque = false
-            picker.sharingType = .none
-            picker.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-            picker.appearance = NSAppearance(named: .aqua)
-            picker.contentView = host
-            picker.onKey = { event in
-                if event.keyCode == 53 { finish(nil); return }
-                if let digit = Int(event.charactersIgnoringModifiers ?? ""), digit >= 1, digit <= choices.count { finish(choices[digit - 1]) }
-            }
-            let frame = (NSScreen.main ?? NSScreen.screens[0]).visibleFrame
-            picker.setFrameOrigin(NSPoint(x: frame.midX - 170, y: frame.maxY - height - 60))
-            panel = picker
-            picker.makeKeyAndOrderFront(nil)
-            Task {
-                try? await Task.sleep(nanoseconds: 60_000_000_000)
-                finish(nil)
+            MainActor.assumeIsolated {
+                var finished = false
+                func finish(_ project: Project?) {
+                    guard !finished else { return }
+                    finished = true
+                    panel?.orderOut(nil)
+                    panel = nil
+                    continuation.resume(returning: project)
+                }
+                let view = PickerView(projects: choices, pick: { finish($0) })
+                let host = NSHostingView(rootView: view)
+                let height = CGFloat(choices.count) * 34 + 78
+                host.frame = NSRect(x: 0, y: 0, width: 340, height: height)
+                let picker = PickerPanel(contentRect: host.frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+                picker.level = .statusBar
+                picker.isFloatingPanel = true
+                picker.hasShadow = true
+                picker.backgroundColor = .clear
+                picker.isOpaque = false
+                picker.sharingType = .none
+                picker.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+                picker.appearance = NSAppearance(named: .aqua)
+                picker.contentView = host
+                picker.onKey = { event in
+                    if event.keyCode == 53 { finish(nil); return }
+                    if let digit = Int(event.charactersIgnoringModifiers ?? ""), digit >= 1, digit <= choices.count { finish(choices[digit - 1]) }
+                }
+                let frame = (NSScreen.main ?? NSScreen.screens[0]).visibleFrame
+                picker.setFrameOrigin(NSPoint(x: frame.midX - 170, y: frame.maxY - height - 60))
+                panel = picker
+                picker.makeKeyAndOrderFront(nil)
+                Task {
+                    try? await Task.sleep(nanoseconds: 60_000_000_000)
+                    finish(nil)
+                }
             }
         }
     }
