@@ -109,11 +109,24 @@ final class AppState: ObservableObject {
             _ = await Process.run(dir: dir, onTimeline: { [weak self] in
                 self?.copyPointer(dir)
                 Sounds.play("done")
-                self?.say("Copied. Paste it into your agent")
+                if let route = Router.readRoute(dir) { self?.say("Sent to \(route.project)") }
+                else { self?.say("Copied. Paste it into your agent") }
             })
             phase = .idle
             loadSessions()
+            await pickProject(dir)
         }
+    }
+
+    /// No rule routed the recording and several agent sessions are running: ask which project it is for, and learn the answer.
+    private func pickProject(_ dir: URL) async {
+        guard Router.readRoute(dir) == nil, !Items.items(in: dir, state: nil).items.isEmpty else { return }
+        let live = Projects.liveProjects()
+        guard live.count >= 2, let project = await ProjectPicker.ask(live) else { return }
+        Router.writeRoute(RouteInfo(project: project.name, path: project.path, how: "picked"), to: dir)
+        Projects.learn(from: dir, project: project)
+        say("Sent to \(project.name)")
+        loadSessions()
     }
 
     /// Two lines an agent can act on: what is new, and how to get it.
@@ -166,6 +179,9 @@ final class AppState: ObservableObject {
         Task { try? await Task.sleep(nanoseconds: 2_000_000_000); if toast == s { toast = nil } }
     }
 
+    /// Item status per session folder at the last load, to notice an agent finishing one.
+    private var lastStatus: [String: String] = [:]
+
     func loadSessions() {
         let fm = FileManager.default
         let dirs = ((try? fm.contentsOfDirectory(at: Paths.root, includingPropertiesForKeys: nil)) ?? [])
@@ -190,6 +206,12 @@ final class AppState: ObservableObject {
             rows.append(row)
             if rows.filter({ !$0.noSpeech }).count == 20 { break }
         }
+        for row in rows where row.status == "done" && row.by != "you" {
+            guard let before = lastStatus[row.id], before != "done" else { continue }
+            let name = Router.readRoute(row.dir)?.project ?? "Done"
+            say("\(name): \(row.note ?? row.title)")
+        }
+        lastStatus = Dictionary(rows.map { ($0.id, $0.status) }, uniquingKeysWith: { first, _ in first })
         sessions = rows
     }
 }

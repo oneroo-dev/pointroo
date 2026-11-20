@@ -95,3 +95,22 @@ up. Losing it means installed copies can no longer be updated. To test an update
 downloads, and pointandyap.com's views, visitors, downloads, installer runs and copies in use (from the Worker's
 Analytics Engine dataset `pointandyap_events`; needs `CLOUDFLARE_API_TOKEN`). GitHub keeps traffic for 14 days only, so
 `node scripts/stats.mjs --snapshot` saves it daily to `~/.pointandyap-stats` (a LaunchAgent can run it).
+
+## Routing to projects
+
+Each `PointAndYap --mcp` process runs in its Claude session's project folder. On `initialize` it writes
+`~/Library/Application Support/PointAndYap/live/<pid>.json` (cwd, agent, started, lastSeen), refreshed on tool calls and
+removed when stdin closes; readers skip and delete files of dead pids. `projects.json` in the same folder lists known
+projects (`name`, `path`, `aliases`, `hosts`, `titles`); live session folders are added by folder name. Set
+`POINTANDYAP_SUPPORT` to use another folder (tests do).
+
+`Router.route` (Routing.swift) picks a project: the first 1-3 spoken words match a name or alias, else the points vote by
+URL host(:port), host or window title containing the project name, or a `titles` entry (a tie gives nothing), else the
+only live session. `Process.run` saves the result as `route.json` ({project, path, how}) in the session folder. When
+nothing routes and two or more projects are live, `AppState.stop()` shows a picker; the pick is saved with how `picked`
+and its host:port (or window title) is added to that project in `projects.json`.
+
+`Items.openItems(project:)` hands out items whose path equals or contains/is inside the given path, plus unrouted items.
+MCP `get_open_items` uses the server's cwd (`scope: "all"` turns that off); `wait_for_next` polls every second for one.
+`PointAndYap --hook-stop` is a Claude Code Stop hook: it reads `cwd` from stdin and, if items are open for it, prints a
+block decision (it never takes items). Setup is in the skill file.

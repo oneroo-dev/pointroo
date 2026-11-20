@@ -25,6 +25,26 @@ parent elements) and cropped screenshots (red ring = cursor, yellow box = the el
 Do not ask the user which items to do: the open ones are the ones to do. Ask only when an item is ambiguous, and then
 release it with the question as the note.
 
+## Projects and listen mode
+
+Every item is routed to a project (route.json in its folder: by a spoken name, by what was on screen, or picked by the user).
+`get_open_items` gives you the items for the folder you run in, plus items not routed anywhere; `scope: "all"` shows every
+project's.
+
+Listen mode, so the user never pastes anything: when asked to listen (or "wait for Point"), loop:
+
+1. `wait_for_next` (pointandyap MCP): waits for a new item for this project and returns it like `get_open_items`.
+2. Do it, then `mark_done` with a one-line note.
+3. Call `wait_for_next` again. On "Nothing new yet" just call it again.
+
+Optional Stop hook, so an idle session picks up new items at the end of a turn. Add this to `~/.claude/settings.json`:
+
+```json
+{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"\"/Applications/Point and Yap.app/Contents/MacOS/PointAndYap\" --hook-stop"}]}]}}
+```
+
+It only looks (it never takes items). If items wait for the project, it asks you to call `get_open_items`.
+
 ## Without the MCP (shell)
 
 `/Applications/Point.app/Contents/MacOS/Point --items` prints the open items; after a fix,

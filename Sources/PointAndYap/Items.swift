@@ -13,6 +13,7 @@ struct Item {
     var at: Date?
     var by: String?
     var note: String?
+    var project: String? = nil   // the project folder it was routed to (route.json)
 }
 
 struct ItemState: Codable {
@@ -33,6 +34,7 @@ enum Items {
         for i in out.indices {
             out[i].id = "\(id)#\(out[i].n)"
             out[i].session = id
+            out[i].project = Router.readRoute(dir)?.path
             if let e = state?.items[String(out[i].n)] {
                 // "taken" is the older name of in_progress.
                 let working = e.status == "taken" || e.status == "in_progress"
@@ -109,13 +111,14 @@ enum Items {
     }
 
     /// Open items oldest first; with `take`, they are marked in progress by `agent` before they are returned.
-    static func openItems(limit: Int, take: Bool, agent: String) -> [Item] {
+    /// With `project`, only that project's items (the path is the same or one is inside the other) and the ones not routed anywhere.
+    static func openItems(limit: Int, take: Bool, agent: String, project: String? = nil) -> [Item] {
         locked {
             var out: [Item] = []
             for dir in sessionDirs() where out.count < limit {
                 var st = readState(dir)
                 let (source, items) = Self.items(in: dir, state: st)
-                let free = items.filter { $0.status == "open" }.prefix(limit - out.count)
+                let free = items.filter { $0.status == "open" && belongs($0, to: project) }.prefix(limit - out.count)
                 guard !free.isEmpty else { continue }
                 if take {
                     if st == nil { st = ItemState(source: source) }
@@ -126,6 +129,11 @@ enum Items {
             }
             return out
         }
+    }
+
+    static func belongs(_ item: Item, to project: String?) -> Bool {
+        guard let project, let path = item.project else { return true }
+        return Router.related(path, project)
     }
 
     /// Sets items to done or open. Returns what changed and what was not found.

@@ -24,6 +24,7 @@ enum Process {
         log("\(words.count) words, \(events.points.count) points, \(events.frames.count) frames")
 
         let out = Builder.build(dir: dir, events: events, words: words)
+        if !words.isEmpty { Router.routeSession(dir, events: events, words: words) }
         if let onTimeline { await onTimeline() }
         return out.markdown
     }

@@ -9,6 +9,8 @@ struct Main {
         //   PointAndYap --items            open and in-progress items
         //   PointAndYap --done <id>... [--note "what changed"]
         if args.contains("--items") || args.contains("--done") { QueueCLI.run(args); return }
+        // Claude Code Stop hook: PointAndYap --hook-stop (JSON on stdin)
+        if args.contains("--hook-stop") { HookStop.run(); return }
         // Local MCP server for coding agents: PointAndYap --mcp
         if args.contains("--mcp") { MCPServer.run(); return }
         // Headless: PointAndYap --process <session dir>

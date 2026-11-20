@@ -7,6 +7,8 @@ enum MCPServer {
     static let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev"
     /// The client's name from initialize, recorded on the items it takes and finishes.
     nonisolated(unsafe) static var agent = "agent"
+    /// The project of this session: Claude starts the server in its project folder.
+    static var cwd: String { FileManager.default.currentDirectoryPath }
 
     static func run() {
         setvbuf(stdout, nil, _IOLBF, 0)
@@ -20,6 +22,7 @@ enum MCPServer {
             switch method {
             case "initialize":
                 if let c = params["clientInfo"] as? [String: Any], let n = c["name"] as? String, !n.isEmpty { agent = n }
+                LiveSessions.register(cwd: cwd, agent: agent)
                 let asked = params["protocolVersion"] as? String
                 reply(id, ["protocolVersion": asked ?? protocolVersion,
                            "capabilities": ["tools": [:]],
@@ -30,18 +33,23 @@ enum MCPServer {
             case "tools/call":
                 let name = params["name"] as? String ?? ""
                 let args = params["arguments"] as? [String: Any] ?? [:]
+                LiveSessions.touch()
                 reply(id, call(name, args))
             default:
                 send(["jsonrpc": "2.0", "id": id!, "error": ["code": -32601, "message": "method not found: \(method)"]])
             }
         }
+        LiveSessions.unregister()
     }
 
     static let instructions = """
     Point and Yap is the user's queue of things to fix: they point at things on their screen and talk, and every \
     recording becomes an item (what they said, the elements under the cursor, cropped screenshots). Work through the queue: get_open_items takes \
     the open items for you, do each one, then mark_done with its id and a one-line note; release_items gives back what \
-    you could not do. Done items are never handed out again. get_session reads a whole recording.
+    you could not do. Done items are never handed out again. get_session reads a whole recording. Items are routed to \
+    projects: you get the ones for the folder you run in, plus the ones not routed anywhere (scope "all" shows every project's). \
+    To listen for new items without the user pasting anything, call wait_for_next: it waits until an item for this project \
+    arrives and returns it like get_open_items; do it, mark_done, then call wait_for_next again.
     """
 
     static let tools: [[String: Any]] = [
@@ -50,6 +58,12 @@ enum MCPServer {
          "inputSchema": ["type": "object", "properties": [
             "limit": ["type": "integer", "description": "How many, default 5"],
             "take": ["type": "boolean", "description": "Mark them in progress by you, default true; false only looks"],
+            "images": ["type": "boolean", "description": "Include the crops as images, default true"],
+            "scope": ["type": "string", "description": "Default: only this project's items (the folder you run in) and items not routed anywhere. \"all\" returns every project's"]]]],
+        ["name": "wait_for_next",
+         "description": "Listen mode: wait until a new open item for this project arrives (it is marked in progress by you and returned like get_open_items), or until the timeout. After you finish the item and mark_done, call wait_for_next again to keep listening. On timeout it says nothing new yet; just call it again.",
+         "inputSchema": ["type": "object", "properties": [
+            "timeout_seconds": ["type": "integer", "description": "How long to wait, default 300, max 1800"],
             "images": ["type": "boolean", "description": "Include the crops as images, default true"]]]],
         ["name": "mark_done",
          "description": "Mark items done once the change is made, so they are never handed out again.",
@@ -89,7 +103,11 @@ enum MCPServer {
     static func call(_ name: String, _ a: [String: Any]) -> [String: Any] {
         switch name {
         case "get_open_items":
-            return openItems(limit: a["limit"] as? Int ?? 5, take: a["take"] as? Bool ?? true, images: a["images"] as? Bool ?? true)
+            return openItems(limit: a["limit"] as? Int ?? 5, take: a["take"] as? Bool ?? true, images: a["images"] as? Bool ?? true,
+                             project: (a["scope"] as? String) == "all" ? nil : cwd)
+        case "wait_for_next":
+            let seconds = (a["timeout_seconds"] as? Int) ?? (a["timeout_seconds"] as? Double).map { Int($0) } ?? 300
+            return waitForNext(timeout: max(0, min(seconds, 1800)), images: a["images"] as? Bool ?? true)
         case "mark_done": return setItems(a["ids"], status: "done", note: a["note"] as? String)
         case "start_items": return setItems(a["ids"], status: "in_progress", note: nil)
         case "list_items": return listItems(a["status"] as? String)
@@ -174,14 +192,32 @@ enum MCPServer {
                             ["type": "image", "data": data.base64EncodedString(), "mimeType": "image/jpeg"]]]
     }
 
-    static func openItems(limit: Int, take: Bool, images: Bool) -> [String: Any] {
-        let items = Items.openItems(limit: max(1, min(limit, 20)), take: take, agent: agent)
+    static func waitForNext(timeout: Int, images: Bool) -> [String: Any] {
+        let deadline = Date().addingTimeInterval(TimeInterval(timeout))
+        var polls = 0
+        while true {
+            let items = Items.openItems(limit: 5, take: true, agent: agent, project: cwd)
+            if !items.isEmpty { return handOut(items, take: true, images: images) }
+            if Date() >= deadline { break }
+            polls += 1
+            if polls % 15 == 0 { LiveSessions.touch() }
+            Thread.sleep(forTimeInterval: 1)
+        }
+        return text("Nothing new yet. Call wait_for_next again to keep listening.")
+    }
+
+    static func openItems(limit: Int, take: Bool, images: Bool, project: String? = nil) -> [String: Any] {
+        let items = Items.openItems(limit: max(1, min(limit, 20)), take: take, agent: agent, project: project)
         guard !items.isEmpty else {
             let working = Items.all().filter { $0.status == "in_progress" }
             if working.isEmpty { return text("No open items. Everything the user pointed at is done.") }
             let who = Set(working.compactMap(\.by)).sorted().joined(separator: ", ")
             return text("No open items. \(working.count) in progress (\(who)); nothing else to do.")
         }
+        return handOut(items, take: take, images: images)
+    }
+
+    static func handOut(_ items: [Item], take: Bool, images: Bool) -> [String: Any] {
         var content: [[String: Any]] = [["type": "text", "text":
             "\(items.count) open item\(items.count == 1 ? "" : "s")\(take ? ", now in progress by you" : ""). Fix each, then call mark_done with its id right away: an item you leave unmarked stays open for the user and comes back to another agent in two hours."]]
         for i in items {
@@ -217,7 +253,9 @@ enum MCPServer {
             var l = "- \(i.id) [\(i.status.replacingOccurrences(of: "_", with: " "))"
             if let by = i.by, i.status != "open" { l += " by \(by)" }
             if let at = i.at, i.status != "open" { l += " since \(f.string(from: at))" }
-            l += "] \"\(i.title)…\""
+            l += "]"
+            if let project = i.project { l += " (project \(Projects.name(for: project)))" }
+            l += " \"\(i.title)…\""
             if let n = i.note, !n.isEmpty { l += ", note: \(n)" }
             return l
         }

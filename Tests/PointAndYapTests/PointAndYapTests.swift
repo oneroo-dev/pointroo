@@ -8,6 +8,8 @@ final class PointAndYapTests: XCTestCase {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("pointandyap-tests-\(UUID().uuidString)/sessions")
         try! FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         setenv("POINTANDYAP_SESSIONS", dir.path, 1)   // read once by Paths.root
+        let support = dir.deletingLastPathComponent().appendingPathComponent("support")
+        setenv("POINTANDYAP_SUPPORT", support.path, 1)   // read once by Paths.support
         return dir
     }()
 
@@ -138,5 +140,82 @@ final class PointAndYapTests: XCTestCase {
         XCTAssertTrue(out.contains("[mcp_servers.other]") && out.contains("[profile]"))
         let foreign = toml.replacingOccurrences(of: "/Applications/Point.app/Contents/MacOS/Point", with: "/opt/point")
         XCTAssertEqual(AgentInstall.removingTable("mcp_servers.point", from: foreign) { $0.contains(AgentInstall.oldApp) }, foreign)
+    }
+
+    func point(url: String? = nil, window: String? = nil) -> PointEvent {
+        PointEvent(index: 0, t: 0, end: 1, at: Pt(x: 0, y: 0), kind: "dwell", app: "Safari", bundleID: nil, window: window, url: url, element: nil, frame: nil)
+    }
+
+    let projects = [Project(name: "cms", path: "/work/cms", aliases: ["content"], hosts: ["localhost:3000"]),
+                    Project(name: "shop", path: "/work/shop", titles: ["Checkout admin"])]
+
+    func testRouterSaidNameWinsAndIgnoresPunctuation() {
+        XCTAssertEqual(Router.route(words: ["CMS:", "fix", "this"], points: [point(window: "shop")], projects: projects),
+                       Router.Result(path: "/work/cms", how: "said"))
+        XCTAssertEqual(Router.route(words: ["Content,", "page"], points: [], projects: projects)?.path, "/work/cms")
+        XCTAssertNil(Router.route(words: ["fix", "this", "button", "cms"], points: [], projects: projects))
+    }
+
+    func testRouterUrlHostAndPort() {
+        let result = Router.route(words: ["fix"], points: [point(url: "http://localhost:3000/posts"), point(url: "http://localhost:4000/")], projects: projects)
+        XCTAssertEqual(result, Router.Result(path: "/work/cms", how: "screen"))
+        XCTAssertNil(Router.route(words: ["fix"], points: [point(url: "http://localhost:4000/")], projects: projects))
+        XCTAssertEqual(Router.route(words: [], points: [point(url: "https://shop.example.com/a")], projects: projects)?.path, "/work/shop")
+    }
+
+    func testRouterWindowTitle() {
+        XCTAssertEqual(Router.route(words: [], points: [point(window: "Edit post - CMS")], projects: projects)?.path, "/work/cms")
+        XCTAssertEqual(Router.route(words: [], points: [point(window: "Checkout admin / orders")], projects: projects)?.path, "/work/shop")
+        XCTAssertNil(Router.route(words: [], points: [point(window: "cmsx tools")], projects: projects), "whole word only")
+    }
+
+    func testRouterTieGivesNothing() {
+        XCTAssertNil(Router.route(words: [], points: [point(window: "cms"), point(window: "shop")], projects: projects))
+    }
+
+    func testRouterOnlyLiveSessionIsTheFallback() {
+        let live = LiveSession(pid: 1, cwd: "/work/other", agent: "claude", started: Date(), lastSeen: Date())
+        XCTAssertEqual(Router.route(words: ["fix"], points: [], projects: projects, live: [live]), Router.Result(path: "/work/other", how: "only"))
+        let second = LiveSession(pid: 2, cwd: "/work/third", agent: "claude", started: Date(), lastSeen: Date())
+        XCTAssertNil(Router.route(words: ["fix"], points: [], projects: projects, live: [live, second]))
+    }
+
+    func testOpenItemsAreFilteredByProject() {
+        let own = session("2026-10-17_120010"), other = session("2026-10-17_120011"), loose = session("2026-10-17_120012")
+        Router.writeRoute(RouteInfo(project: "cms", path: "/work/cms", how: "said"), to: own)
+        Router.writeRoute(RouteInfo(project: "shop", path: "/work/shop", how: "said"), to: other)
+        let ids = Items.openItems(limit: 10, take: false, agent: "a", project: "/work/cms/app").map(\.id)
+        XCTAssertEqual(Set(ids), ["2026-10-17_120010#1", "2026-10-17_120012#1"])
+        XCTAssertEqual(Items.openItems(limit: 10, take: false, agent: "a").count, 3)
+        XCTAssertEqual(Items.items(in: own, state: nil).items.first?.project, "/work/cms")
+        XCTAssertNil(Items.items(in: loose, state: nil).items.first?.project)
+    }
+
+    func testWaitForNextTimesOutAndListsItsTool() {
+        XCTAssertTrue(MCPServer.tools.contains { $0["name"] as? String == "wait_for_next" })
+        let result = MCPServer.call("wait_for_next", ["timeout_seconds": 0])
+        let text = (result["content"] as? [[String: Any]])?.compactMap { $0["text"] as? String }.joined() ?? ""
+        XCTAssertTrue(text.hasPrefix("Nothing new yet"), text)
+    }
+
+    func testHookStopBlocksOnlyWhenItemsWait() throws {
+        XCTAssertNil(HookStop.output(openCount: 0))
+        let line = try XCTUnwrap(HookStop.output(openCount: 2))
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: String])
+        XCTAssertEqual(json["decision"], "block")
+        XCTAssertTrue(json["reason"]?.hasPrefix("2 new Point and Yap item(s)") == true)
+    }
+
+    func testLiveSessionsSkipDeadProcessesAndKnownProjectsMerge() throws {
+        LiveSessions.register(cwd: "/work/live-one", agent: "claude")
+        LiveSessions.register(cwd: "/work/ghost", agent: "claude", pid: 2_000_000_000)
+        let live = LiveSessions.all()
+        XCTAssertEqual(live.map(\.cwd), ["/work/live-one"])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: LiveSessions.file(2_000_000_000).path), "dead pid file is deleted")
+        let known = Projects.known(file: projects + [Project(name: "x", path: "/work/live-one")], live: live)
+        XCTAssertEqual(known.filter { $0.path == "/work/live-one" }.count, 1)
+        XCTAssertEqual(Projects.known(file: projects, live: live).last?.name, "live-one")
+        LiveSessions.unregister()
+        XCTAssertTrue(LiveSessions.all().isEmpty)
     }
 }
