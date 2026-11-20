@@ -130,10 +130,14 @@ enum Projects {
             projects.append(Project(name: project.name, path: project.path, aliases: project.aliases))
             index = projects.count - 1
         }
-        if let url = events.points.compactMap(\.url).first, let host = Router.hostAndPort(url) {
-            if !projects[index!].hosts.contains(host) { projects[index!].hosts.append(host) }
-        } else if let title = events.points.compactMap(\.window).first(where: { !$0.isEmpty }) {
-            if !projects[index!].titles.contains(title) { projects[index!].titles.append(title) }
+        let urls = events.points.compactMap(\.url)
+        if urls.isEmpty {
+            if let title = events.points.compactMap(\.window).first(where: { !$0.isEmpty }),
+               !projects[index!].titles.contains(title) { projects[index!].titles.append(title) }
+        } else {
+            for host in urls.compactMap({ Router.hostAndPort($0) }) where Router.isDevelopmentHost(host) {
+                if !projects[index!].hosts.contains(host) { projects[index!].hosts.append(host) }
+            }
         }
         save(projects)
     }
@@ -154,7 +158,9 @@ enum Router {
 
     /// The project named in the first 1-3 spoken words. Speech often mishears a name ("Pintro", "point roo"), so the words
     /// are compared without spaces or punctuation and a small edit distance is allowed: none below 4 letters, 1 for 4-5,
-    /// 2 for 6 or more. The closest project wins; two projects equally close give no match.
+    /// 2 for 6-7, 3 for 8 or more ("Point true" for "pointroo"). The spoken text may be at most 2 letters shorter than
+    /// the name (so "point" alone is not "pointroo"), and at distance 3 the consonants must be the same, doubles merged
+    /// ("pointtrue" and "pointroo" are both "pntr"; "pointfix" is "pntfx", "oneroo" is "nr"). The closest project wins; two projects equally close give no match.
     static func saidProject(_ words: [String], _ projects: [Project]) -> Project? {
         let spoken = words.map { compact($0) }.filter { !$0.isEmpty }.prefix(3)
         guard !spoken.isEmpty else { return nil }
@@ -164,9 +170,12 @@ enum Router {
             for name in [project.name] + project.aliases {
                 let target = compact(name)
                 guard !target.isEmpty else { continue }
-                let allowed = target.count >= 6 ? 2 : target.count >= 4 ? 1 : 0
+                let allowed = target.count >= 8 ? 3 : target.count >= 6 ? 2 : target.count >= 4 ? 1 : 0
                 for count in 1...spoken.count {
-                    let distance = editDistance(spoken.prefix(count).joined(), target)
+                    let heard = spoken.prefix(count).joined()
+                    let distance = editDistance(heard, target)
+                    if heard.count + 2 < target.count { continue }
+                    if distance == 3, consonants(heard) != consonants(target) { continue }
                     if distance <= allowed, distance < (closest ?? Int.max) { closest = distance }
                 }
             }
@@ -181,6 +190,13 @@ enum Router {
     /// Lowercase letters and digits only: "Point Roo!" and "point-roo" both become "pointroo".
     static func compact(_ text: String) -> String {
         String(text.lowercased().filter { $0.isLetter || $0.isNumber })
+    }
+
+    /// The consonants of a word, a letter repeated in a row kept once: "pointtrue" -> "pntr".
+    static func consonants(_ text: String) -> String {
+        var out = ""
+        for character in text where !"aeiouy".contains(character) && out.last != character { out.append(character) }
+        return out
     }
 
     static func editDistance(_ first: String, _ second: String) -> Int {
@@ -228,6 +244,19 @@ enum Router {
         let components = URLComponents(string: url).flatMap { $0.host == nil ? URLComponents(string: "https://" + url) : $0 }
         guard let host = components?.host?.lowercased(), !host.isEmpty else { return nil }
         return components?.port.map { "\(host):\($0)" } ?? host
+    }
+
+    /// A host that clearly belongs to one dev project: localhost and its numeric forms (with any port), or a name ending
+    /// in .test, .local, .localhost or .internal. Public hosts like claude.ai or github.com are never learned, because
+    /// every project's owner looks at them.
+    static func isDevelopmentHost(_ hostAndPort: String) -> Bool {
+        var host = hostAndPort.lowercased()
+        if host == "::1" || host.hasPrefix("::1:") || host.hasPrefix("[::1]") { return true }
+        if host.filter({ $0 == ":" }).count == 1, let colon = host.firstIndex(of: ":") {
+            host = String(host[..<colon])
+        }
+        if ["localhost", "127.0.0.1", "::1", "0.0.0.0"].contains(host) { return true }
+        return [".test", ".local", ".localhost", ".internal"].contains { host.hasSuffix($0) }
     }
 
     static func samePath(_ first: String, _ second: String) -> Bool { canonical(first) == canonical(second) }

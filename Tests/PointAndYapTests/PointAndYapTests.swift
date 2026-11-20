@@ -248,6 +248,29 @@ final class PointAndYapTests: XCTestCase {
         XCTAssertNil(Router.saidProject(["shot", "fix"], [Project(name: "shipping", path: "/a")]))
     }
 
+    func testSaidNameDistanceGrowsWithNameLength() {
+        let pointroo = [Project(name: "pointroo", path: "/work/pointroo")]
+        XCTAssertEqual(Router.saidProject(["Point", "true,", "this", "is", "a", "test"], pointroo)?.path, "/work/pointroo")
+        XCTAssertNil(Router.saidProject(["oneroo", "fix"], pointroo), "distance 3 with another first letter")
+        XCTAssertNil(Router.saidProject(["point", "fix"], pointroo), "too short a part of the name")
+        let both = pointroo + [Project(name: "oneroo", path: "/work/oneroo")]
+        XCTAssertEqual(Router.saidProject(["one", "roo", "fix"], both)?.path, "/work/oneroo")
+    }
+
+    func testLearnSavesOnlyDevelopmentHosts() {
+        let directory = Self.root.appendingPathComponent("learn-hosts")
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let events = SessionEvents(started: Date(), duration: 1, samples: [],
+                                   points: [point(url: "https://claude.ai/chat/1"), point(url: "http://localhost:5173/app")], frames: [])
+        try! JSONEncoder.pretty.encode(events).write(to: directory.appendingPathComponent("events.json"))
+        Projects.save([])
+        Projects.learn(from: directory, project: Project(name: "learnme", path: "/work/learnme"))
+        XCTAssertEqual(Projects.load().first { $0.path == "/work/learnme" }?.hosts, ["localhost:5173"])
+        XCTAssertTrue(Router.isDevelopmentHost("::1:3000"))
+        XCTAssertTrue(Router.isDevelopmentHost("shop.test"))
+        XCTAssertFalse(Router.isDevelopmentHost("github.com"))
+    }
+
     func testTwoProjectsEquallyCloseGiveNoSaidMatch() {
         let both = [Project(name: "pointra", path: "/a"), Project(name: "pointro", path: "/b")]
         XCTAssertNil(Router.saidProject(["pointrx"], both))

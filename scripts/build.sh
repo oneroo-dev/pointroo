@@ -1,14 +1,16 @@
 #!/bin/bash
-# Builds Pointroo.app and installs it to /Applications/Pointroo.app. Without CODESIGN_IDENTITY (or with "-") everything is
-# signed ad hoc, without hardened runtime; with a Developer ID in CODESIGN_IDENTITY (or in the env file named by
-# POINTANDYAP_ENV) it signs with hardened runtime as before. Usage: bash scripts/build.sh
+# Builds Pointroo.app and installs it to /Applications/Pointroo.app. Without CODESIGN_IDENTITY it signs with the
+# "Pointroo Dev" certificate (made once by scripts/dev-cert.sh) when the keychain has it, else ad hoc; both without
+# hardened runtime. With a Developer ID in CODESIGN_IDENTITY (or in the env file named by POINTANDYAP_ENV) it signs with
+# hardened runtime as before. Usage: bash scripts/build.sh
 # POINTANDYAP_NO_INSTALL=1 stops after signing; POINTANDYAP_VERSION sets the version.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 if [ -z "${CODESIGN_IDENTITY:-}" ] && [ -n "${POINTANDYAP_ENV:-}" ]; then
   set -a; . "$POINTANDYAP_ENV"; set +a
 fi
-CODESIGN_IDENTITY="${CODESIGN_IDENTITY:--}"
+. scripts/lib.sh
+resolve_codesign_identity
 
 swift build -c release
 APP="build/Pointroo.app"
@@ -31,12 +33,6 @@ cp Resources/Welcome/welcome.mp4 Resources/Welcome/welcome-poster.png "$APP/Cont
 mkdir -p "$APP/Contents/Frameworks"
 ditto .build/release/Sparkle.framework "$APP/Contents/Frameworks/Sparkle.framework"
 F="$APP/Contents/Frameworks/Sparkle.framework/Versions/B"
-if [ "$CODESIGN_IDENTITY" = "-" ]; then
-  # Ad hoc: hardened runtime would refuse the ad-hoc Sparkle framework (library validation).
-  SIGN_OPTIONS=()
-else
-  SIGN_OPTIONS=(--options runtime --timestamp)
-fi
 sign() { codesign --force ${SIGN_OPTIONS[@]+"${SIGN_OPTIONS[@]}"} --sign "$CODESIGN_IDENTITY" "$@"; }
 sign "$F/XPCServices/Installer.xpc"
 sign --preserve-metadata=entitlements "$F/XPCServices/Downloader.xpc"
@@ -47,14 +43,7 @@ sign --entitlements Resources/PointAndYap.entitlements "$APP"
 codesign --verify --strict --verbose=2 "$APP"
 [ -n "${POINTANDYAP_NO_INSTALL:-}" ] && { echo "built $APP"; exit 0; }
 
-# Never quit the app in the middle of a recording: the newest session has no events.json while its audio is still
-# written.
-dir="$HOME/Pointroo/sessions"
-latest=$(ls -1d "$dir"/*/ 2>/dev/null | tail -1 || true)
-if [ -n "$latest" ] && [ ! -f "$latest/events.json" ] && [ -f "$latest/audio.caf" ] \
-   && [ $(( $(date +%s) - $(stat -f %m "$latest/audio.caf") )) -lt 30 ]; then
-  echo "Pointroo is recording; not reinstalling now. Run again after Stop." >&2; exit 1
-fi
+refuse_while_recording || exit 1
 if pgrep -x Pointroo >/dev/null; then pkill -x Pointroo; sleep 1; fi
 rm -rf /Applications/Pointroo.app
 cp -R "$APP" /Applications/Pointroo.app

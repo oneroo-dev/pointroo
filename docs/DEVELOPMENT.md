@@ -3,7 +3,7 @@
 Pointroo is a fork of Point and Yap and runs next to it without touching it. The app is `/Applications/Pointroo.app`
 (bundle id `dev.oneroodev.pointroo`, binary `Pointroo`; the Swift target is still `PointAndYap`), its MCP server `pointroo`,
 its skill `pointroo`, its recordings `~/Pointroo/sessions`, its support folder `~/Library/Application Support/Pointroo`.
-It has no update feed. Build and install with `bash scripts/build.sh` (ad-hoc signed unless `CODESIGN_IDENTITY` is set).
+It has no update feed. Build and install with `bash scripts/build.sh` (signed with the "Pointroo Dev" certificate if you made it, else ad hoc, unless `CODESIGN_IDENTITY` is set). See "Dev loop" below.
 The text below is mostly from the original and still says Point and Yap in places.
 
 1. Open the app and press Start recording. The window steps aside and a small pill with the time and Stop stays on top
@@ -14,6 +14,25 @@ The text below is mostly from the original and still says Point and Yap in place
 
 Each session is kept in `~/PointAndYap/sessions/<date_time>/`: `session.md` (the aligned timeline, no model), `crops/` (the screen at each point, red ring = cursor, yellow box = element), `frames/`, `events.json`,
 `transcript.json`, `audio.caf`.
+
+## Dev loop
+
+Ad-hoc builds look like a new app to macOS every time, so Screen Recording and Accessibility had to be granted again after
+each build. A stable certificate fixes that, and `dev.sh` rebuilds and relaunches for you.
+
+1. Once: `bash scripts/dev-cert.sh`. It makes a self-signed code-signing certificate "Pointroo Dev" in your login keychain
+   (it may ask for your password) and prints the identities. `build.sh` and `dev.sh` use it by themselves when it exists
+   and say which signing they used.
+2. After the first build signed with "Pointroo Dev", reset and grant the permissions ONE last time
+   (`tccutil reset ScreenCapture dev.oneroodev.pointroo`, `tccutil reset Accessibility dev.oneroodev.pointroo`, open the app,
+   allow both). After that, rebuilds keep them.
+3. Then work with `bash scripts/dev.sh --watch`. It does a debug build, updates `/Applications/Pointroo.app` in place,
+   re-signs it and relaunches it, and does so again whenever a file under `Sources/` or `Resources/` changes. A failed build
+   prints the error and the running app stays. `bash scripts/dev.sh` does one round. If the app is not installed yet it
+   runs `build.sh` once. Neither restarts the app during a recording.
+
+Claude sessions start their own `Pointroo --mcp` process when the session starts, so changes to the MCP server reach a
+session only after it restarts or reconnects (`/mcp`). The menu bar app relaunches by itself.
 
 ## Fully local
 
@@ -106,12 +125,15 @@ projects (`name`, `path`, `aliases`, `hosts`, `titles`); live session folders ar
 `POINTANDYAP_SUPPORT` to use another folder (tests do).
 
 `Router.route` (Routing.swift) picks a project: the first 1-3 spoken words match a name or alias (compared without spaces or punctuation, with a small edit distance
-because speech mishears names: none under 4 letters, 1 for 4-5, 2 for 6 or more; two equally close projects give no
+because speech mishears names: none under 4 letters, 1 for 4-5, 2 for 6-7, 3 for 8 or more; the spoken part may be at
+most 2 letters shorter than the name, and at distance 3 the consonants must match ("pointtrue" and "pointroo" are both "pntr"); two equally close projects give no
 match; the speech model also gets the names as contextual hints), else the points vote by
 URL host(:port), host or window title containing the project name, or a `titles` entry (a tie gives nothing), else the
 only live session. `Process.run` saves the result as `route.json` ({project, path, how}) in the session folder. When
 nothing routes and two or more projects are live, `AppState.stop()` shows a picker; the pick is saved with how `picked`
-and its host:port (or window title) is added to that project in `projects.json`.
+and its host:port (or window title) is added to that project in `projects.json`. Only dev hosts are learned (localhost,
+127.0.0.1, ::1, 0.0.0.0 with their port, and names ending in .test, .local, .localhost, .internal); public hosts such as
+claude.ai are never saved, as every project would vote for them. A window title is learned only when nothing on screen had a URL.
 
 `Items.openItems(project:)` hands out items whose path equals or contains/is inside the given path, plus unrouted items.
 `wait_for_next` and the Stop hook pass `unrouted: .never`: an item with no route is never handed out to a listener, only to
