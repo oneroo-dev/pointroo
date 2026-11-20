@@ -200,6 +200,7 @@ final class PointAndYapTests: XCTestCase {
 
     func testHookStopBlocksOnlyWhenItemsWait() throws {
         XCTAssertNil(HookStop.output(openCount: 0))
+        XCTAssertNil(HookStop.output(openCount: 3, stopHookActive: true), "no loop when the hook already blocked once")
         let line = try XCTUnwrap(HookStop.output(openCount: 2))
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: String])
         XCTAssertEqual(json["decision"], "block")
@@ -217,5 +218,19 @@ final class PointAndYapTests: XCTestCase {
         XCTAssertEqual(Projects.known(file: projects, live: live).last?.name, "live-one")
         LiveSessions.unregister()
         XCTAssertTrue(LiveSessions.all().isEmpty)
+    }
+
+    func testUnroutedItemsWaitForThePickerAndNeverTriggerTheHook() {
+        let own = session("2026-10-17_120020"), loose = session("2026-10-17_120021")
+        Router.writeRoute(RouteInfo(project: "cms", path: "/work/cms", how: "said"), to: own)
+        let now = Items.recordedAt("2026-10-17_120021")!
+        let fresh = Items.openItems(limit: 10, take: false, agent: "a", project: "/work/cms", unrouted: .olderThan(90), now: now.addingTimeInterval(30)).map(\.id)
+        XCTAssertEqual(fresh, ["2026-10-17_120020#1"], "a 30 s old unrouted item is left for the picker")
+        let aged = Items.openItems(limit: 10, take: false, agent: "a", project: "/work/cms", unrouted: .olderThan(90), now: now.addingTimeInterval(120)).map(\.id)
+        XCTAssertEqual(Set(aged), ["2026-10-17_120020#1", "2026-10-17_120021#1"])
+        let hook = Items.openItems(limit: 10, take: false, agent: "hook", project: "/work/cms", unrouted: .never).map(\.id)
+        XCTAssertEqual(hook, ["2026-10-17_120020#1"])
+        XCTAssertEqual(Items.openItems(limit: 10, take: false, agent: "a", project: "/work/cms").count, 2, "explicit get_open_items keeps own + unrouted")
+        _ = loose
     }
 }

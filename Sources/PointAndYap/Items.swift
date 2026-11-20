@@ -22,7 +22,15 @@ struct ItemState: Codable {
     struct Entry: Codable { var status: String; var by: String?; var at: Date; var note: String? }
 }
 
+/// What to do with items no project was found for.
+enum Unrouted {
+    case any                          // hand them out (an explicit get_open_items)
+    case never                        // leave them (the Stop hook)
+    case olderThan(TimeInterval)      // only once the recording is this old, so the user can still pick a project (wait_for_next)
+}
+
 enum Items {
+    static let pickerGrace: TimeInterval = 90
     static let lease: TimeInterval = 2 * 3600   // an item in progress that no one finished comes back after two hours
 
     // MARK: Splitting a session
@@ -112,13 +120,14 @@ enum Items {
 
     /// Open items oldest first; with `take`, they are marked in progress by `agent` before they are returned.
     /// With `project`, only that project's items (the path is the same or one is inside the other) and the ones not routed anywhere.
-    static func openItems(limit: Int, take: Bool, agent: String, project: String? = nil) -> [Item] {
+    static func openItems(limit: Int, take: Bool, agent: String, project: String? = nil,
+                          unrouted: Unrouted = .any, now: Date = Date()) -> [Item] {
         locked {
             var out: [Item] = []
             for dir in sessionDirs() where out.count < limit {
                 var st = readState(dir)
                 let (source, items) = Self.items(in: dir, state: st)
-                let free = items.filter { $0.status == "open" && belongs($0, to: project) }.prefix(limit - out.count)
+                let free = items.filter { $0.status == "open" && belongs($0, to: project, unrouted: unrouted, now: now) }.prefix(limit - out.count)
                 guard !free.isEmpty else { continue }
                 if take {
                     if st == nil { st = ItemState(source: source) }
@@ -131,9 +140,25 @@ enum Items {
         }
     }
 
-    static func belongs(_ item: Item, to project: String?) -> Bool {
-        guard let project, let path = item.project else { return true }
+    static func belongs(_ item: Item, to project: String?, unrouted: Unrouted = .any, now: Date = Date()) -> Bool {
+        guard let project else { return true }
+        guard let path = item.project else {
+            switch unrouted {
+            case .any: return true
+            case .never: return false
+            case .olderThan(let age):
+                guard let recorded = recordedAt(item.session) else { return true }
+                return now.timeIntervalSince(recorded) > age
+            }
+        }
         return Router.related(path, project)
+    }
+
+    /// The time in a session folder name (yyyy-MM-dd_HHmmss).
+    static func recordedAt(_ session: String) -> Date? {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd_HHmmss"
+        return formatter.date(from: session)
     }
 
     /// Sets items to done or open. Returns what changed and what was not found.

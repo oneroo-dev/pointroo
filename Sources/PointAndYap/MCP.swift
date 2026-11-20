@@ -196,7 +196,8 @@ enum MCPServer {
         let deadline = Date().addingTimeInterval(TimeInterval(timeout))
         var polls = 0
         while true {
-            let items = Items.openItems(limit: 5, take: true, agent: agent, project: cwd)
+            let items = Items.openItems(limit: 5, take: true, agent: agent, project: cwd,
+                                     unrouted: .olderThan(Items.pickerGrace))
             if !items.isEmpty { return handOut(items, take: true, images: images) }
             if Date() >= deadline { break }
             polls += 1
