@@ -18,7 +18,12 @@ enum Transcriber {
         return Locale.current
     }
 
-    static func words(from audio: URL, locale wanted: Locale = wantedLocale) async throws -> [Word] {
+    /// Project names (and their aliases) the speech model should expect: live sessions and projects.json.
+    static func projectHints() -> [String] {
+        Projects.known().flatMap { [$0.name] + $0.aliases }.filter { !$0.isEmpty }
+    }
+
+    static func words(from audio: URL, locale wanted: Locale = wantedLocale, hints: [String] = projectHints()) async throws -> [Word] {
         guard let locale = await SpeechTranscriber.supportedLocale(equivalentTo: wanted) else {
             throw Failure.noLocale(wanted.identifier)
         }
@@ -28,6 +33,11 @@ enum Transcriber {
             try await request.downloadAndInstall()
         }
         let analyzer = SpeechAnalyzer(modules: [transcriber])
+        if !hints.isEmpty {
+            let context = AnalysisContext()
+            context.contextualStrings[.general] = hints
+            try? await analyzer.setContext(context)
+        }
         let file = try AVAudioFile(forReading: audio)
 
         let collect = Task { () throws -> [Word] in

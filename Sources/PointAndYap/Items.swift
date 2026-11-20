@@ -14,6 +14,7 @@ struct Item {
     var by: String?
     var note: String?
     var project: String? = nil   // the project folder it was routed to (route.json)
+    var routeHow: String? = nil  // how: said, screen, only, picked
 }
 
 struct ItemState: Codable {
@@ -24,13 +25,11 @@ struct ItemState: Codable {
 
 /// What to do with items no project was found for.
 enum Unrouted {
-    case any                          // hand them out (an explicit get_open_items)
-    case never                        // leave them (the Stop hook)
-    case olderThan(TimeInterval)      // only once the recording is this old, so the user can still pick a project (wait_for_next)
+    case any      // hand them out (an explicit get_open_items)
+    case never    // leave them (wait_for_next and the Stop hook)
 }
 
 enum Items {
-    static let pickerGrace: TimeInterval = 90
     static let lease: TimeInterval = 2 * 3600   // an item in progress that no one finished comes back after two hours
 
     // MARK: Splitting a session
@@ -42,7 +41,9 @@ enum Items {
         for i in out.indices {
             out[i].id = "\(id)#\(out[i].n)"
             out[i].session = id
-            out[i].project = Router.readRoute(dir)?.path
+            let route = Router.readRoute(dir)
+            out[i].project = route?.path
+            out[i].routeHow = route?.how
             if let e = state?.items[String(out[i].n)] {
                 // "taken" is the older name of in_progress.
                 let working = e.status == "taken" || e.status == "in_progress"
@@ -129,13 +130,13 @@ enum Items {
     /// Open items oldest first; with `take`, they are marked in progress by `agent` before they are returned.
     /// With `project`, only that project's items (the path is the same or one is inside the other) and the ones not routed anywhere.
     static func openItems(limit: Int, take: Bool, agent: String, project: String? = nil,
-                          unrouted: Unrouted = .any, now: Date = Date()) -> [Item] {
+                          unrouted: Unrouted = .any, since: Date? = nil) -> [Item] {
         locked {
             var out: [Item] = []
             for dir in sessionDirs() where out.count < limit {
                 var st = readState(dir)
                 let (source, items) = Self.items(in: dir, state: st)
-                let free = items.filter { $0.status == "open" && belongs($0, to: project, unrouted: unrouted, now: now) }.prefix(limit - out.count)
+                let free = items.filter { $0.status == "open" && belongs($0, to: project, unrouted: unrouted, since: since) }.prefix(limit - out.count)
                 guard !free.isEmpty else { continue }
                 if take {
                     if st == nil { st = ItemState(source: source) }
@@ -148,18 +149,14 @@ enum Items {
         }
     }
 
-    static func belongs(_ item: Item, to project: String?, unrouted: Unrouted = .any, now: Date = Date()) -> Bool {
+    /// With `since`, an item recorded before that time is only handed out when it was routed to the project on purpose
+    /// (said, screen or picked); a fallback route ("only") or an old recording is not.
+    static func belongs(_ item: Item, to project: String?, unrouted: Unrouted = .any, since: Date? = nil) -> Bool {
         guard let project else { return true }
-        guard let path = item.project else {
-            switch unrouted {
-            case .any: return true
-            case .never: return false
-            case .olderThan(let age):
-                guard let recorded = recordedAt(item.session) else { return true }
-                return now.timeIntervalSince(recorded) > age
-            }
-        }
-        return Router.related(path, project)
+        guard let path = item.project else { return unrouted == .any }
+        guard Router.related(path, project) else { return false }
+        guard let since, !["said", "screen", "picked"].contains(item.routeHow ?? "") else { return true }
+        return recordedAt(item.session).map { $0 > since } ?? false
     }
 
     /// The time in a session folder name (yyyy-MM-dd_HHmmss).

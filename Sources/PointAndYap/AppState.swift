@@ -122,7 +122,11 @@ final class AppState: ObservableObject {
     private func pickProject(_ dir: URL) async {
         guard Router.readRoute(dir) == nil, !Items.items(in: dir, state: nil).items.isEmpty else { return }
         let live = Projects.liveProjects()
-        guard live.count >= 2, let project = await ProjectPicker.ask(live) else { return }
+        guard live.count >= 2 else { return }
+        guard let project = await ProjectPicker.ask(live) else {
+            say("Not sent - kept in the queue")
+            return
+        }
         Router.writeRoute(RouteInfo(project: project.name, path: project.path, how: "picked"), to: dir)
         Projects.learn(from: dir, project: project)
         say("Sent to \(project.name)")

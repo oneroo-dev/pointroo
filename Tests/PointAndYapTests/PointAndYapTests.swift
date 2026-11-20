@@ -215,18 +215,43 @@ final class PointAndYapTests: XCTestCase {
         XCTAssertTrue(LiveSessions.all().isEmpty)
     }
 
-    func testUnroutedItemsWaitForThePickerAndNeverTriggerTheHook() {
+    func testUnroutedItemsAreOnlyForAnExplicitGetOpenItems() {
         let own = session("2026-10-17_120020"), loose = session("2026-10-17_120021")
         Router.writeRoute(RouteInfo(project: "cms", path: "/work/cms", how: "said"), to: own)
-        let now = Items.recordedAt("2026-10-17_120021")!
-        let fresh = Items.openItems(limit: 10, take: false, agent: "a", project: "/work/cms", unrouted: .olderThan(90), now: now.addingTimeInterval(30)).map(\.id)
-        XCTAssertEqual(fresh, ["2026-10-17_120020#1"], "a 30 s old unrouted item is left for the picker")
-        let aged = Items.openItems(limit: 10, take: false, agent: "a", project: "/work/cms", unrouted: .olderThan(90), now: now.addingTimeInterval(120)).map(\.id)
-        XCTAssertEqual(Set(aged), ["2026-10-17_120020#1", "2026-10-17_120021#1"])
-        let hook = Items.openItems(limit: 10, take: false, agent: "hook", project: "/work/cms", unrouted: .never).map(\.id)
-        XCTAssertEqual(hook, ["2026-10-17_120020#1"])
+        let waiting = Items.openItems(limit: 10, take: false, agent: "a", project: "/work/cms", unrouted: .never).map(\.id)
+        XCTAssertEqual(waiting, ["2026-10-17_120020#1"], "wait_for_next and the hook never get an unrouted item")
         XCTAssertEqual(Items.openItems(limit: 10, take: false, agent: "a", project: "/work/cms").count, 2, "explicit get_open_items keeps own + unrouted")
         _ = loose
+    }
+
+    func testListeningOnlyGetsRecordingsMadeAfterItStartedOrRoutedOnPurpose() {
+        let said = session("2026-10-17_120040"), fallback = session("2026-10-17_120041"), fresh = session("2026-10-17_120042")
+        Router.writeRoute(RouteInfo(project: "cms", path: "/work/cms", how: "said"), to: said)
+        Router.writeRoute(RouteInfo(project: "cms", path: "/work/cms", how: "only"), to: fallback)
+        let started = Items.recordedAt("2026-10-17_120041")!.addingTimeInterval(0.5)
+        func ids(_ date: Date) -> Set<String> {
+            Set(Items.openItems(limit: 10, take: false, agent: "a", project: "/work/cms", unrouted: .never, since: date).map(\.id))
+        }
+        XCTAssertEqual(ids(started), ["2026-10-17_120040#1"], "old and said: yes; old and only: no")
+        Router.writeRoute(RouteInfo(project: "cms", path: "/work/cms", how: "only"), to: fresh)
+        XCTAssertEqual(ids(started), ["2026-10-17_120040#1", "2026-10-17_120042#1"], "a new recording routed as only is fine")
+    }
+
+    func testSaidNameAcceptsLooseSpeech() {
+        let all = projects + [Project(name: "pointroo", path: "/work/pointroo"), Project(name: "oneroo", path: "/work/oneroo")]
+        XCTAssertEqual(Router.saidProject(["Pintro,", "this", "is", "a", "test"], all)?.path, "/work/pointroo")
+        XCTAssertEqual(Router.saidProject(["point", "roo", "fix"], all)?.path, "/work/pointroo")
+        XCTAssertEqual(Router.saidProject(["Pointroo:", "x"], all)?.path, "/work/pointroo")
+        XCTAssertEqual(Router.saidProject(["oneroo", "fix"], all)?.path, "/work/oneroo", "oneroo is not pointroo")
+        XCTAssertNil(Router.saidProject([".2,", "this", "is", "a", "test"], all))
+        XCTAssertNil(Router.saidProject(["cm", "fix"], all), "short names match exactly only")
+        XCTAssertNil(Router.saidProject(["shot", "fix"], [Project(name: "shipping", path: "/a")]))
+    }
+
+    func testTwoProjectsEquallyCloseGiveNoSaidMatch() {
+        let both = [Project(name: "pointra", path: "/a"), Project(name: "pointro", path: "/b")]
+        XCTAssertNil(Router.saidProject(["pointrx"], both))
+        XCTAssertEqual(Router.saidProject(["pointro"], both)?.path, "/b", "an exact match beats a close one")
     }
 
     func testWaitTimeoutStaysUnderTheClientLimit() {

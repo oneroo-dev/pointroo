@@ -7,6 +7,8 @@ enum MCPServer {
     static let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev"
     /// The client's name from initialize, recorded on the items it takes and finishes.
     nonisolated(unsafe) static var agent = "agent"
+    /// When this server process started listening: wait_for_next leaves older recordings to the user (unless routed to this project on purpose).
+    nonisolated(unsafe) static var startedAt = Date()
     /// The project of this session: Claude starts the server in its project folder.
     static var cwd: String { FileManager.default.currentDirectoryPath }
 
@@ -22,6 +24,7 @@ enum MCPServer {
             switch method {
             case "initialize":
                 if let c = params["clientInfo"] as? [String: Any], let n = c["name"] as? String, !n.isEmpty { agent = n }
+                startedAt = Date()
                 LiveSessions.register(cwd: cwd, agent: agent)
                 agent = "\(agent) (\(URL(fileURLWithPath: cwd).lastPathComponent))"
                 let asked = params["protocolVersion"] as? String
@@ -203,7 +206,7 @@ enum MCPServer {
         var polls = 0
         while true {
             let items = Items.openItems(limit: 5, take: true, agent: agent, project: cwd,
-                                     unrouted: .olderThan(Items.pickerGrace))
+                                     unrouted: .never, since: startedAt)
             if !items.isEmpty { return handOut(items, take: true, images: images) }
             if Date() >= deadline { break }
             polls += 1

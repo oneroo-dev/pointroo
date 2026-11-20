@@ -105,13 +105,19 @@ removed when stdin closes; readers skip and delete files of dead pids. `projects
 projects (`name`, `path`, `aliases`, `hosts`, `titles`); live session folders are added by folder name. Set
 `POINTANDYAP_SUPPORT` to use another folder (tests do).
 
-`Router.route` (Routing.swift) picks a project: the first 1-3 spoken words match a name or alias, else the points vote by
+`Router.route` (Routing.swift) picks a project: the first 1-3 spoken words match a name or alias (compared without spaces or punctuation, with a small edit distance
+because speech mishears names: none under 4 letters, 1 for 4-5, 2 for 6 or more; two equally close projects give no
+match; the speech model also gets the names as contextual hints), else the points vote by
 URL host(:port), host or window title containing the project name, or a `titles` entry (a tie gives nothing), else the
 only live session. `Process.run` saves the result as `route.json` ({project, path, how}) in the session folder. When
 nothing routes and two or more projects are live, `AppState.stop()` shows a picker; the pick is saved with how `picked`
 and its host:port (or window title) is added to that project in `projects.json`.
 
 `Items.openItems(project:)` hands out items whose path equals or contains/is inside the given path, plus unrouted items.
+`wait_for_next` and the Stop hook pass `unrouted: .never`: an item with no route is never handed out to a listener, only to
+an explicit `get_open_items`. `wait_for_next` also passes `since` (the time the MCP process started): older recordings are
+left alone unless they were routed to this project with how `said`, `screen` or `picked`. If the picker is skipped or
+times out the app shows "Not sent - kept in the queue".
 MCP `get_open_items` uses the server's cwd (`scope: "all"` turns that off); `wait_for_next` polls every second for one, for up to 50 s per call (max 55 s: the Claude desktop app cancels tool calls at about 60 s).
 `PointAndYap --hook-stop` is a Claude Code Stop hook: it reads `cwd` from stdin and, if items are open for it, prints a
 block decision (it never takes items). Setup is in the skill file.

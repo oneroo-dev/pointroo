@@ -29,7 +29,8 @@ release it with the question as the note.
 
 Every item is routed to a project (route.json in its folder: by a spoken name, by what was on screen, or picked by the user).
 `get_open_items` gives you the items for the folder you run in, plus items not routed anywhere; `scope: "all"` shows every
-project's.
+project's. `wait_for_next` is stricter: it never hands out an item that has no route, and it only hands out recordings made
+after it started listening (plus older ones routed to this project by name, screen or the picker).
 
 Listen mode, so the user never pastes anything: when asked to listen (or "wait for Pointroo"), loop:
 

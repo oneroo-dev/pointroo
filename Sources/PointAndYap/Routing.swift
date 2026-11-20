@@ -152,14 +152,50 @@ enum Router {
         return nil
     }
 
+    /// The project named in the first 1-3 spoken words. Speech often mishears a name ("Pintro", "point roo"), so the words
+    /// are compared without spaces or punctuation and a small edit distance is allowed: none below 4 letters, 1 for 4-5,
+    /// 2 for 6 or more. The closest project wins; two projects equally close give no match.
     static func saidProject(_ words: [String], _ projects: [Project]) -> Project? {
-        let spoken = words.map { normalized($0) }.filter { !$0.isEmpty }.prefix(3)
+        let spoken = words.map { compact($0) }.filter { !$0.isEmpty }.prefix(3)
         guard !spoken.isEmpty else { return nil }
-        for count in 1...spoken.count {
-            let phrase = spoken.prefix(count).joined(separator: " ")
-            if let project = projects.first(where: { ([$0.name] + $0.aliases).contains { normalized($0) == phrase } }) { return project }
+        var best: [(project: Project, distance: Int)] = []
+        for project in projects {
+            var closest: Int?
+            for name in [project.name] + project.aliases {
+                let target = compact(name)
+                guard !target.isEmpty else { continue }
+                let allowed = target.count >= 6 ? 2 : target.count >= 4 ? 1 : 0
+                for count in 1...spoken.count {
+                    let distance = editDistance(spoken.prefix(count).joined(), target)
+                    if distance <= allowed, distance < (closest ?? Int.max) { closest = distance }
+                }
+            }
+            if let closest { best.append((project, closest)) }
         }
-        return nil
+        guard let nearest = best.map(\.distance).min() else { return nil }
+        let winners = best.filter { $0.distance == nearest }
+        guard winners.count == 1 || Set(winners.map { canonical($0.project.path) }).count == 1 else { return nil }
+        return winners[0].project
+    }
+
+    /// Lowercase letters and digits only: "Point Roo!" and "point-roo" both become "pointroo".
+    static func compact(_ text: String) -> String {
+        String(text.lowercased().filter { $0.isLetter || $0.isNumber })
+    }
+
+    static func editDistance(_ first: String, _ second: String) -> Int {
+        let a = Array(first), b = Array(second)
+        if a.isEmpty { return b.count }
+        if b.isEmpty { return a.count }
+        var previous = Array(0...b.count)
+        for i in 1...a.count {
+            var current = [i] + Array(repeating: 0, count: b.count)
+            for j in 1...b.count {
+                current[j] = min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + (a[i - 1] == b[j - 1] ? 0 : 1))
+            }
+            previous = current
+        }
+        return previous[b.count]
     }
 
     static func screenProject(_ points: [PointEvent], _ projects: [Project]) -> Project? {
@@ -204,11 +240,6 @@ enum Router {
 
     private static func canonical(_ path: String) -> String {
         URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
-    }
-
-    private static func normalized(_ text: String) -> String {
-        text.trimmingCharacters(in: .punctuationCharacters.union(.whitespacesAndNewlines))
-            .lowercased().replacingOccurrences(of: "-", with: " ").replacingOccurrences(of: "_", with: " ")
     }
 
     private static func tokens(_ text: String) -> [String] {
