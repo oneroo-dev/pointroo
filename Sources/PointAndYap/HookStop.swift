@@ -1,11 +1,11 @@
 import Foundation
 
-/// `PointAndYap --hook-stop`: a Claude Code Stop hook. When items wait for the project in the hook's `cwd`, it blocks the stop
+/// `Pointroo --hook-stop`: a Claude Code Stop hook. When items wait for the project in the hook's `cwd`, it blocks the stop
 /// and tells the agent to fetch them. It never takes items itself.
 enum HookStop {
     static func output(openCount: Int, stopHookActive: Bool = false) -> String? {
         guard openCount > 0, !stopHookActive else { return nil }
-        let reason = "\(openCount) new Point and Yap item(s) for this project. Call get_open_items (pointandyap MCP), do them, mark_done each."
+        let reason = "\(openCount) new Pointroo item(s) for this project. Call get_open_items (pointroo MCP), do them, mark_done each."
         guard let data = try? JSONSerialization.data(withJSONObject: ["decision": "block", "reason": reason], options: [.withoutEscapingSlashes]) else { return nil }
         return String(data: data, encoding: .utf8)
     }

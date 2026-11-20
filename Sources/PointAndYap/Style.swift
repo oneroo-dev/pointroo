@@ -77,7 +77,7 @@ struct SmallButton: ButtonStyle {
     }
 }
 
-/// Start and done sounds: soft sine tones made for Point and Yap (Resources/Sounds), nothing above about 1.5 kHz.
+/// Start and done sounds: soft sine tones made for Pointroo (Resources/Sounds), nothing above about 1.5 kHz.
 @MainActor
 enum Sounds {
     private static var cache: [String: NSSound] = [:]

@@ -1,3 +1,9 @@
+> **Pointroo** is a fork of [Point and Yap](https://github.com/mfmaur/pointandyap) by Marc Maurer (MIT). It adds routing
+> of each recording to the right Claude Code session (by spoken project name, by what is on screen, or a quick picker), a
+> `wait_for_next` listen mode, and a Stop hook, so you do not paste anything. It is its own app (`/Applications/Pointroo.app`,
+> `~/Pointroo`, MCP server `pointroo`) and installs next to Point and Yap without touching it. The rest of this README is
+> still the original text for Point and Yap; where it says `pointandyap` or `PointAndYap`, Pointroo uses `pointroo` and `Pointroo`.
+
 <p align="center">
   <img src="assets/readme-banner.webp" alt="Point and Yap. Show, don't type." width="100%" />
 </p>

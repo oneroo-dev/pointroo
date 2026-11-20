@@ -107,7 +107,7 @@ final class AudioRecorder {
     static func recordingDevice() -> AudioDeviceID? {
         guard let def = defaultInput() else { return nil }
         if let builtIn = builtInInsteadOfBluetooth(def) {
-            NSLog("pointandyap: default input is Bluetooth; recording from the built-in microphone")
+            NSLog("pointroo: default input is Bluetooth; recording from the built-in microphone")
             return builtIn
         }
         return def

@@ -2,7 +2,7 @@ import AppKit
 import ServiceManagement
 import SwiftUI
 
-/// The app's settings, kept in its defaults (com.marcmaurer.pointandyap).
+/// The app's settings, kept in its defaults (dev.oneroodev.pointroo).
 enum Prefs {
     static var sounds: Bool { flag("sounds") }
     static var doubleControl: Bool { flag("doubleControl") }
@@ -102,7 +102,6 @@ struct SettingsView: View {
                 HStack {
                     Text("Version \(Updater.shared.version)").font(.geist(13)).foregroundStyle(Ink.primary)
                     Spacer()
-                    Button("Check for updates") { Updater.shared.checkNow() }.buttonStyle(SmallButton())
                 }.frame(height: 40)
                 line
                 HStack {
@@ -112,6 +111,7 @@ struct SettingsView: View {
                 }.frame(height: 40)
             }
             Spacer(minLength: 0)
+            Text("Based on Point and Yap by Marc Maurer (MIT)").font(.geist(11)).foregroundStyle(Ink.faint)
         }
         .padding(24)
         .frame(width: 400, height: 590, alignment: .topLeading)

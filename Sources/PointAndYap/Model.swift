@@ -57,22 +57,13 @@ struct SessionEvents: Codable {
 struct Word: Codable { var text: String; var start: Double; var end: Double }
 
 enum Paths {
-    /// ~/PointAndYap/sessions; POINTANDYAP_SESSIONS points elsewhere (tests).
+    /// ~/Pointroo/sessions; POINTANDYAP_SESSIONS points elsewhere (tests).
     static let root = ProcessInfo.processInfo.environment["POINTANDYAP_SESSIONS"].map { URL(fileURLWithPath: $0) }
-        ?? moved(from: "Point", to: "PointAndYap").appendingPathComponent("sessions")
+        ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Pointroo/sessions")
     /// POINTANDYAP_SUPPORT points elsewhere (tests).
     static let support = ProcessInfo.processInfo.environment["POINTANDYAP_SUPPORT"].map { URL(fileURLWithPath: $0) }
-        ?? moved(from: "Library/Application Support/Point", to: "Library/Application Support/PointAndYap")
+        ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Pointroo")
 
-    /// The folder under home, moved once from the name builds before 0.1.1 used. A rename on one disk is atomic, so
-    /// the app, the MCP server and the shell command can race here safely: one move wins, the others find it done.
-    static func moved(from old: String, to new: String) -> URL {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let src = home.appendingPathComponent(old), dst = home.appendingPathComponent(new)
-        let fm = FileManager.default
-        if !fm.fileExists(atPath: dst.path), fm.fileExists(atPath: src.path) { try? fm.moveItem(at: src, to: dst) }
-        return dst
-    }
     static var keyFile: URL { support.appendingPathComponent("anthropic-key") }
 
     static func newSession() -> URL {

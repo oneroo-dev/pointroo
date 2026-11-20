@@ -114,32 +114,27 @@ final class PointAndYapTests: XCTestCase {
         XCTAssertNil(done["isError"])
     }
 
-    func testOnlyOurOldAgentEntriesAreReplaced() {
-        XCTAssertTrue(AgentInstall.isOurOld(["command": "/Applications/Point.app/Contents/MacOS/Point", "args": ["--mcp"]]))
-        XCTAssertFalse(AgentInstall.isOurOld(["command": "/usr/local/bin/point"]), "someone else's point server")
-        XCTAssertFalse(AgentInstall.isOurOld(nil))
+    func testPointrooHasItsOwnNamesAndNeverUsesPointAndYapOnes() {
+        XCTAssertEqual(AgentInstall.server, "pointroo")
+        XCTAssertEqual(AgentInstall.skillName, "pointroo")
+        XCTAssertEqual(AgentInstall.binary, "/Applications/Pointroo.app/Contents/MacOS/Pointroo")
+        XCTAssertFalse(AgentInstall.skill.contains("point-and-yap"))
+        XCTAssertFalse(Paths.support.path.contains("PointAndYap"))
     }
 
-    func testTheOldCodexTableGoesAndOthersStay() {
+    func testTheCodexTableIsAddedOnceAndOtherTablesStay() {
         let toml = """
-        [mcp_servers.other]
-        command = "x"
-
-        [mcp_servers.point]
-        command = "/Applications/Point.app/Contents/MacOS/Point"
+        [mcp_servers.pointandyap]
+        command = "/Applications/Point and Yap.app/Contents/MacOS/PointAndYap"
         args = ["--mcp"]
-
-        [mcp_servers.point.env]
-        A = "1"
 
         [profile]
         name = "y"
         """
-        let out = AgentInstall.removingTable("mcp_servers.point", from: toml) { $0.contains(AgentInstall.oldApp) }
-        XCTAssertFalse(out.contains("mcp_servers.point"))
-        XCTAssertTrue(out.contains("[mcp_servers.other]") && out.contains("[profile]"))
-        let foreign = toml.replacingOccurrences(of: "/Applications/Point.app/Contents/MacOS/Point", with: "/opt/point")
-        XCTAssertEqual(AgentInstall.removingTable("mcp_servers.point", from: foreign) { $0.contains(AgentInstall.oldApp) }, foreign)
+        let out = AgentInstall.addingCodexTable(to: toml)
+        XCTAssertTrue(out.hasPrefix(toml), "the pointandyap entry is left exactly as it was")
+        XCTAssertTrue(out.contains("[mcp_servers.pointroo]") && out.contains(AgentInstall.binary))
+        XCTAssertEqual(AgentInstall.addingCodexTable(to: out), out, "adding twice changes nothing")
     }
 
     func point(url: String? = nil, window: String? = nil) -> PointEvent {
@@ -204,7 +199,7 @@ final class PointAndYapTests: XCTestCase {
         let line = try XCTUnwrap(HookStop.output(openCount: 2))
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: String])
         XCTAssertEqual(json["decision"], "block")
-        XCTAssertTrue(json["reason"]?.hasPrefix("2 new Point and Yap item(s)") == true)
+        XCTAssertTrue(json["reason"]?.hasPrefix("2 new Pointroo item(s)") == true)
     }
 
     func testLiveSessionsSkipDeadProcessesAndKnownProjectsMerge() throws {

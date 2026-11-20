@@ -2,11 +2,11 @@ import Foundation
 
 /// From a recorded folder to the timeline (session.md) and crops, all on this Mac. Returns session.md.
 enum Process {
-    static func run(dir: URL, log: (String) -> Void = { NSLog("pointandyap: \($0)") },
+    static func run(dir: URL, log: (String) -> Void = { NSLog("pointroo: \($0)") },
                     onTimeline: (@MainActor () -> Void)? = nil) async -> String {
         guard let data = try? Data(contentsOf: dir.appendingPathComponent("events.json")),
               let events = try? JSONDecoder.iso.decode(SessionEvents.self, from: data) else {
-            return "Point and Yap: no events.json in \(dir.path)"
+            return "Pointroo: no events.json in \(dir.path)"
         }
         var words: [Word] = []
         let audio = dir.appendingPathComponent("audio.caf")

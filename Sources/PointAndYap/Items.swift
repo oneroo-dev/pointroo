@@ -105,12 +105,12 @@ enum Items {
             try JSONEncoder.pretty.encode(s).write(to: stateURL(dir), options: .atomic)
             return true
         } catch {
-            FileHandle.standardError.write(Data("pointandyap: could not save \(stateURL(dir).path): \(error.localizedDescription)\n".utf8))
+            FileHandle.standardError.write(Data("pointroo: could not save \(stateURL(dir).path): \(error.localizedDescription)\n".utf8))
             return false
         }
     }
 
-    /// Runs `body` under ~/PointAndYap/.lock (flock), so agents in separate processes never take the same item.
+    /// Runs `body` under ~/Pointroo/.lock (flock), so agents in separate processes never take the same item.
     static func locked<T>(_ body: () -> T) -> T {
         try? FileManager.default.createDirectory(at: Paths.root, withIntermediateDirectories: true)
         let fd = Darwin.open(Paths.root.deletingLastPathComponent().appendingPathComponent(".lock").path, O_CREAT | O_RDWR, 0o600)

@@ -12,7 +12,7 @@ enum Transcriber {
         }
     }
 
-    /// The language: `defaults write com.marcmaurer.pointandyap locale de-DE`, else the system's.
+    /// The language: `defaults write dev.oneroodev.pointroo locale de-DE`, else the system's.
     static var wantedLocale: Locale {
         if let id = UserDefaults.standard.string(forKey: "locale"), !id.isEmpty { return Locale(identifier: id) }
         return Locale.current

@@ -1,7 +1,7 @@
 import AppKit
 import Foundation
 
-/// `PointAndYap --mcp`: a local MCP server over stdio (newline-delimited JSON-RPC), no auth. It only reads ~/PointAndYap/sessions.
+/// `Pointroo --mcp`: a local MCP server over stdio (newline-delimited JSON-RPC), no auth. It only reads ~/Pointroo/sessions.
 enum MCPServer {
     static let protocolVersion = "2025-06-18"
     static let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev"
@@ -27,7 +27,7 @@ enum MCPServer {
                 let asked = params["protocolVersion"] as? String
                 reply(id, ["protocolVersion": asked ?? protocolVersion,
                            "capabilities": ["tools": [:]],
-                           "serverInfo": ["name": "pointandyap", "title": "Point and Yap", "version": version],
+                           "serverInfo": ["name": "pointroo", "title": "Pointroo", "version": version],
                            "instructions": instructions])
             case "ping": reply(id, [:])
             case "tools/list": reply(id, ["tools": tools])
@@ -44,7 +44,7 @@ enum MCPServer {
     }
 
     static let instructions = """
-    Point and Yap is the user's queue of things to fix: they point at things on their screen and talk, and every \
+    Pointroo is the user's queue of things to fix: they point at things on their screen and talk, and every \
     recording becomes an item (what they said, the elements under the cursor, cropped screenshots). Work through the queue: get_open_items takes \
     the open items for you, do each one, then mark_done with its id and a one-line note; release_items gives back what \
     you could not do. Done items are never handed out again. get_session reads a whole recording. Items are routed to \
@@ -56,7 +56,7 @@ enum MCPServer {
 
     static let tools: [[String: Any]] = [
         ["name": "get_open_items",
-         "description": "The open items of the user's Point and Yap queue, oldest first, each with its id, what they said, the elements they pointed at and its crop (red ring = cursor, yellow box = element). By default they are marked in progress by you, so no other agent gets them; finish each with mark_done.",
+         "description": "The open items of the user's Pointroo queue, oldest first, each with its id, what they said, the elements they pointed at and its crop (red ring = cursor, yellow box = element). By default they are marked in progress by you, so no other agent gets them; finish each with mark_done.",
          "inputSchema": ["type": "object", "properties": [
             "limit": ["type": "integer", "description": "How many, default 5"],
             "take": ["type": "boolean", "description": "Mark them in progress by you, default true; false only looks"],

@@ -1,9 +1,8 @@
 import AppKit
 import Sparkle
 
-/// Sparkle: checks pointandyap.com/appcast.xml every 4 hours and at launch, downloads a new version in the background
-/// (each download's EdDSA signature is checked against SUPublicEDKey), and installs it on quit. Once one is ready the
-/// window shows it with a Restart button. Only the copy in /Applications updates itself.
+/// Sparkle stays linked, but Pointroo has no update feed: nothing checks or downloads unless a feed is set on purpose
+/// (SUFeedURL in Info.plist, or `defaults write dev.oneroodev.pointroo updateFeedURL <url>` for a test feed).
 @MainActor
 final class Updater: NSObject, SPUUpdaterDelegate {
     static let shared = Updater()
@@ -13,14 +12,18 @@ final class Updater: NSObject, SPUUpdaterDelegate {
 
     var version: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?" }
 
+    var hasFeed: Bool {
+        UserDefaults.standard.string(forKey: "updateFeedURL") != nil || Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") != nil
+    }
+
     func start(state: AppState) {
         self.state = state
-        guard AgentInstall.installed, controller == nil else { return }
+        guard hasFeed, AgentInstall.installed, controller == nil else { return }
         controller = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: self, userDriverDelegate: nil)
     }
 
     func checkNow() {
-        if let controller { controller.checkForUpdates(nil) } else { state?.showToast("Updates work for the copy in Applications") }
+        if let controller { controller.checkForUpdates(nil) } else { state?.showToast("Updates are off in Pointroo") }
     }
 
     /// Restart into the downloaded version.
@@ -31,7 +34,7 @@ final class Updater: NSObject, SPUUpdaterDelegate {
 
     // MARK: SPUUpdaterDelegate
 
-    /// A test feed for checking an update end to end (`defaults write com.marcmaurer.pointandyap updateFeedURL <url>`);
+    /// A test feed for checking an update end to end (`defaults write dev.oneroodev.pointroo updateFeedURL <url>`);
     /// the download must still carry a valid signature.
     nonisolated func feedURLString(for updater: SPUUpdater) -> String? {
         UserDefaults.standard.string(forKey: "updateFeedURL")

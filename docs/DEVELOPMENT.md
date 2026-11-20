@@ -1,9 +1,10 @@
-# Developing Point and Yap
+# Developing Pointroo
 
-The app is `/Applications/Point and Yap.app` (bundle id `com.marcmaurer.pointandyap`, binary `PointAndYap`), its MCP
-server `pointandyap`, its skill `point-and-yap`, its recordings `~/PointAndYap/sessions`. Builds before 0.1.1 used the
-short name Point; the app moves `~/Point` and its support folder over, carries its settings over and replaces the agent
-entries it wrote then (`Paths.moved`, `AgentInstall`).
+Pointroo is a fork of Point and Yap and runs next to it without touching it. The app is `/Applications/Pointroo.app`
+(bundle id `dev.oneroodev.pointroo`, binary `Pointroo`; the Swift target is still `PointAndYap`), its MCP server `pointroo`,
+its skill `pointroo`, its recordings `~/Pointroo/sessions`, its support folder `~/Library/Application Support/Pointroo`.
+It has no update feed. Build and install with `bash scripts/build.sh` (ad-hoc signed unless `CODESIGN_IDENTITY` is set).
+The text below is mostly from the original and still says Point and Yap in places.
 
 1. Open the app and press Start recording. The window steps aside and a small pill with the time and Stop stays on top
    (it is never in the screenshots, and clicks on it are not points).

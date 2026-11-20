@@ -1,9 +1,9 @@
 ---
-name: point-and-yap
-description: The user's queue of things to fix from Point and Yap, where they point at things on screen and talk. Use when the user says "work through Point", "fix what I pointed at", "check Point", refers to something they recorded or showed, or pastes a "New in Point and Yap" line.
+name: pointroo
+description: The user's queue of things to fix from Pointroo, where they point at things on screen and talk. Use when the user says "work through Pointroo", "fix what I pointed at", "check Pointroo", refers to something they recorded or showed, or pastes a "New in Pointroo" line.
 ---
 
-# Point and Yap
+# Pointroo
 
 The user points at things on their screen with the cursor and says what is wrong. Every recording becomes an item in a
 queue: what they said, the elements under the cursor (role, visible text, window, `identifier` when the app sets one, the
@@ -11,7 +11,7 @@ parent elements) and cropped screenshots (red ring = cursor, yellow box = the el
 
 ## Work through the queue
 
-1. `get_open_items` (pointandyap MCP) marks the open items in progress by you, oldest first, and returns them; no other agent
+1. `get_open_items` (pointroo MCP) marks the open items in progress by you, oldest first, and returns them; no other agent
    gets them. To pick specific ones instead: `get_open_items` with `take: false`, then `start_items` with their ids.
    `list_items` shows what is open, in progress (by which agent) and done.
 2. For each item: look at its crops, find the code behind the element (grep its visible text first, then the identifier,
@@ -31,9 +31,9 @@ Every item is routed to a project (route.json in its folder: by a spoken name, b
 `get_open_items` gives you the items for the folder you run in, plus items not routed anywhere; `scope: "all"` shows every
 project's.
 
-Listen mode, so the user never pastes anything: when asked to listen (or "wait for Point"), loop:
+Listen mode, so the user never pastes anything: when asked to listen (or "wait for Pointroo"), loop:
 
-1. `wait_for_next` (pointandyap MCP): waits for a new item for this project and returns it like `get_open_items`.
+1. `wait_for_next` (pointroo MCP): waits for a new item for this project and returns it like `get_open_items`.
    It returns after up to 50 s if nothing came; call it again in a loop.
 2. Do it, then `mark_done` with a one-line note.
 3. Call `wait_for_next` again. On "Nothing new yet" just call it again.
@@ -41,17 +41,17 @@ Listen mode, so the user never pastes anything: when asked to listen (or "wait f
 Optional Stop hook, so an idle session picks up new items at the end of a turn. Add this to `~/.claude/settings.json`:
 
 ```json
-{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"\"/Applications/Point and Yap.app/Contents/MacOS/PointAndYap\" --hook-stop"}]}]}}
+{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"\"/Applications/Pointroo.app/Contents/MacOS/Pointroo\" --hook-stop"}]}]}}
 ```
 
 It only looks (it never takes items). If items wait for the project, it asks you to call `get_open_items`.
 
 ## Without the MCP (shell)
 
-`/Applications/Point.app/Contents/MacOS/Point --items` prints the open items; after a fix,
-`/Applications/Point.app/Contents/MacOS/Point --done <id> --note "what changed"` (set `POINT_AGENT` to your name).
+`/Applications/Pointroo.app/Contents/MacOS/Pointroo --items` prints the open items; after a fix,
+`/Applications/Pointroo.app/Contents/MacOS/Pointroo --done <id> --note "what changed"` (set `POINTANDYAP_AGENT` to your name).
 
 ## Files
 
-Recordings are folders in `~/Point/sessions/<id>/`: `session.md`, crops in `crops/NN.jpg`, the item states in
+Recordings are folders in `~/Pointroo/sessions/<id>/`: `session.md`, crops in `crops/NN.jpg`, the item states in
 `state.json`. Prefer the MCP: it keeps the states right when several agents work.

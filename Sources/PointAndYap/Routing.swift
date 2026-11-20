@@ -22,7 +22,7 @@ struct Project: Codable, Equatable {
     }
 }
 
-/// A running agent session: its `PointAndYap --mcp` process writes `live/<pid>.json` while it runs.
+/// A running agent session: its `Pointroo --mcp` process writes `live/<pid>.json` while it runs.
 struct LiveSession: Codable, Equatable {
     var pid: Int32
     var cwd: String
@@ -245,5 +245,5 @@ enum Router {
 /// Writes JSON atomically; a failure goes to stderr instead of being ignored.
 func writeLogged<T: Encodable>(_ value: T, to url: URL) {
     do { try JSONEncoder.pretty.encode(value).write(to: url, options: .atomic) }
-    catch { FileHandle.standardError.write(Data("pointandyap: could not save \(url.path): \(error.localizedDescription)\n".utf8)) }
+    catch { FileHandle.standardError.write(Data("pointroo: could not save \(url.path): \(error.localizedDescription)\n".utf8)) }
 }

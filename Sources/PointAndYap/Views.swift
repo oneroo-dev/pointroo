@@ -26,7 +26,7 @@ struct MainView: View {
             if let v = state.updateReady {
                 HStack {
                     Circle().fill(Ink.gold).frame(width: 7, height: 7)
-                    Text("Point and Yap \(v) is ready").font(.geist(13)).foregroundStyle(Ink.primary)
+                    Text("Pointroo \(v) is ready").font(.geist(13)).foregroundStyle(Ink.primary)
                     Spacer()
                     Button("Restart") { Updater.shared.restart() }.buttonStyle(SmallButton(dark: true))
                 }
@@ -104,7 +104,7 @@ struct AppTitle: View {
         HStack(spacing: 10) {
             Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 30, height: 30)
             VStack(alignment: .leading, spacing: 1) {
-                Text("Point and Yap").font(.geist(15, .medium)).foregroundStyle(Ink.primary)
+                Text("Pointroo").font(.geist(15, .medium)).foregroundStyle(Ink.primary)
                 Text("Show, don't type.").font(.geist(12)).foregroundStyle(Ink.muted)
             }
         }

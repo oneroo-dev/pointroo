@@ -1,11 +1,11 @@
 import Foundation
 
-/// `PointAndYap --items` and `PointAndYap --done <id>... [--note "..."]`: the queue for an agent that has a shell but not the MCP.
+/// `Pointroo --items` and `Pointroo --done <id>... [--note "..."]`: the queue for an agent that has a shell but not the MCP.
 enum QueueCLI {
     static func run(_ args: [String]) {
         if args.contains("--items") {
             let items = Items.all().filter { $0.status != "done" }
-            if items.isEmpty { print("Nothing open in Point and Yap."); return }
+            if items.isEmpty { print("Nothing open in Pointroo."); return }
             for i in items {
                 print("## \(i.id) [\(i.status.replacingOccurrences(of: "_", with: " "))\(i.by.map { " by \($0)" } ?? "")]\n\(i.body)\n")
             }
@@ -18,7 +18,7 @@ enum QueueCLI {
             if !args[i].hasPrefix("--") { ids.append(args[i]) }
             i += 1
         }
-        guard !ids.isEmpty else { print("Usage: PointAndYap --done <id>... [--note \"what changed\"]"); exit(2) }
+        guard !ids.isEmpty else { print("Usage: Pointroo --done <id>... [--note \"what changed\"]"); exit(2) }
         let r = Items.set(ids, status: "done", agent: ProcessInfo.processInfo.environment["POINTANDYAP_AGENT"] ?? "shell", note: note)
         if !r.changed.isEmpty { print("Done: \(r.changed.joined(separator: ", "))") }
         if !r.missing.isEmpty { print("Not changed: \(r.missing.joined(separator: ", "))"); exit(1) }

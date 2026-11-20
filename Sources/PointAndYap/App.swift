@@ -6,36 +6,30 @@ struct Main {
     static func main() {
         let args = CommandLine.arguments
         // The queue from a shell, for agents without the MCP:
-        //   PointAndYap --items            open and in-progress items
-        //   PointAndYap --done <id>... [--note "what changed"]
+        //   Pointroo --items            open and in-progress items
+        //   Pointroo --done <id>... [--note "what changed"]
         if args.contains("--items") || args.contains("--done") { QueueCLI.run(args); return }
-        // Claude Code Stop hook: PointAndYap --hook-stop (JSON on stdin)
+        // Claude Code Stop hook: Pointroo --hook-stop (JSON on stdin)
         if args.contains("--hook-stop") { HookStop.run(); return }
-        // Local MCP server for coding agents: PointAndYap --mcp
+        // Local MCP server for coding agents: Pointroo --mcp
         if args.contains("--mcp") { MCPServer.run(); return }
-        // Headless: PointAndYap --process <session dir>
+        // Headless: Pointroo --process <session dir>
         if let i = args.firstIndex(of: "--process"), i + 1 < args.count {
             let dir = URL(fileURLWithPath: args[i + 1])
             let done = DispatchSemaphore(value: 0)
             Task.detached {
-                let text = await Process.run(dir: dir) { print("pointandyap: \($0)") }
+                let text = await Process.run(dir: dir) { print("pointroo: \($0)") }
                 print(text)
                 done.signal()
             }
             done.wait()
             return
         }
-        // Offscreen design check: PointAndYap --render-ui <dir>
+        // Offscreen design check: Pointroo --render-ui <dir>
         if let i = args.firstIndex(of: "--render-ui"), i + 1 < args.count {
             MainActor.assumeIsolated { RenderUI.run(to: URL(fileURLWithPath: args[i + 1])) }
             return
         }
-        // Settings of builds before 0.1.1 (bundle id com.marcmaurer.point), carried over once.
-        let d = UserDefaults.standard
-        if !d.bool(forKey: "migratedSettings"), let old = d.persistentDomain(forName: "com.marcmaurer.point") {
-            for (k, v) in old where d.object(forKey: k) == nil { d.set(v, forKey: k) }
-        }
-        d.set(true, forKey: "migratedSettings")
         let app = NSApplication.shared
         let delegate = AppDelegate()
         app.delegate = delegate
@@ -121,7 +115,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let f = screen.visibleFrame
             pill.setFrameOrigin(NSPoint(x: f.midX - 100, y: f.maxY - 52))
             pill.orderFrontRegardless()
-            // Hand the screen back to the app that was in front before Point and Yap.
+            // Hand the screen back to the app that was in front before Pointroo.
             previousApp?.activate()
         } else {
             // Stay out of the way: the session is in the list and on the clipboard; the Dock icon opens the window.
@@ -136,8 +130,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let f = pill.frame.insetBy(dx: -12, dy: -12)
         return CGRect(x: f.minX, y: h - f.maxY, width: f.width, height: f.height)
     }
-
-    @objc private func checkForUpdates() { Updater.shared.checkNow() }
 
     /// ⌘Q and the menu's Quit: the user's choice, so no reopen.
     @objc private func quitByUser() {
@@ -155,16 +147,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let main = NSMenu()
         let appItem = NSMenuItem(); main.addItem(appItem)
         let appMenu = NSMenu()
-        let updates = NSMenuItem(title: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "")
-        updates.target = self
-        appMenu.addItem(updates)
         let settings = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
         settings.target = self
         appMenu.addItem(settings)
         appMenu.addItem(.separator())
-        appMenu.addItem(NSMenuItem(title: "Hide Point and Yap", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h"))
+        appMenu.addItem(NSMenuItem(title: "Hide Pointroo", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h"))
         appMenu.addItem(.separator())
-        let quit = NSMenuItem(title: "Quit Point and Yap", action: #selector(quitByUser), keyEquivalent: "q")
+        let quit = NSMenuItem(title: "Quit Pointroo", action: #selector(quitByUser), keyEquivalent: "q")
         quit.target = self
         appMenu.addItem(quit)
         appItem.submenu = appMenu
