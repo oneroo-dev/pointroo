@@ -98,8 +98,16 @@ enum Items {
         (try? Data(contentsOf: stateURL(dir))).flatMap { try? JSONDecoder.iso.decode(ItemState.self, from: $0) }
     }
 
-    static func writeState(_ s: ItemState, _ dir: URL) {
-        if let data = try? JSONEncoder.pretty.encode(s) { try? data.write(to: stateURL(dir), options: .atomic) }
+    /// False (and a line on stderr) when state.json could not be saved.
+    @discardableResult
+    static func writeState(_ s: ItemState, _ dir: URL) -> Bool {
+        do {
+            try JSONEncoder.pretty.encode(s).write(to: stateURL(dir), options: .atomic)
+            return true
+        } catch {
+            FileHandle.standardError.write(Data("pointandyap: could not save \(stateURL(dir).path): \(error.localizedDescription)\n".utf8))
+            return false
+        }
     }
 
     /// Runs `body` under ~/PointAndYap/.lock (flock), so agents in separate processes never take the same item.
@@ -132,7 +140,7 @@ enum Items {
                 if take {
                     if st == nil { st = ItemState(source: source) }
                     for i in free { st!.items[String(i.n)] = .init(status: "in_progress", by: agent, at: Date(), note: nil) }
-                    writeState(st!, dir)
+                    guard writeState(st!, dir) else { continue }
                 }
                 out += free.map { var i = $0; if take { i.status = "in_progress"; i.by = agent; i.at = Date() }; return i }
             }
@@ -173,15 +181,17 @@ enum Items {
                 var st = readState(dir)
                 let (source, items) = Self.items(in: dir, state: st)
                 if st == nil { st = ItemState(source: source) }
+                var sessionChanged: [String] = []
                 for id in list {
                     guard let item = items.first(where: { $0.id == id }) else { missing.append(id); continue }
                     if status == "in_progress", item.status == "done" || (item.status == "in_progress" && item.by != agent) {
                         missing.append("\(id) (\(item.status == "done" ? "done" : "in progress by \(item.by ?? "another agent")"))"); continue
                     }
                     st!.items[String(item.n)] = .init(status: status, by: agent, at: Date(), note: note)
-                    changed.append(id)
+                    sessionChanged.append(id)
                 }
-                writeState(st!, dir)
+                if writeState(st!, dir) { changed += sessionChanged }
+                else { missing += sessionChanged.map { "\($0) (could not save state)" } }
             }
             return (changed, missing)
         }

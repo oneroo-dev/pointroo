@@ -34,6 +34,7 @@ project's.
 Listen mode, so the user never pastes anything: when asked to listen (or "wait for Point"), loop:
 
 1. `wait_for_next` (pointandyap MCP): waits for a new item for this project and returns it like `get_open_items`.
+   It returns after up to 50 s if nothing came; call it again in a loop.
 2. Do it, then `mark_done` with a one-line note.
 3. Call `wait_for_next` again. On "Nothing new yet" just call it again.
 

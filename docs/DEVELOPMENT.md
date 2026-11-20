@@ -111,6 +111,6 @@ nothing routes and two or more projects are live, `AppState.stop()` shows a pick
 and its host:port (or window title) is added to that project in `projects.json`.
 
 `Items.openItems(project:)` hands out items whose path equals or contains/is inside the given path, plus unrouted items.
-MCP `get_open_items` uses the server's cwd (`scope: "all"` turns that off); `wait_for_next` polls every second for one.
+MCP `get_open_items` uses the server's cwd (`scope: "all"` turns that off); `wait_for_next` polls every second for one, for up to 50 s per call (max 55 s: the Claude desktop app cancels tool calls at about 60 s).
 `PointAndYap --hook-stop` is a Claude Code Stop hook: it reads `cwd` from stdin and, if items are open for it, prints a
 block decision (it never takes items). Setup is in the skill file.

@@ -23,6 +23,7 @@ enum MCPServer {
             case "initialize":
                 if let c = params["clientInfo"] as? [String: Any], let n = c["name"] as? String, !n.isEmpty { agent = n }
                 LiveSessions.register(cwd: cwd, agent: agent)
+                agent = "\(agent) (\(URL(fileURLWithPath: cwd).lastPathComponent))"
                 let asked = params["protocolVersion"] as? String
                 reply(id, ["protocolVersion": asked ?? protocolVersion,
                            "capabilities": ["tools": [:]],
@@ -49,7 +50,8 @@ enum MCPServer {
     you could not do. Done items are never handed out again. get_session reads a whole recording. Items are routed to \
     projects: you get the ones for the folder you run in, plus the ones not routed anywhere (scope "all" shows every project's). \
     To listen for new items without the user pasting anything, call wait_for_next: it waits until an item for this project \
-    arrives and returns it like get_open_items; do it, mark_done, then call wait_for_next again.
+    arrives and returns it like get_open_items; it returns after up to 50 s with nothing new, so call it again in a loop: \
+    do the item, mark_done, then call wait_for_next again.
     """
 
     static let tools: [[String: Any]] = [
@@ -61,9 +63,9 @@ enum MCPServer {
             "images": ["type": "boolean", "description": "Include the crops as images, default true"],
             "scope": ["type": "string", "description": "Default: only this project's items (the folder you run in) and items not routed anywhere. \"all\" returns every project's"]]]],
         ["name": "wait_for_next",
-         "description": "Listen mode: wait until a new open item for this project arrives (it is marked in progress by you and returned like get_open_items), or until the timeout. After you finish the item and mark_done, call wait_for_next again to keep listening. On timeout it says nothing new yet; just call it again.",
+         "description": "Listen mode: wait until a new open item for this project arrives (it is marked in progress by you and returned like get_open_items), or until the timeout (up to 50 s by default, 55 s at most; call it again in a loop). After you finish the item and mark_done, call wait_for_next again to keep listening. On timeout it says nothing new yet; just call it again.",
          "inputSchema": ["type": "object", "properties": [
-            "timeout_seconds": ["type": "integer", "description": "How long to wait, default 300, max 1800"],
+            "timeout_seconds": ["type": "integer", "description": "How long to wait, default 50, max 55"],
             "images": ["type": "boolean", "description": "Include the crops as images, default true"]]]],
         ["name": "mark_done",
          "description": "Mark items done once the change is made, so they are never handed out again.",
@@ -106,8 +108,8 @@ enum MCPServer {
             return openItems(limit: a["limit"] as? Int ?? 5, take: a["take"] as? Bool ?? true, images: a["images"] as? Bool ?? true,
                              project: (a["scope"] as? String) == "all" ? nil : cwd)
         case "wait_for_next":
-            let seconds = (a["timeout_seconds"] as? Int) ?? (a["timeout_seconds"] as? Double).map { Int($0) } ?? 300
-            return waitForNext(timeout: max(0, min(seconds, 1800)), images: a["images"] as? Bool ?? true)
+            let seconds = (a["timeout_seconds"] as? Int) ?? (a["timeout_seconds"] as? Double).map { Int($0) } ?? defaultWait
+            return waitForNext(timeout: waitTimeout(seconds), images: a["images"] as? Bool ?? true)
         case "mark_done": return setItems(a["ids"], status: "done", note: a["note"] as? String)
         case "start_items": return setItems(a["ids"], status: "in_progress", note: nil)
         case "list_items": return listItems(a["status"] as? String)
@@ -191,6 +193,10 @@ enum MCPServer {
         return ["content": [["type": "text", "text": "\(d.path)/\(name)"],
                             ["type": "image", "data": data.base64EncodedString(), "mimeType": "image/jpeg"]]]
     }
+
+    /// The Claude desktop app cancels a stdio tool call after about 60 s, so one wait stays under that.
+    static let defaultWait = 50
+    static func waitTimeout(_ requested: Int) -> Int { max(0, min(requested, 55)) }
 
     static func waitForNext(timeout: Int, images: Bool) -> [String: Any] {
         let deadline = Date().addingTimeInterval(TimeInterval(timeout))

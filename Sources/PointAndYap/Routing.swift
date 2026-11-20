@@ -77,7 +77,7 @@ enum LiveSessions {
     }
 
     private static func write(_ session: LiveSession) {
-        if let data = try? JSONEncoder.pretty.encode(session) { try? data.write(to: file(session.pid), options: .atomic) }
+        writeLogged(session, to: file(session.pid))
     }
 }
 
@@ -90,7 +90,7 @@ enum Projects {
 
     static func save(_ projects: [Project]) {
         try? FileManager.default.createDirectory(at: Paths.support, withIntermediateDirectories: true)
-        if let data = try? JSONEncoder.pretty.encode(projects) { try? data.write(to: file, options: .atomic) }
+        writeLogged(projects, to: file)
     }
 
     /// The projects file plus the folders of live sessions (named after the folder), one entry per path.
@@ -228,7 +228,7 @@ enum Router {
     }
 
     static func writeRoute(_ info: RouteInfo, to directory: URL) {
-        if let data = try? JSONEncoder.pretty.encode(info) { try? data.write(to: routeURL(directory), options: .atomic) }
+        writeLogged(info, to: routeURL(directory))
     }
 
     /// Routes a processed recording and saves route.json; nothing is written when no project fits. A project the user picked stays.
@@ -240,4 +240,10 @@ enum Router {
         let name = projects.first { samePath($0.path, result.path) }?.name ?? URL(fileURLWithPath: result.path).lastPathComponent
         writeRoute(RouteInfo(project: name, path: result.path, how: result.how), to: directory)
     }
+}
+
+/// Writes JSON atomically; a failure goes to stderr instead of being ignored.
+func writeLogged<T: Encodable>(_ value: T, to url: URL) {
+    do { try JSONEncoder.pretty.encode(value).write(to: url, options: .atomic) }
+    catch { FileHandle.standardError.write(Data("pointandyap: could not save \(url.path): \(error.localizedDescription)\n".utf8)) }
 }

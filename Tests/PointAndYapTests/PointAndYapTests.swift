@@ -233,4 +233,22 @@ final class PointAndYapTests: XCTestCase {
         XCTAssertEqual(Items.openItems(limit: 10, take: false, agent: "a", project: "/work/cms").count, 2, "explicit get_open_items keeps own + unrouted")
         _ = loose
     }
+
+    func testWaitTimeoutStaysUnderTheClientLimit() {
+        XCTAssertEqual(MCPServer.defaultWait, 50)
+        XCTAssertEqual(MCPServer.waitTimeout(1800), 55)
+        XCTAssertEqual(MCPServer.waitTimeout(-5), 0)
+    }
+
+    func testAnItemIsNotReportedChangedWhenItsStateCannotBeSaved() throws {
+        let dir = session("2026-10-17_120030")
+        let fm = FileManager.default
+        try fm.setAttributes([.posixPermissions: 0o555], ofItemAtPath: dir.path)
+        defer { try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dir.path) }
+        guard !fm.isWritableFile(atPath: dir.path) else { throw XCTSkip("folder is writable anyway (running as root)") }
+        let result = Items.set(["2026-10-17_120030#1"], status: "done", agent: "a", note: nil)
+        XCTAssertTrue(result.changed.isEmpty)
+        XCTAssertTrue(result.missing.first?.contains("could not save state") == true, "\(result.missing)")
+        XCTAssertTrue(Items.openItems(limit: 5, take: true, agent: "a").isEmpty, "not taken when the state cannot be saved")
+    }
 }
