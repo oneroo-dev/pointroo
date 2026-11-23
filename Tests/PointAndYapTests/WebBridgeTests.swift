@@ -467,4 +467,117 @@ final class WebBridgeTests: XCTestCase {
         XCTAssertNil(out["groups"])
         XCTAssertEqual((out["items"] as? [[String: Any]])?.map { $0["id"] as? String }, ["a#1", "b#1"])
     }
+
+    private final class StatusCalls {
+        var calls: [(id: String, status: String, note: String?)] = []
+        var unrouted: [String] = []
+        var copied: [String] = []
+    }
+
+    private func statusBridge(_ calls: StatusCalls, outcome: WebBridge.StatusChange = .changed) -> WebBridge {
+        WebBridge(defaults: defaults, loadItems: { [] },
+                  changeStatus: { calls.calls.append(($0, $1, $2)); return outcome })
+    }
+
+    func testDoneReopenAndTrashCallTheStatusClosure() throws {
+        let calls = StatusCalls()
+        let subject = statusBridge(calls)
+        let done = try replyObject(subject.handle(message: ["id": 1, "method": "items.done", "params": ["id": "a#1", "note": "fixed"]]))
+        XCTAssertEqual((done["result"] as? [String: Any])?["done"] as? Bool, true)
+        let reopened = try replyObject(subject.handle(message: ["id": 2, "method": "items.reopen", "params": ["id": "a#1"]]))
+        XCTAssertEqual((reopened["result"] as? [String: Any])?["reopened"] as? Bool, true)
+        let trashed = try replyObject(subject.handle(message: ["id": 3, "method": "items.trash", "params": ["id": "a#2"]]))
+        XCTAssertEqual((trashed["result"] as? [String: Any])?["trashed"] as? Bool, true)
+        XCTAssertEqual(calls.calls.map(\.id), ["a#1", "a#1", "a#2"])
+        XCTAssertEqual(calls.calls.map(\.status), ["done", "open", "trashed"])
+        XCTAssertEqual(calls.calls.map(\.note), ["fixed", nil, nil])
+    }
+
+    func testDoneWithoutANoteOrWithAnEmptyNoteSendsNil() throws {
+        let calls = StatusCalls()
+        let subject = statusBridge(calls)
+        _ = subject.handle(message: ["id": 1, "method": "items.done", "params": ["id": "a#1"]])
+        _ = subject.handle(message: ["id": 2, "method": "items.done", "params": ["id": "a#2", "note": ""]])
+        XCTAssertEqual(calls.calls.count, 2)
+        XCTAssertNil(calls.calls[0].note)
+        XCTAssertNil(calls.calls[1].note)
+    }
+
+    func testStatusMethodsRefuseBadParamsWithoutCallingTheClosure() throws {
+        let calls = StatusCalls()
+        let subject = statusBridge(calls)
+        for method in ["items.done", "items.reopen", "items.trash"] {
+            XCTAssertEqual(try code(subject, method, [:]), "bad_params")
+            XCTAssertEqual(try code(subject, method, ["id": ""]), "bad_params")
+            XCTAssertEqual(try code(subject, method, ["id": 5]), "bad_params")
+        }
+        XCTAssertEqual(try code(subject, "items.done", ["id": "a#1", "note": 5]), "bad_params")
+        XCTAssertTrue(calls.calls.isEmpty)
+    }
+
+    func testStatusMethodsMapMissingAndSaveFailed() throws {
+        for method in ["items.done", "items.reopen", "items.trash"] {
+            XCTAssertEqual(try code(statusBridge(StatusCalls(), outcome: .missing), method, ["id": "a#1"]), "not_found")
+            XCTAssertEqual(try code(statusBridge(StatusCalls(), outcome: .saveFailed), method, ["id": "a#1"]), "not_available")
+        }
+    }
+
+    func testUnrouteCallsTheClosureAndMapsTheOtherResults() throws {
+        let calls = StatusCalls()
+        let good = WebBridge(defaults: defaults, loadItems: { [] }, unroute: { calls.unrouted.append($0); return .unrouted })
+        let reply = try replyObject(good.handle(message: ["id": 1, "method": "items.unroute", "params": ["id": "a#1"]]))
+        XCTAssertEqual((reply["result"] as? [String: Any])?["unrouted"] as? Bool, true)
+        XCTAssertEqual(calls.unrouted, ["a#1"])
+        func code(_ result: Items.UnrouteResult) throws -> String? {
+            let subject = WebBridge(defaults: defaults, loadItems: { [] }, unroute: { _ in result })
+            return try errorCode(subject.handle(message: ["id": 1, "method": "items.unroute", "params": ["id": "a#1"]]))
+        }
+        XCTAssertEqual(try code(.missing), "not_found")
+        XCTAssertEqual(try code(.taken), "refused")
+        XCTAssertEqual(try code(.saveFailed), "not_available")
+        XCTAssertEqual(try self.code(good, "items.unroute", [:]), "bad_params")
+        XCTAssertEqual(try self.code(good, "items.unroute", ["id": ""]), "bad_params")
+        XCTAssertEqual(calls.unrouted, ["a#1"])
+    }
+
+    func testClipboardCopyWritesTheTextAndRefusesBadText() throws {
+        let calls = StatusCalls()
+        let subject = WebBridge(defaults: defaults, loadItems: { [] }, writeClipboard: { calls.copied.append($0) })
+        let reply = try replyObject(subject.handle(message: ["id": 1, "method": "clipboard.copy", "params": ["text": "New in Pointroo"]]))
+        XCTAssertEqual((reply["result"] as? [String: Any])?["copied"] as? Bool, true)
+        XCTAssertEqual(calls.copied, ["New in Pointroo"])
+        XCTAssertEqual(try code(subject, "clipboard.copy", [:]), "bad_params")
+        XCTAssertEqual(try code(subject, "clipboard.copy", ["text": ""]), "bad_params")
+        XCTAssertEqual(try code(subject, "clipboard.copy", ["text": 5]), "bad_params")
+        XCTAssertEqual(calls.copied, ["New in Pointroo"])
+    }
+
+    func testItemsListLeavesOutTrashedItemsUnlessAsked() throws {
+        let items = [item("a#1"), item("b#1", status: "trashed"), item("c#1", status: "done")]
+        let subject = bridge(items)
+        let all = try XCTUnwrap(result(subject, "items.list")["items"] as? [[String: Any]])
+        XCTAssertEqual(all.map { $0["id"] as? String }, ["a#1", "c#1"])
+        let trashed = try XCTUnwrap(result(subject, "items.list", ["status": "trashed"])["items"] as? [[String: Any]])
+        XCTAssertEqual(trashed.map { $0["id"] as? String }, ["b#1"])
+        let grouped = try XCTUnwrap(result(subject, "items.list", ["groupBy": "project"])["groups"] as? [[String: Any]])
+        XCTAssertEqual(grouped.flatMap { ($0["items"] as? [[String: Any]]) ?? [] }.map { $0["id"] as? String }, ["a#1", "c#1"])
+    }
+
+    func testStartDragCallsTheClosureAndWithoutOneIsNotAvailable() throws {
+        let calls = StatusCalls()
+        let subject = WebBridge(defaults: defaults, loadItems: { [] }, startDrag: { calls.unrouted.append("drag") })
+        XCTAssertEqual(try result(subject, "window.startDrag")["dragging"] as? Bool, true)
+        XCTAssertEqual(calls.unrouted, ["drag"])
+        XCTAssertEqual(try code(WebBridge(defaults: defaults), "window.startDrag", [:]), "not_available")
+    }
+
+    func testKitWindowSettingIsAFlagThatDefaultsToOn() throws {
+        let subject = bridge()
+        let first = try XCTUnwrap(result(subject, "settings.get", ["key": "kitWindow"])["value"] as? Bool)
+        XCTAssertTrue(first)
+        _ = try result(subject, "settings.set", ["key": "kitWindow", "value": false])
+        XCTAssertEqual(defaults.object(forKey: "kitWindow") as? Bool, false)
+        XCTAssertEqual(try result(subject, "settings.get", ["key": "kitWindow"])["value"] as? Bool, false)
+        XCTAssertEqual(try code(subject, "settings.set", ["key": "kitWindow", "value": "no"]), "bad_params")
+    }
 }

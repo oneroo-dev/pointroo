@@ -9,7 +9,7 @@ struct Item {
     var title: String
     var body: String
     var crops: [URL]
-    var status: String        // open, in_progress, done
+    var status: String        // open, in_progress, done, trashed (hidden by the user; never handed out)
     var at: Date?
     var by: String?
     var note: String?
@@ -258,8 +258,9 @@ enum Items {
                 var sessionChanged: [String] = [], closed: [String] = []
                 for id in list {
                     guard let item = items.first(where: { $0.id == id }) else { missing.append(id); continue }
-                    if status == "in_progress", item.status == "done" || (item.status == "in_progress" && item.by != agent) {
-                        missing.append("\(id) (\(item.status == "done" ? "done" : "in progress by \(item.by ?? "another agent")"))"); continue
+                    if status == "in_progress", item.status == "done" || item.status == "trashed" || (item.status == "in_progress" && item.by != agent) {
+                        let reason = item.status == "done" ? "done" : item.status == "trashed" ? "in the trash" : "in progress by \(item.by ?? "another agent")"
+                        missing.append("\(id) (\(reason))"); continue
                     }
                     let isRepeat = repeatNotes[id] != nil
                     st!.items[String(item.n)] = .init(status: status, by: agent, at: Date(), note: repeatNotes[id] ?? note,

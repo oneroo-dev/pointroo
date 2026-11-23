@@ -6,7 +6,7 @@ extension Prefs {
     static var webDevURL: String? { UserDefaults.standard.string(forKey: "webDevURL") }
 }
 
-/// Makes the web view that shows the kit screens. It is not wired into any window yet.
+/// Makes the web view that shows the kit screens. AppDelegate puts it in the main window when the kitWindow setting is on.
 @MainActor
 final class WebHost {
     let webView: WKWebView
@@ -42,13 +42,22 @@ final class WebHost {
         }
     }
 
+    /// Moves the window with the mouse, like dragging a title bar. Only works right after a left-mouse-down in the web view
+    /// (less than about a second old); otherwise it does nothing.
+    func performWindowDrag() {
+        guard let view = webView as? PlainWebView, let event = view.lastMouseDown,
+              event.type == .leftMouseDown, ProcessInfo.processInfo.systemUptime - event.timestamp < 1,
+              let window = view.window else { return }
+        window.performDrag(with: event)
+    }
+
     /// Tells the page about something (runs window.pointroo.emit).
     func emit(_ name: String, _ data: Any) {
         webView.evaluateJavaScript(WebBridge.emitScript(name: name, data: data), completionHandler: nil)
     }
 
     /// Starts telling the page about changes, once a second. The disk is read on a background queue; the events go out on the main actor.
-    /// Nothing calls this yet: the redesign calls it when it shows the web view.
+    /// AppDelegate calls this when the kit window shows, and stopEvents when it closes or hides.
     func startEvents(state: AppState) {
         stopEvents()
         webEvents = WebEvents()
@@ -129,7 +138,15 @@ final class WebHost {
 
 /// A web view with no right-click menu.
 private final class PlainWebView: WKWebView {
+    /// The last left-mouse-down, kept so the page can ask for a window drag (window.startDrag) right after it.
+    var lastMouseDown: NSEvent?
+
     override func menu(for event: NSEvent) -> NSMenu? { nil }
+
+    override func mouseDown(with event: NSEvent) {
+        lastMouseDown = event
+        super.mouseDown(with: event)
+    }
 }
 
 private final class NavigationPolicy: NSObject, WKNavigationDelegate {

@@ -123,4 +123,29 @@ extension Items {
             return .moved
         }
     }
+
+    enum UnrouteResult: Equatable {
+        case unrouted
+        case missing
+        case taken
+        case saveFailed
+    }
+
+    /// Undoes a send: deletes route.json of the item's session, so its items are sent nowhere again.
+    /// An item an agent already took (in progress) or finished (done) is refused. route.json is per recording, so every item of that recording loses its route.
+    /// A recording with no route is already unrouted, and answers `.unrouted`. What the router learned from an earlier pick is not forgotten.
+    @discardableResult
+    static func unroute(id: String) -> UnrouteResult {
+        guard DeepLink.isValid(id), let session = id.split(separator: "#").first.map(String.init) else { return .missing }
+        return locked {
+            let directory = Paths.root.appendingPathComponent(session)
+            guard FileManager.default.fileExists(atPath: directory.appendingPathComponent("session.md").path),
+                  let item = items(in: directory, state: readState(directory)).items.first(where: { $0.id == id }) else { return .missing }
+            if item.status == "in_progress" || item.status == "done" { return .taken }
+            let file = Router.routeURL(directory)
+            guard FileManager.default.fileExists(atPath: file.path) else { return .unrouted }
+            try? FileManager.default.removeItem(at: file)
+            return FileManager.default.fileExists(atPath: file.path) ? .saveFailed : .unrouted
+        }
+    }
 }

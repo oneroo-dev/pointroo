@@ -4,7 +4,7 @@ import Foundation
 enum QueueCLI {
     static func run(_ args: [String]) {
         if args.contains("--items") {
-            let items = Items.all().filter { $0.status != "done" }
+            let items = Items.all().filter { $0.status != "done" && $0.status != "trashed" }
             if items.isEmpty { print("Nothing open in Pointroo."); return }
             for i in items {
                 print("## \(i.id) [\(i.status.replacingOccurrences(of: "_", with: " "))\(i.by.map { " by \($0)" } ?? "")]\n\(i.body)\n")
