@@ -28,6 +28,34 @@ struct Element: Codable {
     var identifier: String?   // AXIdentifier: source tags of apps we build land here
     var frame: Rect?
     var path: [String]        // ancestors, outermost first, "AXWindow 'Settings'"
+    var domIdentifier: String? = nil   // web pages: the element's id attribute (AXDOMIdentifier)
+    var domClasses: [String]? = nil    // web pages: the element's class names (AXDOMClassList)
+}
+
+extension Element {
+    static let maxClasses = 6
+    static let maxClassLength = 40
+
+    /// Turns raw web attributes into what we store: empty id and empty class lists become nil.
+    static func cleanWebAttributes(identifier: String?, classes: [String]?) -> (identifier: String?, classes: [String]?) {
+        let trimmedIdentifier = identifier?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let keptClasses = (classes ?? [])
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        return ((trimmedIdentifier?.isEmpty ?? true) ? nil : trimmedIdentifier, keptClasses.isEmpty ? nil : keptClasses)
+    }
+
+    /// The text added to a point line for a web element, like `, web id "save", classes btn primary`. Empty for native elements.
+    static func webText(_ element: Element?) -> String {
+        guard let element else { return "" }
+        var text = ""
+        if let identifier = element.domIdentifier, !identifier.isEmpty { text += ", web id \"\(identifier)\"" }
+        if let classes = element.domClasses, !classes.isEmpty {
+            let shown = classes.prefix(maxClasses).map { String($0.trimmingCharacters(in: .whitespaces).prefix(maxClassLength)) }
+            text += ", classes " + shown.joined(separator: " ")
+        }
+        return text
+    }
 }
 
 struct PointEvent: Codable {

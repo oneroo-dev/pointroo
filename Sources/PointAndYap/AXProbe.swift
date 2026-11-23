@@ -33,6 +33,7 @@ enum AXProbe {
             cur = parent(of: c)
             depth += 1
         }
+        let web = Element.cleanWebAttributes(identifier: string(el, "AXDOMIdentifier"), classes: stringList(el, "AXDOMClassList"))
         let e = Element(
             role: string(el, kAXRoleAttribute),
             subrole: string(el, kAXSubroleAttribute),
@@ -42,7 +43,9 @@ enum AXProbe {
             help: string(el, kAXHelpAttribute).map { clip($0, 200) },
             identifier: string(el, kAXIdentifierAttribute),
             frame: frame(el).map(Rect.init),
-            path: path)
+            path: path,
+            domIdentifier: web.identifier,
+            domClasses: web.classes)
         return (e, window, url)
     }
 
@@ -60,6 +63,12 @@ enum AXProbe {
         if let n = v as? NSNumber { return n.stringValue }
         if let u = v as? URL { return u.absoluteString }
         return nil
+    }
+
+    private static func stringList(_ e: AXUIElement, _ attr: String) -> [String]? {
+        var v: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(e, attr as CFString, &v) == .success, let v else { return nil }
+        return v as? [String]
     }
 
     private static func urlString(_ e: AXUIElement) -> String? {
