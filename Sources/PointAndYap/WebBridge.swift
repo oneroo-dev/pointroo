@@ -19,8 +19,20 @@ import Foundation
 /// Error codes: bad_request (not valid JSON, or no method), unknown_method, bad_params, not_found, not_available, refused.
 ///
 /// Methods
-///   items.list      params {status?: "open" | "in_progress" | "done"}   (no status = every item)
-///                   result {items: [Item]}
+///   items.list      params {status?: "open" | "in_progress" | "done", project?: string, maxAgeHours?: number, groupBy?: "project"}
+///                   status    no status = every item
+///                   project   a project's name or folder path; "none" means items with no project; error not_found when unknown
+///                   maxAgeHours  a number above 0: only items made within that many hours (uses the item's `at` date; an item with no date is left out)
+///                   groupBy   only "project" is allowed
+///                   result {items: [Item]}   in the order the queue gives them (unchanged)
+///                   with groupBy: result {groups: [{project: {name, path} or null, items: [Item]}]}
+///                   groups follow projects.list order (live projects first, then the rest by name), then folders that are not known
+///                   projects, and the group with no project (project null) last; inside a group the newest item comes first
+///                   (items with no date last, ties keep the queue order). Groups with no items are left out.
+///   projects.list   no params
+///                   result {projects: [{name, path, aliases: [string], live: bool, agents: [string], key?: 1...9, open, inProgress}]}
+///                   live projects come first (in picker order), then the others by name ignoring case. `key` is the picker's number key,
+///                   given to the first nine live projects only. `open` and `inProgress` count the items routed to that folder.
 ///   items.get       params {id: string}
 ///                   result {item: Item}   error not_found when there is no such item
 ///   items.reroute   params {id: string, project: string}   (project is a project's name or folder path, as in Projects.known())
@@ -92,6 +104,7 @@ final class WebBridge {
     /// The whitelist. A method that is not here is an error.
     static let methods: [String: Handler] = [
         "items.list": { bridge, params in try bridge.itemsList(params) },
+        "projects.list": { bridge, params in try bridge.projectsList(params) },
         "items.get": { bridge, params in try bridge.itemsGet(params) },
         "items.reroute": { bridge, params in try bridge.itemsReroute(params) },
         "questions.list": { bridge, params in try bridge.questionsList(params) },
@@ -104,17 +117,24 @@ final class WebBridge {
     private let loadItems: () -> [Item]
     private let findProject: (String) -> Project?
     private let reroute: (String, Project) -> Items.RerouteResult
+    private let loadProjects: () -> [Project]
+    private let loadLive: () -> [LiveSession]
 
     /// `findProject` turns the page's text (a name or a folder path) into a known project. `reroute` moves the item.
+    /// `loadProjects` and `loadLive` give the projects and the running agent sessions for projects.list and the grouping.
     /// The defaults use the real project list and Items.reroute (the same call AppState.reroute makes, without its banner).
     init(defaults: UserDefaults = .standard,
          loadItems: @escaping () -> [Item] = { Items.all() },
          findProject: @escaping (String) -> Project? = { WebBridge.knownProject($0) },
-         reroute: @escaping (String, Project) -> Items.RerouteResult = { Items.reroute(id: $0, to: $1) }) {
+         reroute: @escaping (String, Project) -> Items.RerouteResult = { Items.reroute(id: $0, to: $1) },
+         loadProjects: @escaping () -> [Project] = { Projects.load() },
+         loadLive: @escaping () -> [LiveSession] = { LiveSessions.all() }) {
         self.defaults = defaults
         self.loadItems = loadItems
         self.findProject = findProject
         self.reroute = reroute
+        self.loadProjects = loadProjects
+        self.loadLive = loadLive
     }
 
     /// A known project whose folder is this path, or whose name is this text (ignoring case).
@@ -189,7 +209,113 @@ final class WebBridge {
             }
             items = items.filter { $0.status == wanted }
         }
-        return ["items": items.map(Self.dictionary)]
+        var onlyProject: Project?
+        if let project = params["project"] {
+            guard let text = project as? String, !text.isEmpty else {
+                throw Failure(code: "bad_params", message: "project must be a name, a folder path or none.")
+            }
+            if text == "none" {
+                items = items.filter { $0.project == nil }
+            } else {
+                guard let found = findProject(text) else { throw Failure(code: "not_found", message: "No project \(text).") }
+                onlyProject = found
+                items = items.filter { item in item.project.map { Router.samePath($0, found.path) } ?? false }
+            }
+        }
+        if let hours = params["maxAgeHours"] {
+            guard let number = hours as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+                  number.doubleValue > 0, number.doubleValue.isFinite else {
+                throw Failure(code: "bad_params", message: "maxAgeHours must be a number above 0.")
+            }
+            let oldest = Date().addingTimeInterval(-number.doubleValue * 3600)
+            items = items.filter { item in item.at.map { $0 >= oldest } ?? false }
+        }
+        guard let groupBy = params["groupBy"] else { return ["items": items.map(Self.dictionary)] }
+        guard let by = groupBy as? String, by == "project" else {
+            throw Failure(code: "bad_params", message: "groupBy can only be project.")
+        }
+        return ["groups": groups(of: items)]
+    }
+
+    private func groups(of items: [Item]) -> [[String: Any]] {
+        var buckets: [(project: Project?, items: [Item])] = orderedProjects().projects.map { ($0, []) }
+        var noProject: [Item] = []
+        for item in items {
+            guard let path = item.project else { noProject.append(item); continue }
+            if let index = buckets.firstIndex(where: { $0.project.map { Router.samePath($0.path, path) } ?? false }) {
+                buckets[index].items.append(item)
+            } else {
+                buckets.append((Project(name: URL(fileURLWithPath: path).lastPathComponent, path: path), [item]))
+            }
+        }
+        buckets.append((nil, noProject))
+        var result: [[String: Any]] = []
+        for bucket in buckets where !bucket.items.isEmpty {
+            let project: Any = bucket.project.map { ["name": $0.name, "path": $0.path] as [String: Any] } ?? NSNull()
+            result.append(["project": project, "items": Self.newestFirst(bucket.items).map(Self.dictionary)])
+        }
+        return result
+    }
+
+    /// Newest first by the item's date; items with no date go last; equal dates keep their order.
+    private static func newestFirst(_ items: [Item]) -> [Item] {
+        items.enumerated().sorted { first, second in
+            switch (first.element.at, second.element.at) {
+            case let (one?, two?): return one != two ? one > two : first.offset < second.offset
+            case (nil, nil): return first.offset < second.offset
+            case (_?, nil): return true
+            case (nil, _?): return false
+            }
+        }.map(\.element)
+    }
+
+    /// The known projects in picker order: the live ones first (order of first appearance of each live folder), then the
+    /// others by name ignoring case. `liveCount` is how many come first; `agents` has the agent names of each live one.
+    private func orderedProjects() -> (projects: [Project], liveCount: Int, agents: [[String]]) {
+        let live = loadLive()
+        var all: [Project] = []
+        for project in Projects.known(file: loadProjects(), live: live) where !all.contains(where: { Router.samePath($0.path, project.path) }) {
+            all.append(project)
+        }
+        var liveOnes: [Project] = []
+        var agents: [[String]] = []
+        for session in live {
+            guard let project = all.first(where: { Router.samePath($0.path, session.cwd) }) else { continue }
+            if let index = liveOnes.firstIndex(where: { Router.samePath($0.path, project.path) }) {
+                if !agents[index].contains(session.agent) { agents[index].append(session.agent) }
+            } else {
+                liveOnes.append(project)
+                agents.append([session.agent])
+            }
+        }
+        let others = all.enumerated()
+            .filter { entry in !liveOnes.contains { Router.samePath($0.path, entry.element.path) } }
+            .sorted { first, second in
+                let order = first.element.name.caseInsensitiveCompare(second.element.name)
+                return order != .orderedSame ? order == .orderedAscending : first.offset < second.offset
+            }
+            .map(\.element)
+        return (liveOnes + others, liveOnes.count, agents)
+    }
+
+    private func projectsList(_ params: [String: Any]) throws -> Any {
+        let order = orderedProjects()
+        let items = loadItems()
+        var entries: [[String: Any]] = []
+        for (index, project) in order.projects.enumerated() {
+            let isLive = index < order.liveCount
+            let own = items.filter { item in item.project.map { Router.samePath($0, project.path) } ?? false }
+            var entry: [String: Any] = [
+                "name": project.name, "path": project.path, "aliases": project.aliases,
+                "live": isLive,
+                "agents": isLive ? order.agents[index] : [String](),
+                "open": own.filter { $0.status == "open" }.count,
+                "inProgress": own.filter { $0.status == "in_progress" }.count,
+            ]
+            if isLive, index < 9 { entry["key"] = index + 1 }
+            entries.append(entry)
+        }
+        return ["projects": entries]
     }
 
     private func itemsGet(_ params: [String: Any]) throws -> Any {

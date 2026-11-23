@@ -267,4 +267,152 @@ final class WebBridgeTests: XCTestCase {
         XCTAssertNil(WebHost.devURL(from: ""))
         XCTAssertNil(WebHost.devURL(from: nil))
     }
+
+    private func routed(_ id: String, project: String?, status: String = "open", hoursAgo: Double? = nil) -> Item {
+        var made = item(id, status: status)
+        made.project = project
+        made.at = hoursAgo.map { Date().addingTimeInterval(-$0 * 3600) }
+        return made
+    }
+
+    private func live(_ cwd: String, agent: String = "claude", pid: Int32 = 1) -> LiveSession {
+        LiveSession(pid: pid, cwd: cwd, agent: agent, started: Date(), lastSeen: Date())
+    }
+
+    private let projectList = [Project(name: "zeta", path: "/work/zeta"), Project(name: "Alpha", path: "/work/alpha", aliases: ["a"]),
+                               Project(name: "beta", path: "/work/beta")]
+
+    private func projectBridge(items: [Item] = [], live sessions: [LiveSession] = [], projects: [Project]? = nil) -> WebBridge {
+        let list = projects ?? projectList
+        return WebBridge(defaults: defaults, loadItems: { items },
+                         findProject: { text in list.first { $0.path == text || $0.name.lowercased() == text.lowercased() } },
+                         loadProjects: { list }, loadLive: { sessions })
+    }
+
+    private func result(_ bridge: WebBridge, _ method: String, _ params: [String: Any] = [:]) throws -> [String: Any] {
+        let reply = try replyObject(bridge.handle(message: ["id": 1, "method": method, "params": params]))
+        return try XCTUnwrap(reply["result"] as? [String: Any])
+    }
+
+    private func code(_ bridge: WebBridge, _ method: String, _ params: [String: Any]) throws -> String? {
+        try errorCode(bridge.handle(message: ["id": 1, "method": method, "params": params]))
+    }
+
+    func testProjectsListPutsLiveFirstWithKeysThenOthersByName() throws {
+        let subject = projectBridge(live: [live("/work/zeta", pid: 1), live("/work/new", pid: 2), live("/work/zeta", agent: "codex", pid: 3)])
+        let projects = try XCTUnwrap(result(subject, "projects.list")["projects"] as? [[String: Any]])
+        XCTAssertEqual(projects.map { $0["path"] as? String }, ["/work/zeta", "/work/new", "/work/alpha", "/work/beta"])
+        XCTAssertEqual(projects.map { $0["key"] as? Int }, [1, 2, nil, nil])
+        XCTAssertEqual(projects.map { $0["name"] as? String }, ["zeta", "new", "Alpha", "beta"])
+    }
+
+    func testProjectsListGivesKeysToTheFirstNineLiveProjectsOnly() throws {
+        let sessions = (1...10).map { live("/work/p\($0)", pid: Int32($0)) }
+        let projects = try XCTUnwrap(result(projectBridge(live: sessions, projects: []), "projects.list")["projects"] as? [[String: Any]])
+        XCTAssertEqual(projects.count, 10)
+        XCTAssertEqual(projects.map { $0["key"] as? Int }, [1, 2, 3, 4, 5, 6, 7, 8, 9, nil])
+        XCTAssertEqual(projects.last?["live"] as? Bool, true)
+    }
+
+    func testProjectsListShowsLiveFlagAgentsAndAliases() throws {
+        let subject = projectBridge(live: [live("/work/zeta", agent: "claude", pid: 1), live("/work/zeta", agent: "codex", pid: 2),
+                                           live("/work/zeta", agent: "claude", pid: 3)])
+        let projects = try XCTUnwrap(result(subject, "projects.list")["projects"] as? [[String: Any]])
+        XCTAssertEqual(projects[0]["live"] as? Bool, true)
+        XCTAssertEqual(projects[0]["agents"] as? [String], ["claude", "codex"])
+        let alpha = try XCTUnwrap(projects.first { $0["path"] as? String == "/work/alpha" })
+        XCTAssertEqual(alpha["live"] as? Bool, false)
+        XCTAssertEqual(alpha["agents"] as? [String], [])
+        XCTAssertEqual(alpha["aliases"] as? [String], ["a"])
+    }
+
+    func testProjectsListCountsOpenAndInProgressItemsPerProject() throws {
+        let items = [routed("a#1", project: "/work/alpha"), routed("a#2", project: "/work/alpha"),
+                     routed("a#3", project: "/work/alpha", status: "in_progress"), routed("a#4", project: "/work/alpha", status: "done"),
+                     routed("b#1", project: "/work/beta"), routed("c#1", project: nil)]
+        let projects = try XCTUnwrap(result(projectBridge(items: items), "projects.list")["projects"] as? [[String: Any]])
+        let alpha = try XCTUnwrap(projects.first { $0["path"] as? String == "/work/alpha" })
+        let beta = try XCTUnwrap(projects.first { $0["path"] as? String == "/work/beta" })
+        let zeta = try XCTUnwrap(projects.first { $0["path"] as? String == "/work/zeta" })
+        XCTAssertEqual(alpha["open"] as? Int, 2)
+        XCTAssertEqual(alpha["inProgress"] as? Int, 1)
+        XCTAssertEqual(beta["open"] as? Int, 1)
+        XCTAssertEqual(zeta["open"] as? Int, 0)
+        XCTAssertEqual(zeta["inProgress"] as? Int, 0)
+    }
+
+    func testItemsListFiltersByProjectNameAndByPath() throws {
+        let items = [routed("a#1", project: "/work/alpha"), routed("b#1", project: "/work/beta"), routed("c#1", project: nil)]
+        let subject = projectBridge(items: items)
+        for text in ["alpha", "/work/alpha"] {
+            let found = try XCTUnwrap(result(subject, "items.list", ["project": text])["items"] as? [[String: Any]])
+            XCTAssertEqual(found.map { $0["id"] as? String }, ["a#1"])
+        }
+    }
+
+    func testItemsListProjectNoneKeepsItemsWithNoProject() throws {
+        let items = [routed("a#1", project: "/work/alpha"), routed("c#1", project: nil)]
+        let found = try XCTUnwrap(result(projectBridge(items: items), "items.list", ["project": "none"])["items"] as? [[String: Any]])
+        XCTAssertEqual(found.map { $0["id"] as? String }, ["c#1"])
+    }
+
+    func testItemsListUnknownProjectIsNotFoundAndWrongKindIsBadParams() throws {
+        let subject = projectBridge(items: [routed("a#1", project: "/work/alpha")])
+        XCTAssertEqual(try code(subject, "items.list", ["project": "nowhere"]), "not_found")
+        XCTAssertEqual(try code(subject, "items.list", ["project": 5]), "bad_params")
+    }
+
+    func testItemsListMaxAgeHoursKeepsRecentItemsAndDropsOldOnes() throws {
+        let items = [routed("new#1", project: nil, hoursAgo: 1), routed("old#1", project: nil, hoursAgo: 30), routed("nodate#1", project: nil)]
+        let subject = projectBridge(items: items)
+        let day = try XCTUnwrap(result(subject, "items.list", ["maxAgeHours": 24])["items"] as? [[String: Any]])
+        XCTAssertEqual(day.map { $0["id"] as? String }, ["new#1"])
+        let week = try XCTUnwrap(result(subject, "items.list", ["maxAgeHours": 24.5 * 7])["items"] as? [[String: Any]])
+        XCTAssertEqual(week.map { $0["id"] as? String }, ["new#1", "old#1"])
+    }
+
+    func testItemsListBadMaxAgeHoursIsBadParams() throws {
+        let subject = projectBridge(items: [routed("a#1", project: nil, hoursAgo: 1)])
+        let badValues: [Any] = [0, -3, "24", true, NSNull()]
+        for value in badValues {
+            XCTAssertEqual(try code(subject, "items.list", ["maxAgeHours": value]), "bad_params")
+        }
+    }
+
+    func testItemsListGroupByProjectGivesGroupsLiveFirstNoProjectLastNewestFirst() throws {
+        let items = [routed("b#1", project: "/work/beta", hoursAgo: 5), routed("z#1", project: "/work/zeta", hoursAgo: 9),
+                     routed("z#2", project: "/work/zeta", hoursAgo: 2), routed("z#3", project: "/work/zeta"),
+                     routed("n#1", project: nil, hoursAgo: 1), routed("a#1", project: "/work/alpha", hoursAgo: 3),
+                     routed("u#1", project: "/work/unknown", hoursAgo: 4)]
+        let subject = projectBridge(items: items, live: [live("/work/zeta")])
+        let groups = try XCTUnwrap(result(subject, "items.list", ["groupBy": "project"])["groups"] as? [[String: Any]])
+        let paths = groups.map { ($0["project"] as? [String: Any])?["path"] as? String }
+        XCTAssertEqual(paths, ["/work/zeta", "/work/alpha", "/work/beta", "/work/unknown", nil])
+        XCTAssertTrue(groups.last?["project"] is NSNull)
+        XCTAssertEqual(((groups[0]["project"] as? [String: Any])?["name"]) as? String, "zeta")
+        let zetaIds = try XCTUnwrap(groups[0]["items"] as? [[String: Any]]).map { $0["id"] as? String }
+        XCTAssertEqual(zetaIds, ["z#2", "z#1", "z#3"])
+    }
+
+    func testItemsListGroupByWorksWithStatusProjectAndAgeFilters() throws {
+        let items = [routed("a#1", project: "/work/alpha", hoursAgo: 1), routed("a#2", project: "/work/alpha", status: "done", hoursAgo: 1),
+                     routed("a#3", project: "/work/alpha", hoursAgo: 50), routed("b#1", project: "/work/beta", hoursAgo: 1)]
+        let params: [String: Any] = ["groupBy": "project", "status": "open", "project": "alpha", "maxAgeHours": 24]
+        let groups = try XCTUnwrap(result(projectBridge(items: items), "items.list", params)["groups"] as? [[String: Any]])
+        XCTAssertEqual(groups.count, 1)
+        XCTAssertEqual(try XCTUnwrap(groups[0]["items"] as? [[String: Any]]).map { $0["id"] as? String }, ["a#1"])
+    }
+
+    func testItemsListBadGroupByIsBadParams() throws {
+        let subject = projectBridge(items: [routed("a#1", project: nil)])
+        XCTAssertEqual(try code(subject, "items.list", ["groupBy": "status"]), "bad_params")
+        XCTAssertEqual(try code(subject, "items.list", ["groupBy": 1]), "bad_params")
+    }
+
+    func testItemsListWithoutNewParamsKeepsTheQueueOrderAndShape() throws {
+        let items = [routed("a#1", project: "/work/alpha", hoursAgo: 9), routed("b#1", project: "/work/beta", hoursAgo: 1)]
+        let out = try result(projectBridge(items: items), "items.list")
+        XCTAssertNil(out["groups"])
+        XCTAssertEqual((out["items"] as? [[String: Any]])?.map { $0["id"] as? String }, ["a#1", "b#1"])
+    }
 }
