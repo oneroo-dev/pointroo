@@ -59,6 +59,8 @@ final class DoneBanner {
     /// While true (recording), banners wait; they show after it turns false.
     var paused = false { didSet { if !paused { showNext() } } }
     var onClick: (() -> Void)?
+    /// Called each time a banner is put on screen. No visual change.
+    var onShown: (() -> Void)?
 
     private var queue = BannerQueue()
     private var panel: NSPanel?
@@ -79,6 +81,7 @@ final class DoneBanner {
         let frame = (NSScreen.main ?? NSScreen.screens[0]).visibleFrame
         panel.setFrameOrigin(NSPoint(x: frame.maxX - 320 - 16, y: frame.maxY - 64 - 12))
         panel.orderFrontRegardless()
+        onShown?()
         generation += 1
         let mine = generation
         Task { [weak self] in

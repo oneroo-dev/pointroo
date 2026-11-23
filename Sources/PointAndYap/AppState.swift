@@ -69,32 +69,56 @@ final class AppState: ObservableObject {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") { NSWorkspace.shared.open(url) }
     }
 
-    func start() {
+    func start(listening: Bool = false) {
         guard phase == .idle else { return }
+        // A recording the user starts themself ends any listen window.
+        if !listening { listenWindow.userTookOver(); stopListenTimer() }
         let r = Recorder()
         r.ignore = { [weak self] in self?.ownUI?() }
         r.onPointCount = { [weak self] count in self?.pointCount = count }
+        r.onLevel = { [weak self] level in self?.listenLevel(level) }
         pointCount = 0
         do { try r.start() } catch {
-            say("Couldn't start: \(error.localizedDescription)")
+            if listening {
+                listenWindow.userTookOver()
+                stopListenTimer()
+            } else {
+                say("Couldn't start: \(error.localizedDescription)")
+            }
             return
         }
         recorder = r
         phase = .recording(Date())
-        Sounds.play("start")
+        if !listening { Sounds.play("start") }
         onRecordingChanged?(true)
     }
 
     /// Esc while recording: stop and keep nothing.
-    func cancel() {
+    func cancel() { cancel(silently: false) }
+
+    /// Stops and keeps nothing. Silently means no sound and no toast: used when a listen window heard nothing.
+    func cancel(silently: Bool) {
         guard case .recording = phase, let r = recorder else { return }
+        // Esc during a listen window is silent too, and closes the window.
+        let wasListening = listenWindow.isListening
+        _ = listenWindow.escape()
+        stopListenTimer()
         recorder = nil
         r.cancel()
         pointCount = 0
         phase = .idle
         onRecordingChanged?(false)
-        if Prefs.sounds { NSSound(named: "Pop")?.play() }
+        if Prefs.sounds, !silently, !wasListening { NSSound(named: "Pop")?.play() }
         loadSessions()
+    }
+
+    /// The user pressed and held Control while a listen window was recording: the window steps aside and the
+    /// recording goes on as a normal hold. True when there was a window to take over.
+    func takeOverListening() -> Bool {
+        guard listenWindow.isListening, case .recording = phase else { return false }
+        listenWindow.userTookOver()
+        stopListenTimer()
+        return true
     }
 
     /// Double Control: start when idle, stop while recording.
@@ -108,6 +132,8 @@ final class AppState: ObservableObject {
 
     func stop() {
         guard case .recording = phase, let r = recorder else { return }
+        listenWindow.userTookOver()
+        stopListenTimer()
         recorder = nil
         phase = .processing
         pointCount = 0
@@ -129,6 +155,61 @@ final class AppState: ObservableObject {
             loadSessions()
             await pickProject(dir)
         }
+    }
+
+    private var listenWindow = ListenWindow()
+    private var listenTimer: Timer?
+    private let listenClock = ProcessInfo.processInfo.systemUptime
+
+    /// Seconds on a steady clock, for the listen window.
+    private var listenNow: TimeInterval { ProcessInfo.processInfo.systemUptime - listenClock }
+
+    /// Call once at launch: a done banner on screen may open the listen window.
+    func wireListenWindow() {
+        DoneBanner.shared.onShown = { [weak self] in self?.listenBannerShown() }
+    }
+
+    private func listenBannerShown() {
+        // Read the mic state now, before Pointroo opens the microphone itself.
+        let on = Prefs.listenAfterDone
+        let conditions = ListenWindow.Conditions(settingOn: on, phaseIdle: phase == .idle && allowed,
+                                                 micBusyElsewhere: on ? ListenSystem.micBusyElsewhere() : false,
+                                                 idleSeconds: on ? ListenSystem.idleSeconds() : 0,
+                                                 screenLocked: on ? ListenSystem.screenLocked() : false)
+        perform(listenWindow.bannerShown(at: listenNow, conditions: conditions))
+    }
+
+    private func listenLevel(_ level: Float) {
+        listenWindow.level(level, at: listenNow)
+    }
+
+    private func listenTick() {
+        perform(listenWindow.tick(at: listenNow))
+    }
+
+    private func perform(_ actions: [ListenAction]) {
+        for action in actions {
+            switch action {
+            case .start:
+                start(listening: true)
+                if listenWindow.isListening { startListenTimer() }
+            case .cancelSilently: cancel(silently: true)
+            case .stop: stop()
+            }
+        }
+        if !listenWindow.isListening { stopListenTimer() }
+    }
+
+    private func startListenTimer() {
+        listenTimer?.invalidate()
+        listenTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.listenTick() }
+        }
+    }
+
+    private func stopListenTimer() {
+        listenTimer?.invalidate()
+        listenTimer = nil
     }
 
     /// No rule routed the recording and several agent sessions are running: ask which project it is for, and learn the answer.

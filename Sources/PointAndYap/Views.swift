@@ -39,7 +39,7 @@ struct MainView: View {
                 WelcomeCard(state: state).padding(.bottom, 16)
             }
 
-            Button(action: state.start) {
+            Button(action: { state.start() }) {
                 HStack(spacing: 8) {
                     if state.phase == .processing {
                         ProgressView().controlSize(.small).tint(.white)

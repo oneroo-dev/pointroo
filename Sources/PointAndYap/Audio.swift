@@ -27,6 +27,12 @@ final class AudioRecorder {
     private var buffer: AVAudioPCMBuffer?
     private var file: AVAudioFile?
 
+    /// The input level (RMS, 0 to 1) about 20 times a second. Called on the audio thread. Set before `start`.
+    var onLevel: ((Float) -> Void)?
+    private var levelSumSquares = 0.0
+    private var levelFrames: UInt32 = 0
+    private var levelInterval: UInt32 = 2_400
+
     static func askForAccess() async -> Bool {
         await AVCaptureDevice.requestAccess(for: .audio)
     }
@@ -57,6 +63,8 @@ final class AudioRecorder {
         unit = nil
         buffer = nil
         file = nil
+        levelSumSquares = 0
+        levelFrames = 0
     }
 
     // Input on element 1, output off on element 0, then the device: all before initialize, which opens the hardware.
@@ -87,6 +95,9 @@ final class AudioRecorder {
         var maxFrames = UInt32(4096), frameSize = UInt32(MemoryLayout<UInt32>.size)
         AudioUnitGetProperty(unit, kAudioUnitProperty_MaximumFramesPerSlice, kAudioUnitScope_Global, 0, &maxFrames, &frameSize)
         buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: max(maxFrames, 4096))
+        levelInterval = UInt32(format.sampleRate / 20)
+        levelSumSquares = 0
+        levelFrames = 0
         file = try AVAudioFile(forWriting: url, settings: format.settings)
         try check("start", AudioOutputUnitStart(unit))
     }
@@ -97,8 +108,26 @@ final class AudioRecorder {
         guard let unit, let buffer, frames <= buffer.frameCapacity else { return noErr }
         buffer.frameLength = frames
         let status = AudioUnitRender(unit, flags, time, 1, frames, buffer.mutableAudioBufferList)
-        if status == noErr { try? file?.write(from: buffer) }
+        if status == noErr {
+            try? file?.write(from: buffer)
+            reportLevel(buffer)
+        }
         return status
+    }
+
+    // On the audio thread: add up the first channel and report the RMS about every 50 ms.
+    private func reportLevel(_ buffer: AVAudioPCMBuffer) {
+        guard onLevel != nil, let samples = buffer.floatChannelData?[0] else { return }
+        for index in 0..<Int(buffer.frameLength) {
+            let value = Double(samples[index])
+            levelSumSquares += value * value
+        }
+        levelFrames += buffer.frameLength
+        guard levelFrames >= levelInterval else { return }
+        let level = Float((levelSumSquares / Double(levelFrames)).squareRoot())
+        levelSumSquares = 0
+        levelFrames = 0
+        onLevel?(level)
     }
 
     // MARK: Devices
