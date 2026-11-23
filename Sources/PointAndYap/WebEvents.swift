@@ -10,6 +10,8 @@ struct WebEvents {
     private var questionIdentifiers: [String]?
     private var recordingState: (phase: String, pointCount: Int)?
 
+    private var lastStatus: AppStatus?
+
     init() {}
 
     /// `items.changed` {count, open, inProgress} when any item's id, status, note or project changed (or one came or went).
@@ -30,6 +32,13 @@ struct WebEvents {
         guard identifiers != questionIdentifiers else { return [] }
         questionIdentifiers = identifiers
         return [(name: "questions.changed", data: ["count": questions.count])]
+    }
+
+    /// `status.changed` {the AppStatus dictionary} when any part of the status changed.
+    mutating func status(_ status: AppStatus) -> [Event] {
+        guard status != lastStatus else { return [] }
+        lastStatus = status
+        return [(name: "status.changed", data: status.dictionary)]
     }
 
     /// `recording.changed` {phase: "idle" | "recording" | "processing", pointCount} when the phase or the point count changed.
