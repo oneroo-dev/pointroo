@@ -132,10 +132,14 @@ enum Heartbeat {
 
     /// Cleans old questions, writes the first beat at once and then one every 2 s. Called once at launch.
     /// `questions` stays false until a panel exists that can show them.
-    static func start(questions: Bool = false) {
+    /// The timer runs in the common run loop modes, so an open menu or a window drag does not pause it.
+    @discardableResult
+    static func start(questions: Bool = false) -> Timer {
         Questions.cleanup()
         write(questions: questions)
-        Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { _ in write(questions: questions) }
+        let timer = Timer(timeInterval: interval, repeats: true) { _ in write(questions: questions) }
+        RunLoop.main.add(timer, forMode: .common)
+        return timer
     }
 }
 

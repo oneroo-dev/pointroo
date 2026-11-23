@@ -135,6 +135,13 @@ final class QuestionsTests: XCTestCase {
         XCTAssertNotNil(Questions.get(id: fresh.id))
     }
 
+    func testHeartbeatTimerRunsInCommonModesAndWritesAtOnce() {
+        let timer = Heartbeat.start()
+        defer { timer.invalidate() }
+        XCTAssertTrue(CFRunLoopContainsTimer(CFRunLoopGetMain(), timer, .commonModes))
+        XCTAssertTrue(Heartbeat.isFresh())
+    }
+
     func testToolIsListedAndMentionedInTheInstructions() {
         XCTAssertTrue(MCPServer.tools.contains { $0["name"] as? String == "ask_user" })
         XCTAssertTrue(MCPServer.instructions.contains("ask_user"))
