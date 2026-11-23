@@ -24,6 +24,7 @@ struct Item {
     var firstElement: String? = nil  // the first pointed element, "role|name"
     var duration: Double = 0         // length of the recording in seconds
     var practice: Bool = false       // a practice recording: done by "you" at once, never handed out
+    var suggested: String? = nil     // the folder the router would suggest for a recording it did not send (suggest.json)
 }
 
 struct ItemState: Codable {
@@ -61,6 +62,7 @@ enum Items {
             let route = Router.readRoute(dir)
             out[i].project = route?.path
             out[i].routeHow = route?.how
+            out[i].suggested = route == nil ? Router.readSuggest(dir)?.path : nil
             if let follows = route?.follows { out[i].body = followUpLine(follows) + "\n\n" + out[i].body }
             if let e = state?.items[String(out[i].n)] {
                 // "taken" is the older name of in_progress.

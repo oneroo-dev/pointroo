@@ -39,6 +39,12 @@ struct RouteInfo: Codable, Equatable {
     var follows: String? = nil   // for "followup": the id of the item the agent finished just before
 }
 
+/// A project the router would suggest for a recording it did not send: written to `suggest.json` in the session folder.
+struct SuggestInfo: Codable, Equatable {
+    var path: String
+    var how: String       // related, lastsent, only
+}
+
 enum LiveSessions {
     static var folder: URL { Paths.support.appendingPathComponent("live") }
 
@@ -320,19 +326,110 @@ enum Router {
         (try? Data(contentsOf: routeURL(directory))).flatMap { try? JSONDecoder().decode(RouteInfo.self, from: $0) }
     }
 
+    /// Saves route.json. A recording that is sent no longer needs a suggestion, so suggest.json is removed.
     static func writeRoute(_ info: RouteInfo, to directory: URL) {
         writeLogged(info, to: routeURL(directory))
+        removeSuggest(in: directory)
     }
 
-    /// Routes a processed recording and saves route.json; nothing is written when no project fits. A project the user picked stays.
-    static func routeSession(_ directory: URL, events: SessionEvents, words: [Word]) {
+    static func suggestURL(_ directory: URL) -> URL { directory.appendingPathComponent("suggest.json") }
+
+    static func readSuggest(_ directory: URL) -> SuggestInfo? {
+        (try? Data(contentsOf: suggestURL(directory))).flatMap { try? JSONDecoder().decode(SuggestInfo.self, from: $0) }
+    }
+
+    static func writeSuggest(_ info: SuggestInfo, to directory: URL) {
+        writeLogged(info, to: suggestURL(directory))
+    }
+
+    static func removeSuggest(in directory: URL) {
+        try? FileManager.default.removeItem(at: suggestURL(directory))
+    }
+
+    /// How long after the last send a recording with no other hint still goes to that project as a suggestion.
+    static let lastSentWindow: TimeInterval = 30 * 60
+
+    /// A guess for a recording that route() could not send. Order: a project whose name, alias or folder name is part of a
+    /// pointed window title or host (a weaker match than route() needs); the project of the last item sent somewhere, at
+    /// most 30 minutes ago; the only listening project; otherwise nil. Two projects equally close on the screen give no
+    /// screen guess, and the next rule is tried.
+    static func suggest(words: [String], points: [PointEvent], projects: [Project], live: [LiveSession] = [],
+                        lastSent: (path: String, at: Date)? = nil, now: Date = Date()) -> Result? {
+        if let project = relatedProject(points, projects) { return Result(path: project.path, how: "related") }
+        if let lastSent {
+            let age = now.timeIntervalSince(lastSent.at)
+            if age >= 0, age <= lastSentWindow { return Result(path: lastSent.path, how: "lastsent") }
+        }
+        var folders: [String] = []
+        for session in live where !folders.contains(where: { samePath($0, session.cwd) }) { folders.append(session.cwd) }
+        if folders.count == 1 { return Result(path: folders[0], how: "only") }
+        return nil
+    }
+
+    /// The project whose name, alias or folder name (4 letters or more, spaces and punctuation ignored) is inside the
+    /// pointed window titles or hosts, the one with the most points. A tie gives nil.
+    static func relatedProject(_ points: [PointEvent], _ projects: [Project]) -> Project? {
+        var votes: [Int: Int] = [:]
+        for point in points {
+            var texts: [String] = []
+            if let window = point.window, !window.isEmpty { texts.append(compact(window)) }
+            if let url = point.url, let host = hostAndPort(url) {
+                texts.append(compact(host.split(separator: ":").first.map(String.init) ?? host))
+            }
+            guard !texts.isEmpty else { continue }
+            for (index, project) in projects.enumerated() {
+                let names = [project.name, URL(fileURLWithPath: project.path).lastPathComponent] + project.aliases
+                let hit = names.map { compact($0) }.contains { name in name.count >= 4 && texts.contains { $0.contains(name) } }
+                if hit { votes[index, default: 0] += 1 }
+            }
+        }
+        guard let best = votes.values.max(), votes.values.filter({ $0 == best }).count == 1,
+              let winner = votes.first(where: { $0.value == best })?.key else { return nil }
+        return projects[winner]
+    }
+
+    /// The project of the newest recording that was sent somewhere (it has a route), with that recording's start time.
+    static func lastSent(_ items: [Item], recordedAt: (String) -> Date? = { Items.recordedAt($0) }) -> (path: String, at: Date)? {
+        var best: (path: String, at: Date)?
+        for item in items {
+            guard let path = item.project, item.routeHow != nil, let at = recordedAt(item.session) else { continue }
+            if best == nil || at > best!.at { best = (path, at) }
+        }
+        return best
+    }
+
+    /// Whether a route that route() found may be used. The fallback "only" (the single listening session) is sent without
+    /// the picker only while the setting autoSendSingle is on; when it is off the recording waits with a suggestion instead.
+    static func shouldAutoSend(_ result: Result, autoSendSingle: Bool) -> Bool {
+        result.how != "only" || autoSendSingle
+    }
+
+    /// Routes a processed recording and saves route.json. When no project fits, route.json is not written and a guess is
+    /// saved in suggest.json instead (see suggest); a later route removes it. A project the user picked stays.
+    /// The inputs have defaults that read the real world; tests give their own.
+    static func routeSession(_ directory: URL, events: SessionEvents, words: [Word],
+                             live: [LiveSession] = LiveSessions.all(),
+                             knownProjects: [Project]? = nil,
+                             items: [Item]? = nil,
+                             autoSendSingle: Bool = Prefs.autoSendSingle,
+                             now: Date = Date()) {
         if readRoute(directory)?.how == "picked" { return }
-        let live = LiveSessions.all()
-        let projects = Projects.known(live: live)
-        guard let result = route(words: words.map(\.text), points: events.points, projects: projects, live: live,
-                                 lastDone: lastAgentDone(Items.all()), recordingStarted: events.started) else { return }
-        let name = projects.first { samePath($0.path, result.path) }?.name ?? URL(fileURLWithPath: result.path).lastPathComponent
-        writeRoute(RouteInfo(project: name, path: result.path, how: result.how, follows: result.follows), to: directory)
+        let projects = knownProjects ?? Projects.known(live: live)
+        let allItems = items ?? Items.all()
+        let spoken = words.map(\.text)
+        if let result = route(words: spoken, points: events.points, projects: projects, live: live,
+                              lastDone: lastAgentDone(allItems), recordingStarted: events.started),
+           shouldAutoSend(result, autoSendSingle: autoSendSingle) {
+            let name = projects.first { samePath($0.path, result.path) }?.name ?? URL(fileURLWithPath: result.path).lastPathComponent
+            writeRoute(RouteInfo(project: name, path: result.path, how: result.how, follows: result.follows), to: directory)
+            return
+        }
+        if let guess = suggest(words: spoken, points: events.points, projects: projects, live: live,
+                               lastSent: lastSent(allItems), now: now) {
+            writeSuggest(SuggestInfo(path: guess.path, how: guess.how), to: directory)
+        } else {
+            removeSuggest(in: directory)
+        }
     }
 }
 

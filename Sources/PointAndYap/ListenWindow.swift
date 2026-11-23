@@ -5,6 +5,8 @@ import CoreGraphics
 extension Prefs {
     /// After a done banner shows, listen for a short follow-up with no key. Off until the user turns it on.
     static var listenAfterDone: Bool { UserDefaults.standard.object(forKey: "listenAfterDone") as? Bool ?? false }
+    /// With exactly one agent session listening, a recording with no other hint goes there without asking. On until the user turns it off.
+    static var autoSendSingle: Bool { UserDefaults.standard.object(forKey: "autoSendSingle") as? Bool ?? true }
 }
 
 /// What the listen window asks the app to do.
