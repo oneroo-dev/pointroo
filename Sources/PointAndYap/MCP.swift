@@ -332,11 +332,22 @@ final class MCPConnection {
                 return MCPServer.error("branch must have no spaces or new lines and be at most 200 characters. Nothing was changed.")
             }
         }
-        let r = Items.set(ids, status: status, agent: agent, note: note, commit: commit as? String, branch: branch as? String, takerPid: livePid)
+        // Only the user's window brings a trashed item back (items.reopen), so an agent may not release or finish one.
+        var trashedIds: [String] = []
+        var allowedIds = ids
+        if status == "done" || status == "open" {
+            let trashed = Set(Items.all().filter { $0.status == "trashed" }.map(\.id))
+            trashedIds = ids.filter { trashed.contains($0) }
+            allowedIds = ids.filter { !trashed.contains($0) }
+        }
+        let trashedNotes = trashedIds.map { "\($0) (in the trash)" }
+        if allowedIds.isEmpty { return MCPServer.error("Not changed: \(trashedNotes.joined(separator: ", ")).") }
+        let r = Items.set(allowedIds, status: status, agent: agent, note: note, commit: commit as? String, branch: branch as? String, takerPid: livePid)
         let verb = ["done": "Done", "in_progress": "In progress by you"][status] ?? "Back in the queue"
         var s = r.changed.isEmpty ? "" : "\(verb): \(r.changed.joined(separator: ", "))."
         if !r.closedRepeats.isEmpty { s += " Also closed (the same thing said again): \(r.closedRepeats.joined(separator: ", "))." }
-        if !r.missing.isEmpty { s += (s.isEmpty ? "" : " ") + "Not changed: \(r.missing.joined(separator: ", "))." }
+        let notChanged = r.missing + trashedNotes
+        if !notChanged.isEmpty { s += (s.isEmpty ? "" : " ") + "Not changed: \(notChanged.joined(separator: ", "))." }
         return r.changed.isEmpty ? MCPServer.error(s) : MCPServer.text(s)
     }
 
