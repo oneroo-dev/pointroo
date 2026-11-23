@@ -18,6 +18,8 @@ export interface Item {
   note?: string
   how: RouteHow
   followsTitle?: string
+  /** The router's best guess (a project id) for a not-sent item. */
+  suggested?: string
   crops: Crop[]
   question?: { text: string; choices: string[] }
 }
@@ -28,4 +30,13 @@ export interface Project {
   count: number
   listening: boolean
   folder: string
+  /** 1 is the project that got an item most recently. */
+  recentRank: number
+}
+
+export interface ProjectTile {
+  id: string
+  name: string
+  suggested?: boolean
+  live?: boolean
 }

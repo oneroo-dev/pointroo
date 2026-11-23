@@ -67,7 +67,20 @@ export const notSent: Item = {
   points: 1,
   age: 'now',
   how: 'none',
+  suggested: 'tinkeroo',
   crops: [{ number: 1, caption: 'Text "Last synced" · Unknown window' }],
+}
+
+export const justSent: Item = {
+  id: 'n1',
+  project: 'Tinkeroo',
+  state: 'waiting',
+  title: notSent.title,
+  said: notSent.said,
+  points: notSent.points,
+  age: 'now',
+  how: 'picked',
+  crops: notSent.crops,
 }
 
 export const processing: Item = {

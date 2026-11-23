@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { RooButton, RooCodeBlock, RooInput, RooSelect, RooSwitch } from '@roo/kit/controls'
-import { RooAbout, RooDialog, RooSettingRow, RooSettingsGroup, RooSettingsLayout, RooStateMark } from '@roo/kit'
+import { RooAbout, RooDialog, RooSegmented, RooSettingRow, RooSettingsGroup, RooSettingsLayout, RooStateMark } from '@roo/kit'
 import type { RooSettingsSection } from '@roo/kit'
 import MainWindow from './MainWindow.vue'
 
@@ -17,9 +17,9 @@ const sections: RooSettingsSection[] = [
 ]
 
 const languages = ['Same as the Mac', 'English', 'German', 'French', 'Spanish', 'Italian', 'Portuguese', 'Dutch', 'Japanese', 'Chinese'].map((name) => ({ value: name, label: name }))
-const followUps = ['Off', '1 min', '3 min', '5 min'].map((name) => ({ value: name, label: name }))
+const followUps = ['Off', '2 min', '5 min', '15 min'].map((name) => ({ value: name, label: name }))
 const language = ref('English')
-const followUp = ref('3 min')
+const followUp = ref('5 min')
 const port = ref(6742)
 
 const configSnippet = `{
@@ -43,7 +43,7 @@ const configSnippet = `{
           <RooSettingsGroup title="Speech">
             <RooSettingRow label="Speech language" description="Turned into text on this Mac."><RooSelect v-model="language" label="Speech language" hide-label size="md" :options="languages" /></RooSettingRow>
             <RooSettingRow label="Show recordings with no speech"><RooSwitch :model-value="false" aria-label="Show recordings with no speech" /></RooSettingRow>
-            <RooSettingRow label="Follow-up window" description="A new recording soon after a done item goes to the same project."><RooSelect v-model="followUp" label="Follow-up window" hide-label size="md" :options="followUps" /></RooSettingRow>
+            <RooSettingRow label="Follow-up window" description="A new recording soon after a done item goes to the same project."><RooSegmented v-model="followUp" label="Follow-up window" size="md" :options="followUps" /></RooSettingRow>
           </RooSettingsGroup>
         </template>
 

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { RooButton, RooIconButton, RooSelect, RooTooltip } from '@roo/kit/controls'
+import { RooButton, RooChipGroup, RooIconButton, RooTooltip } from '@roo/kit/controls'
 import {
   RooAppMark,
   RooBar,
@@ -15,6 +15,7 @@ import {
   RooSkeleton,
   RooSplit,
   RooStateCard,
+  RooToast,
   RooWindow,
 } from '@roo/kit'
 import AppGlyph from './AppGlyph.vue'
@@ -23,8 +24,8 @@ import ItemList from './ItemList.vue'
 import ProjectSidebar from './ProjectSidebar.vue'
 import SetupView from './SetupView.vue'
 import TrafficLights from './TrafficLights.vue'
-import { projects } from '../data/projects'
-import { asks, doneCount, doneItems, nowCount, nowItems, notSent, processing, working } from '../data/items'
+import { orderedProjects, projects } from '../data/projects'
+import { asks, doneCount, doneItems, justSent, nowCount, nowItems, notSent, processing, working } from '../data/items'
 import type { Item } from '../data/types'
 
 export type Scenario =
@@ -32,6 +33,7 @@ export type Scenario =
   | 'asks'
   | 'done'
   | 'not-sent'
+  | 'just-sent'
   | 'processing'
   | 'none-selected'
   | 'empty'
@@ -70,6 +72,8 @@ const rows = computed<Item[]>(() => {
       return [processing, ...nowItems]
     case 'not-sent':
       return [notSent, ...nowItems]
+    case 'just-sent':
+      return [justSent, ...nowItems]
     case 'empty':
     case 'now-empty':
     case 'loading':
@@ -87,6 +91,8 @@ const selectedItem = computed<Item | undefined>(() => {
       return doneItems[0]
     case 'not-sent':
       return notSent
+    case 'just-sent':
+      return justSent
     case 'none-selected':
     case 'processing':
       return undefined
@@ -104,8 +110,12 @@ const selectedItem = computed<Item | undefined>(() => {
 })
 
 const problem = computed(() => ['permission', 'port-busy', 'mcp-error'].includes(props.scenario))
-const projectOptions = [{ value: 'all', label: 'All projects' }, ...projects.map((project) => ({ value: project.id, label: project.name }))]
 const projectChoice = ref('all')
+// Narrow window: one chip row, All first, then projects that listen, then the most recent. The chosen chip is the accent one.
+const filterChips = computed(() => [
+  { id: 'all', label: 'All', tone: projectChoice.value === 'all' ? ('accent' as const) : ('neutral' as const) },
+  ...orderedProjects.map((project) => ({ id: project.id, label: project.name, tone: projectChoice.value === project.id ? ('accent' as const) : ('neutral' as const) })),
+])
 const setupStep = computed(() => (props.scenario === 'setup-done' ? 'done' : 'accessibility'))
 </script>
 
@@ -187,7 +197,7 @@ const setupStep = computed(() => (props.scenario === 'setup-done' ? 'done' : 'ac
           </RooStateCard>
 
           <div v-if="!hasSidebar" class="main-filter">
-            <RooSelect v-model="projectChoice" label="Project" hide-label size="md" :options="projectOptions" />
+            <RooChipGroup :chips="filterChips" />
           </div>
 
           <div v-if="isEmptyList" class="main-empty">
@@ -231,6 +241,7 @@ const setupStep = computed(() => (props.scenario === 'setup-done' ? 'done' : 'ac
         </RooLedge>
       </template>
     </RooWindow>
+    <RooToast v-if="scenario === 'just-sent'" class="frame-toast" tone="ok" message="Sent to Tinkeroo" undo />
   </div>
 </template>
 
@@ -251,17 +262,24 @@ const setupStep = computed(() => (props.scenario === 'setup-done' ? 'done' : 'ac
   inset-inline-start: var(--roo-space-group);
 }
 
+.frame-toast {
+  position: absolute;
+  z-index: 5;
+  inset-block-end: var(--roo-space-section);
+  inset-inline-end: var(--roo-space-group);
+}
+
 .main {
   display: flex;
   height: 100%;
   min-height: 0;
   flex-direction: column;
+  gap: var(--roo-space-item);
 }
 
 .main-filter {
   padding: var(--roo-space-group) var(--roo-space-group) 0;
 }
-
 .main-empty {
   display: flex;
   flex: 1 1 auto;

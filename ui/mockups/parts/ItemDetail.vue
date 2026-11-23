@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { RooButton } from '@roo/kit/controls'
-import { RooChip, RooFormSection, RooIcon, RooListRow, RooStateMark, RooSelect, RooTooltip } from '@roo/kit'
+import { RooChip, RooFormSection, RooIcon, RooKbd, RooListRow, RooStateMark, RooTooltip } from '@roo/kit'
 import type { Item } from '../data/types'
+import { projectIdFor, tilesFor } from '../data/projects'
 import { markFor, pointsWord, sentToLine } from './words'
+import ProjectTiles from './ProjectTiles.vue'
 import QuestionControls from './QuestionControls.vue'
 
 const props = defineProps<{ item: Item }>()
@@ -13,11 +15,9 @@ const isDone = computed(() => props.item.state === 'done' || props.item.state ==
 const notSent = computed(() => props.item.state === 'not-sent')
 const headline = computed(() => [props.item.project ?? 'Not sent yet', mark.value.label, props.item.agent].filter(Boolean).join(' · '))
 const saidParts = computed(() => props.item.said.split(/(\[\d+\])/).filter((part) => part !== ''))
-const projectOptions = [
-  { value: 'tinkeroo', label: 'Tinkeroo' },
-  { value: 'pointroo', label: 'Pointroo' },
-  { value: 'tableroo', label: 'Tableroo' },
-]
+const currentId = computed(() => projectIdFor(props.item.project))
+const choice = computed(() => tilesFor(notSent.value ? props.item.suggested : currentId.value))
+const sentLine = computed(() => (props.item.state === 'working' && props.item.agent ? `${props.item.agent} is on it.` : sentToLine(props.item)))
 </script>
 
 <template>
@@ -56,33 +56,42 @@ const projectOptions = [
     </RooFormSection>
 
     <RooFormSection v-if="isDone && item.note" title="Agent's note">
-      <p class="detail-said roo-selectable">{{ item.note }}</p>
-      <ul class="detail-crops" aria-label="Before and now">
-        <li><RooListRow size="dense" title="Before" subtitle="Cropped when you pointed" tabindex="0"><template #tile><RooIcon name="image" :size="16" /></template></RooListRow></li>
-        <li><RooListRow size="dense" title="Screen now" subtitle="Taken when the agent finished" tabindex="0"><template #tile><RooIcon name="image" :size="16" /></template></RooListRow></li>
-      </ul>
+      <div class="detail-sent">
+        <p class="detail-said roo-selectable">{{ item.note }}</p>
+        <ul class="detail-crops" aria-label="Before and now">
+          <li><RooListRow size="dense" title="Before" subtitle="Cropped when you pointed" tabindex="0"><template #tile><RooIcon name="image" :size="16" /></template></RooListRow></li>
+          <li><RooListRow size="dense" title="Screen now" subtitle="Taken when the agent finished" tabindex="0"><template #tile><RooIcon name="image" :size="16" /></template></RooListRow></li>
+        </ul>
+      </div>
     </RooFormSection>
 
-    <RooFormSection title="Sent to">
+    <RooFormSection :title="notSent ? 'Send to' : 'Sent to'">
       <div class="detail-sent">
         <p class="detail-said">
-          <template v-if="notSent">Not sent yet. Pick a project so an agent can take it.</template>
-          <template v-else><strong>{{ item.project }}</strong>. {{ sentToLine(item) }}</template>
+          <template v-if="notSent">Not sent yet. One click on a project sends it.</template>
+          <template v-else><strong>{{ item.project }}</strong>. {{ sentLine }}</template>
         </p>
-        <RooButton v-if="notSent" variant="primary" size="sm">Send to…</RooButton>
-        <RooButton v-else variant="secondary" size="sm">Change</RooButton>
+        <ProjectTiles
+          v-if="!isDone"
+          :size="notSent ? 'large' : 'small'"
+          :tiles="choice.tiles"
+          :more-rows="choice.rest"
+          :selected-id="notSent ? undefined : currentId"
+          :label="notSent ? 'Send to' : 'Move to'"
+          show-keys
+          show-more
+        />
       </div>
-      <RooSelect v-if="notSent" label="Project" hide-label size="md" placeholder="Pick a project" :options="projectOptions" />
     </RooFormSection>
 
     <footer class="detail-actions">
       <RooButton v-if="isDone" variant="secondary" size="sm">Open again</RooButton>
       <template v-else>
         <RooButton variant="secondary" size="sm">Copy for an agent</RooButton>
-        <RooButton v-if="item.state === 'waiting' || notSent" variant="ghost" size="sm">Mark done</RooButton>
+        <RooButton v-if="item.state === 'waiting' || notSent" variant="ghost" size="sm"><span class="detail-action">Mark done<RooKbd keys="D" /></span></RooButton>
       </template>
       <span class="detail-spacer" />
-      <RooButton variant="ghost" size="sm">Move to Trash</RooButton>
+      <RooButton variant="ghost" size="sm"><span class="detail-action">Move to Trash<RooKbd keys="Delete" /></span></RooButton>
     </footer>
   </article>
 </template>
@@ -134,8 +143,7 @@ const projectOptions = [
 
 .detail-sent {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
   gap: var(--roo-space-group);
 }
 
@@ -144,6 +152,12 @@ const projectOptions = [
   align-items: center;
   gap: var(--roo-space-item);
   margin-top: auto;
+}
+
+.detail-action {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--roo-space-item);
 }
 
 .detail-spacer {

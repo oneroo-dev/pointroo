@@ -1,23 +1,42 @@
 <script setup lang="ts">
 import { RooButton, RooIconButton, RooTooltip } from '@roo/kit/controls'
-import { RooIcon, RooProgressLine, RooStateMark, RooSwitcher } from '@roo/kit'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { RooCountdown, RooIcon, RooKbd, RooProgressLine, RooStateMark } from '@roo/kit'
+import { tilesFor } from '../data/projects'
+import { notSent } from '../data/items'
 import FloatingSurface from './FloatingSurface.vue'
+import ProjectTiles from './ProjectTiles.vue'
 
-export type PillKind = 'recording' | 'writing' | 'sent' | 'reply' | 'error' | 'kept' | 'picker'
+export type PillKind = 'recording' | 'writing' | 'sent' | 'sent-undo' | 'reply' | 'error' | 'kept' | 'picker' | 'picker-auto'
 
-defineProps<{ kind: PillKind }>()
+const props = defineProps<{ kind: PillKind }>()
 
-const rows = [
-  { id: 'tinkeroo', name: 'Tinkeroo', meta: 'listening', dot: 'var(--roo-muted)' },
-  { id: 'pointroo', name: 'Pointroo', meta: 'listening', dot: 'var(--roo-muted)' },
-  { id: 'tableroo', name: 'Tableroo', meta: 'listening', dot: 'var(--roo-muted)' },
-]
+const choice = tilesFor(notSent.suggested, 5)
+const suggestedName = choice.tiles.find((tile) => tile.suggested)?.name ?? ''
+
+// The mockup holds the countdown at 3 seconds: the end time is pushed on every half second, so a still frame never reads "expired".
+const endsAt = ref(Date.now() + 3000)
+let hold: ReturnType<typeof setInterval> | undefined
+onMounted(() => {
+  if (props.kind !== 'picker-auto') return
+  hold = setInterval(() => {
+    endsAt.value = Date.now() + 3000
+  }, 500)
+})
+onBeforeUnmount(() => clearInterval(hold))
 </script>
 
 <template>
-  <FloatingSurface v-if="kind === 'picker'" class="picker" role="group" aria-label="Pick a project">
-    <h2 class="picker-title">Which project is this for?</h2>
-    <RooSwitcher :open="true" :rows="rows" label="Which project is this for?" search search-placeholder="Type to filter" grouping="none" shortcuts hints />
+  <FloatingSurface v-if="kind === 'picker' || kind === 'picker-auto'" class="picker" role="group" aria-label="Pick a project">
+    <h2 class="picker-title">{{ kind === 'picker-auto' ? `Sending to ${suggestedName}` : 'Which project is this for?' }}</h2>
+    <p v-if="kind === 'picker-auto'" class="picker-note">
+      <RooCountdown :ends-at="endsAt" :warn-seconds="0" suffix="until it sends" />
+    </p>
+    <ProjectTiles size="large" :tiles="choice.tiles" :more-rows="choice.rest" label="Which project is this for?" show-keys show-more />
+    <p class="picker-note">
+      <RooKbd keys="Esc" />
+      <span>Keep it not sent</span>
+    </p>
   </FloatingSurface>
 
   <FloatingSurface v-else class="pill" role="status">
@@ -36,6 +55,11 @@ const rows = [
     </template>
     <template v-else-if="kind === 'sent'">
       <RooStateMark state="ok" label="Sent to Tinkeroo · you said its name" />
+    </template>
+    <template v-else-if="kind === 'sent-undo'">
+      <RooStateMark state="ok" label="Sent to Pointroo" />
+      <span class="pill-spacer" />
+      <RooButton variant="ghost" size="sm"><span class="pill-action">Undo<RooKbd keys="Mod+Z" /></span></RooButton>
     </template>
     <template v-else-if="kind === 'kept'">
       <RooStateMark state="muted" label="Kept in the queue. Send it from Pointroo later." />
@@ -95,5 +119,20 @@ const rows = [
   margin: 0;
   font-size: var(--roo-p-size-13);
   font-weight: 600;
+}
+
+.picker-note {
+  display: flex;
+  align-items: center;
+  gap: var(--roo-space-item);
+  margin: 0;
+  color: var(--roo-muted);
+  font-size: var(--roo-p-size-12);
+}
+
+.pill-action {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--roo-space-item);
 }
 </style>

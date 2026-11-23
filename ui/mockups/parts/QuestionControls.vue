@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // The answer controls of an agent's question. The notice (4.5) and the item detail show the same thing.
 import { RooButton, RooIconButton, RooInput } from '@roo/kit/controls'
+import { RooKbd } from '@roo/kit'
 
 defineProps<{ question: string; choices: string[]; showLater?: boolean }>()
 </script>
@@ -9,11 +10,13 @@ defineProps<{ question: string; choices: string[]; showLater?: boolean }>()
   <div class="question">
     <p class="question-text">{{ question }}</p>
     <div class="question-choices">
-      <RooButton v-for="choice in choices" :key="choice" variant="secondary" size="md" class="question-choice">{{ choice }}</RooButton>
+      <RooButton v-for="(choice, index) in choices" :key="choice" :variant="index === 0 ? 'primary' : 'secondary'" size="md" class="question-choice">
+        <span class="question-label"><span>{{ choice }}</span><RooKbd :keys="String(index + 1)" /></span>
+      </RooButton>
     </div>
     <div class="question-free">
       <RooInput class="question-input" aria-label="Type an answer" placeholder="Or type an answer…" />
-      <RooIconButton icon="send" variant="primary" label="Send" tooltip="Send" />
+      <RooIconButton icon="send" variant="secondary" label="Send" tooltip="Send" shortcut="Enter" />
     </div>
     <div v-if="showLater" class="question-later"><RooButton variant="ghost" size="sm" flush>Later</RooButton></div>
   </div>
@@ -42,6 +45,14 @@ defineProps<{ question: string; choices: string[]; showLater?: boolean }>()
 
 .question-choice {
   width: 100%;
+}
+
+.question-label {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--roo-space-group);
 }
 
 .question-free {

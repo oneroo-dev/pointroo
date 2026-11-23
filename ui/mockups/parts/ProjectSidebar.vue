@@ -1,8 +1,17 @@
 <script setup lang="ts">
-import { RooKeyHint, RooLiveDot, RooSidebar, RooTreeRow } from '@roo/kit'
+import { computed } from 'vue'
+import { RooKbd, RooKeyHint, RooLiveDot, RooSidebar, RooTreeRow } from '@roo/kit'
 import type { Project } from '../data/types'
 
-defineProps<{ projects: Project[]; total: number; selected: string }>()
+const props = defineProps<{ projects: Project[]; total: number; selected: string }>()
+
+// Projects that listen come first, then the most recently used. The number shows on hover: Cmd+1 to 9 jumps there.
+const ordered = computed(() =>
+  [...props.projects].sort((first, second) => {
+    if (first.listening !== second.listening) return first.listening ? -1 : 1
+    return first.recentRank - second.recentRank
+  }),
+)
 </script>
 
 <template>
@@ -10,7 +19,8 @@ defineProps<{ projects: Project[]; total: number; selected: string }>()
     <RooTreeRow label="All" :selected="selected === 'all'" activation="single">
       <template #meta><span class="count">{{ total }}</span></template>
     </RooTreeRow>
-    <RooTreeRow v-for="project in projects" :key="project.id" :label="project.name" :selected="selected === project.id" activation="single">
+    <RooTreeRow v-for="(project, index) in ordered" :key="project.id" :label="project.name" :selected="selected === project.id" activation="single">
+      <template #actions><RooKbd :keys="`Mod+${index + 1}`" /></template>
       <template #meta>
         <span class="meta">
           <RooLiveDot v-if="project.listening" state="live" word="Listening" />
