@@ -112,7 +112,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         state.pollQueue()
         state.refreshAccess()
         doubleControl = DoubleControl(fire: { [weak self] in if Prefs.doubleControl { self?.state.toggle() } },
-                                      escape: { [weak self] in if Prefs.escCancels { self?.state.cancel() } })
+                                      escape: { [weak self] in if Prefs.escCancels { self?.state.cancel() } },
+                                      holdStart: { [weak self] in
+                                          guard let state = self?.state, state.phase == .idle, state.allowed else { return false }
+                                          state.start()
+                                          if case .recording = state.phase { return true }
+                                          return false
+                                      },
+                                      holdEnd: { [weak self] in self?.state.stop() })
         state.loadSessions()
         Updater.shared.start(state: state)
         Heartbeat.start()
