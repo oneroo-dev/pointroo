@@ -63,7 +63,14 @@ export function matchQuestions(items: BridgeItem[], questions: BridgeQuestion[])
   return matched
 }
 
-export function toViewItem(item: BridgeItem, question: BridgeQuestion | undefined, now: Date): Item {
+/** The app's guess for a not-sent item as a project id (the folder path). It sends the path or only the name; without either there is no guess. */
+function suggestedProjectId(item: BridgeItem, projects: Project[]): string | undefined {
+  if (item.suggested !== undefined && item.suggested !== '') return item.suggested
+  if (item.suggestedName === undefined || item.suggestedName === '') return undefined
+  return projects.find((project) => project.name === item.suggestedName)?.id
+}
+
+export function toViewItem(item: BridgeItem, question: BridgeQuestion | undefined, now: Date, projects: Project[] = []): Item {
   let state: ItemState
   if (item.status === 'done') state = item.by === undefined ? 'done-by-you' : 'done'
   else if (item.status === 'in_progress') state = question === undefined ? 'working' : 'asks'
@@ -88,18 +95,31 @@ export function toViewItem(item: BridgeItem, question: BridgeQuestion | undefine
   if (item.by !== undefined) result.agent = item.by
   if (item.note !== undefined) result.note = item.note
   if (item.afterURL !== undefined) result.afterUrl = item.afterURL
+  const suggested = state === 'not-sent' ? suggestedProjectId(item, projects) : undefined
+  if (suggested !== undefined) result.suggested = suggested
   if (question !== undefined) result.question = { id: question.id, text: question.text, choices: question.choices }
   return result
 }
 
 /** A project's id is its folder path. The list order from the app is kept: live projects first, then the rest. */
 export function toViewProjects(projects: BridgeProject[]): Project[] {
+  const hasLastUsed = projects.some((project) => project.lastUsed !== undefined)
+  // With lastUsed from the app, rank 1 is the project used most recently (absent or unreadable date: never used, last).
+  // Without it on any project, the app's order is kept.
+  const ranked = hasLastUsed
+    ? projects
+        .map((project, index) => {
+          const time = project.lastUsed === undefined ? Number.NaN : Date.parse(project.lastUsed)
+          return { index, lastUsed: Number.isNaN(time) ? Number.NEGATIVE_INFINITY : time }
+        })
+        .sort((first, second) => second.lastUsed - first.lastUsed || first.index - second.index)
+    : []
   return projects.map((project, index) => ({
     id: project.path,
     name: project.name,
     count: project.open + project.inProgress,
     listening: project.live,
     folder: project.path,
-    recentRank: index + 1,
+    recentRank: hasLastUsed ? ranked.findIndex((entry) => entry.index === index) + 1 : index + 1,
   }))
 }

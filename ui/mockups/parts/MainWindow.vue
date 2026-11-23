@@ -2,7 +2,9 @@
 // A review frame round the real main window part (src/parts/MainWindow.vue). A scenario picks the sample data and flags.
 import { computed, ref } from 'vue'
 import MainWindow from '../../src/parts/MainWindow.vue'
+import SettingsScreen from '../../src/parts/SettingsScreen.vue'
 import type { Item, MainBanner, MainTab } from '../../src/parts/types'
+import type { SettingKey, SettingValue, SettingsValues } from '../../src/types'
 import SetupView from './SetupView.vue'
 import TrafficLights from './TrafficLights.vue'
 import { projects } from '../data/projects'
@@ -27,6 +29,7 @@ export type Scenario =
   | 'updating'
   | 'setup'
   | 'setup-done'
+  | 'settings'
 
 const props = withDefaults(defineProps<{ width?: number; height?: number; scenario?: Scenario; detailOpen?: boolean }>(), {
   width: 960,
@@ -37,6 +40,24 @@ const props = withDefaults(defineProps<{ width?: number; height?: number; scenar
 
 const tab = ref<MainTab>(props.scenario === 'done' || props.scenario === 'now-empty' ? 'done' : 'now')
 const filter = ref('all')
+
+const settingsValues = ref<SettingsValues>({
+  sounds: true,
+  doubleControl: true,
+  escCancels: true,
+  redactSecrets: true,
+  connectAgents: true,
+  showNoSpeech: false,
+  holdToTalk: false,
+  listenAfterDone: false,
+  autoSendSingle: true,
+  kitWindow: true,
+  locale: 'en-US',
+})
+
+function onSettingChange(key: SettingKey, value: SettingValue): void {
+  settingsValues.value = { ...settingsValues.value, [key]: value }
+}
 
 const isSetup = computed(() => props.scenario === 'setup' || props.scenario === 'setup-done')
 
@@ -126,6 +147,7 @@ const sessionsText = computed(() => (props.scenario === 'no-session' ? 'None lis
       :record-disabled="scenario === 'permission'"
       :update="update"
       :setup="isSetup"
+      :settings-open="scenario === 'settings'"
       :sessions-text="sessionsText"
       :sessions-warn="scenario === 'no-session'"
       agents-text="Claude Code, Codex"
@@ -134,6 +156,9 @@ const sessionsText = computed(() => (props.scenario === 'no-session' ? 'None lis
       :toast="scenario === 'just-sent' ? { message: 'Sent to Tinkeroo', tone: 'ok', undo: true } : undefined"
     >
       <template #setup><SetupView :step="setupStep" /></template>
+      <template #settings>
+        <SettingsScreen :values="settingsValues" :permissions="{ microphone: true, screenRecording: false, accessibility: true }" @change="onSettingChange" />
+      </template>
     </MainWindow>
   </div>
 </template>

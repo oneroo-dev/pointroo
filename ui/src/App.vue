@@ -5,6 +5,7 @@ import { RooTooltipProvider } from '@roo/kit/controls'
 import { bridge } from './bridge'
 import MainWindow from './parts/MainWindow.vue'
 import { projectIdFor, tilesFor } from './parts/projects'
+import SettingsScreen from './parts/SettingsScreen.vue'
 import type { Item } from './parts/types'
 import { createStore } from './store'
 
@@ -28,8 +29,10 @@ function onRecord(): void {
   store.showToast('Press Control twice to record.', 'muted', false)
 }
 
+// The gear and Cmd+, open Settings; pressed again they close it.
 function onSettings(): void {
-  store.showToast('Settings are not in this window yet.', 'muted', false)
+  if (store.view === 'settings') store.closeSettings()
+  else void store.openSettings()
 }
 
 function onReveal(): void {
@@ -37,7 +40,7 @@ function onReveal(): void {
 }
 
 function onUseOtherPort(): void {
-  store.showToast('Pick another port in Settings. That screen is coming.', 'muted', false)
+  void store.openSettings()
 }
 
 function onCopyHint(): void {
@@ -76,6 +79,14 @@ function onKey(event: KeyboardEvent): void {
     return
   }
   if (event.metaKey || event.ctrlKey || event.altKey) return
+
+  if (store.view === 'settings') {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      store.closeSettings()
+    }
+    return
+  }
 
   if (event.key === 'Escape') {
     if (isNarrow.value && store.selectedItem !== undefined) {
@@ -148,6 +159,7 @@ onBeforeUnmount(() => {
       :sessions-warn="store.sessionsText === 'None listening'"
       :agents-text="store.agentsText"
       :needs-you="store.banner !== undefined && store.banner.kind !== 'no-session'"
+      :settings-open="store.view === 'settings'"
       :toast="store.toast"
       @drag="startDrag"
       @record="onRecord"
@@ -170,6 +182,17 @@ onBeforeUnmount(() => {
       @copy-hint="onCopyHint"
       @undo="store.undo"
       @dismiss-toast="store.dismissToast"
-    />
+    >
+      <template #settings>
+        <SettingsScreen
+          :values="store.settings"
+          :loading="!store.settingsLoaded"
+          v-bind="store.status === undefined ? {} : { permissions: store.status }"
+          @change="store.setSetting"
+          @allow="store.allow"
+          @back="store.closeSettings"
+        />
+      </template>
+    </MainWindow>
   </RooTooltipProvider>
 </template>

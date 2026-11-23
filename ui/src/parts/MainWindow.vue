@@ -46,6 +46,8 @@ const props = withDefaults(
     update?: 'ready' | 'updating' | undefined
     /** The first-run set up replaces the list; it fills the `setup` slot. */
     setup?: boolean
+    /** Settings replace the list, the sidebar and the detail pane; they fill the `settings` slot. The gear shows as pressed. */
+    settingsOpen?: boolean
     sessionsText?: string
     sessionsWarn?: boolean
     agentsText?: string | undefined
@@ -63,6 +65,7 @@ const props = withDefaults(
     recordDisabled: false,
     update: undefined,
     setup: false,
+    settingsOpen: false,
     sessionsText: '',
     sessionsWarn: false,
     agentsText: undefined,
@@ -105,6 +108,8 @@ const paneWidth = ref(380)
 
 const isWide = computed(() => props.width >= 900)
 const hasSidebar = computed(() => props.width >= 720)
+const showSidebar = computed(() => hasSidebar.value && !props.setup && !props.settingsOpen)
+const showPane = computed(() => isWide.value && !props.setup && !props.settingsOpen)
 const isEmptyList = computed(() => props.items.length === 0)
 const listeningProjects = computed(() => props.projects.filter((project) => project.listening))
 const filterChips = computed(() => [
@@ -131,7 +136,7 @@ function onSheetChange(open: boolean): void {
       v-model:sidebar-width="sidebarWidth"
       v-model:pane-width="paneWidth"
       :main-min="320"
-      :parts="{ sidebar: { show: hasSidebar && !setup }, pane: { show: isWide && !setup } }"
+      :parts="{ sidebar: { show: showSidebar }, pane: { show: showPane } }"
     >
       <template #bar>
         <RooBar platform="mac" data-drag-region @mousedown="onBarPress">
@@ -149,17 +154,18 @@ function onSheetChange(open: boolean): void {
               <RooButton variant="primary" size="sm" :disabled="recordDisabled" :busy="recordState !== 'idle'" disabled-reason="Allow the microphone first" @click="emit('record')">Record</RooButton>
             </RooTooltip>
             <RooJumpField form="trigger" label="Search" keys="Mod+K" />
-            <RooIconButton icon="settings" variant="ghost" label="Settings" tooltip="Settings" shortcut="Mod+," @click="emit('settings')" />
+            <RooIconButton icon="settings" variant="ghost" label="Settings" tooltip="Settings" shortcut="Mod+," :pressed="settingsOpen" @click="emit('settings')" />
           </template>
         </RooBar>
       </template>
 
-      <template v-if="hasSidebar && !setup" #sidebar>
+      <template v-if="showSidebar" #sidebar>
         <ProjectSidebar :projects="projects" :total="nowCount" :selected="filter" @select="(projectId) => (filter = projectId)" />
       </template>
 
       <template #main>
         <slot v-if="setup" name="setup" />
+        <slot v-else-if="settingsOpen" name="settings" />
         <div v-else class="main">
           <StatusBanner
             v-if="banner"
@@ -240,7 +246,7 @@ function onSheetChange(open: boolean): void {
         </div>
       </template>
 
-      <template v-if="isWide && !setup" #pane>
+      <template v-if="showPane" #pane>
         <ItemDetail
           v-if="selectedItem"
           :item="selectedItem"

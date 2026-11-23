@@ -30,6 +30,10 @@ export interface BridgeItem {
   said?: string
   firstElement?: string
   duration?: number
+  /** The router's best guess for a not-sent item: a project path. Only there when the app (R24) sends it. */
+  suggested?: string
+  /** The same guess as a project name. Only there when the app (R24) sends it. */
+  suggestedName?: string
 }
 
 export interface BridgeProjectRef {
@@ -47,6 +51,8 @@ export interface BridgeProject {
   key?: number
   open: number
   inProgress: number
+  /** ISO 8601 date when an item last went to this project. Left out when never used (R24). */
+  lastUsed?: string
 }
 
 export interface BridgeQuestion {
@@ -72,6 +78,24 @@ export interface BridgeAppStatus {
 
 export type PermissionName = 'microphone' | 'screenRecording' | 'accessibility'
 
+/** Every setting the page may read and write (WebBridge.allowedSettings). Flags are true or false; locale is a language id. */
+export type SettingKey =
+  | 'sounds'
+  | 'doubleControl'
+  | 'escCancels'
+  | 'redactSecrets'
+  | 'connectAgents'
+  | 'showNoSpeech'
+  | 'holdToTalk'
+  | 'listenAfterDone'
+  | 'autoSendSingle'
+  | 'kitWindow'
+  | 'locale'
+
+export type SettingValue = boolean | string
+
+export type SettingsValues = Partial<Record<SettingKey, SettingValue>>
+
 export interface ItemsListParams {
   status?: BridgeStatus
   project?: string
@@ -92,8 +116,8 @@ export interface BridgeMethods {
   'items.reroute': { params: { id: string; project: string }; result: { moved: true } }
   'questions.list': { params: Record<string, never>; result: { questions: BridgeQuestion[] } }
   'questions.answer': { params: { id: string; text: string }; result: { answered: true } }
-  'settings.get': { params: { key?: string }; result: { key: string; value: boolean | string } | { values: Record<string, boolean | string> } }
-  'settings.set': { params: { key: string; value: boolean | string }; result: { key: string; value: boolean | string } }
+  'settings.get': { params: { key?: string }; result: { key: string; value: SettingValue } | { values: Record<string, SettingValue> } }
+  'settings.set': { params: { key: string; value: SettingValue }; result: { key: string; value: SettingValue } }
   'status.get': { params: Record<string, never>; result: { status: BridgeAppStatus } }
   'permissions.ask': { params: { which: PermissionName }; result: { asked: true } }
   // Added by W2 (the Swift side). Until it lands the app answers not_available or unknown_method.
