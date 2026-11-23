@@ -36,7 +36,7 @@ enum Screen {
     static func write(_ image: CGImage, to url: URL, quality: Double = 0.75) -> Bool {
         let rep = NSBitmapImageRep(cgImage: image)
         guard let data = rep.representation(using: .jpeg, properties: [.compressionFactor: quality]) else { return false }
-        return (try? data.write(to: url)) != nil
+        return (try? data.write(to: url, options: .atomic)) != nil
     }
 
     /// Asks for Screen Recording by touching the capture API once.

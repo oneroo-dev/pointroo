@@ -7,6 +7,7 @@ enum Prefs {
     static var sounds: Bool { flag("sounds") }
     static var doubleControl: Bool { flag("doubleControl") }
     static var escCancels: Bool { flag("escCancels") }
+    static var redactSecrets: Bool { flag("redactSecrets") }
     /// Off until the user says yes on the first-run question (or in Settings).
     static var connectAgents: Bool { flag("connectAgents", default: false) }
 
@@ -24,6 +25,7 @@ struct SettingsView: View {
     @AppStorage("sounds") private var sounds = true
     @AppStorage("doubleControl") private var doubleControl = true
     @AppStorage("escCancels") private var escCancels = true
+    @AppStorage("redactSecrets") private var redactSecrets = true
     @AppStorage("connectAgents") private var connectAgents = false
     @AppStorage("locale") private var locale = ""
     @AppStorage("showNoSpeech") private var showNoSpeech = false
@@ -50,6 +52,12 @@ struct SettingsView: View {
                 toggle("Control twice", "Starts and stops a recording from any app", $doubleControl)
                 line
                 toggle("Esc cancels", "Stops and moves the recording to the Trash", $escCancels)
+                line
+                HStack {
+                    Text("Blur secrets in screenshots").font(.geist(13)).foregroundStyle(Ink.primary)
+                    Spacer()
+                    Toggle("", isOn: $redactSecrets).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                }.frame(height: 40)
                 line
                 HStack {
                     Text("Show recordings without speech").font(.geist(13)).foregroundStyle(Ink.primary)
@@ -116,7 +124,7 @@ struct SettingsView: View {
             Spacer(minLength: 0)
             Text("Based on Point and Yap by Marc Maurer (MIT)").font(.geist(11)).foregroundStyle(Ink.faint)
         }
-        .padding(24)
+        .padding(.horizontal, 24).padding(.vertical, 18)
         .frame(width: 400, height: 590, alignment: .topLeading)
         .background(Color.white)
     }
@@ -139,6 +147,6 @@ struct SettingsView: View {
             }
             Spacer()
             Toggle("", isOn: on).labelsHidden().toggleStyle(.switch).controlSize(.small)
-        }.frame(height: 46)
+        }.frame(height: 42)
     }
 }
