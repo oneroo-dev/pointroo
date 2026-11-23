@@ -151,7 +151,7 @@ const setupStep = computed(() => (props.scenario === 'setup-done' ? 'done' : 'ac
             layout="band"
             kind="warn"
             title="Pointroo can't hear you"
-            description="Microphone access is off, so recordings have no speech."
+            description="Microphone is off: no speech recorded."
           >
             <template #actions><RooButton size="sm" variant="secondary">Allow</RooButton></template>
           </RooStateCard>
@@ -181,7 +181,7 @@ const setupStep = computed(() => (props.scenario === 'setup-done' ? 'done' : 'ac
             layout="strip"
             kind="info"
             title="No Claude session is listening"
-            description="Paste work through Pointroo into Claude Code in your project."
+            description="Say 'work through Pointroo' in Claude Code."
           >
             <template #actions><RooButton size="sm" variant="secondary">Copy</RooButton></template>
           </RooStateCard>
@@ -193,7 +193,7 @@ const setupStep = computed(() => (props.scenario === 'setup-done' ? 'done' : 'ac
           <div v-if="isEmptyList" class="main-empty">
             <RooSkeleton v-if="scenario === 'loading'" row :rows="5" />
             <RooEmpty v-else-if="scenario === 'now-empty'" filtered title="All done. Nothing waiting." description="New recordings show up here." icon="check" />
-            <RooEmpty v-else title="Nothing yet" description="Press Control twice, point at something and say what to change." icon="mouse-pointer-click">
+            <RooEmpty v-else title="Nothing yet" description="Press Control twice, point, and talk." icon="mouse-pointer-click">
               <RooKeyHint keys="Control Control">Start</RooKeyHint>
             </RooEmpty>
           </div>

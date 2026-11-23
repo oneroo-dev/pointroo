@@ -40,7 +40,7 @@ function allowed(step: string, id: string): boolean {
       </RooSettingsGroup>
 
       <template v-if="step === 'done'">
-        <RooStateCard kind="ok" title="Try it" description="Press Control twice, point at this window, say what to change, then press Control twice again. It is marked done by you, so no agent sees it." />
+        <RooStateCard kind="ok" title="Try it" description="Point at this window and talk." />
         <RooSettingsGroup title="Connect a Claude session">
           <RooSettingRow label="In your project" description="Paste this into Claude Code to start taking work." stack>
             <RooCodeBlock code="work through Pointroo" label="Claude Code prompt" />
