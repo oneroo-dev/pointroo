@@ -116,6 +116,25 @@ final class WebBridgeTests: XCTestCase {
         XCTAssertEqual((read["result"] as? [String: Any])?["value"] as? Bool, false)
     }
 
+    func testReadsAndWritesHoldToTalkAndListenAfterDone() throws {
+        let standard = UserDefaults.standard
+        let savedHold = standard.object(forKey: "holdToTalk")
+        let savedListen = standard.object(forKey: "listenAfterDone")
+        defer {
+            if let savedHold { standard.set(savedHold, forKey: "holdToTalk") } else { standard.removeObject(forKey: "holdToTalk") }
+            if let savedListen { standard.set(savedListen, forKey: "listenAfterDone") } else { standard.removeObject(forKey: "listenAfterDone") }
+        }
+        let subject = WebBridge(defaults: standard, loadItems: { [] })
+        for key in ["holdToTalk", "listenAfterDone"] {
+            let written = try replyObject(subject.handle(message: ["id": 2, "method": "settings.set", "params": ["key": key, "value": true]]))
+            XCTAssertEqual((written["result"] as? [String: Any])?["value"] as? Bool, true)
+            let read = try replyObject(subject.handle(message: ["id": 3, "method": "settings.get", "params": ["key": key]]))
+            XCTAssertEqual((read["result"] as? [String: Any])?["value"] as? Bool, true)
+        }
+        XCTAssertTrue(Prefs.holdToTalk)
+        XCTAssertTrue(Prefs.listenAfterDone)
+    }
+
     func testRefusesASettingsKeyThatIsNotAllowed() throws {
         let subject = bridge()
         XCTAssertEqual(try errorCode(subject.handle(message: ["id": 1, "method": "settings.set", "params": ["key": "mcpPort", "value": 1]])), "refused")
