@@ -15,12 +15,23 @@ struct Item {
     var note: String?
     var project: String? = nil   // the project folder it was routed to (route.json)
     var routeHow: String? = nil  // how: said, screen, followup, only, picked
+    var priority: String? = nil  // "urgent" when the user said urgent, asap or right now
+    var commit: String? = nil    // the commit the agent made (mark_done)
+    var branch: String? = nil    // the branch it is on (mark_done)
+    var duplicateOf: String? = nil   // the id of the open item this repeats; it is not handed out on its own
+    var alsoSaid: [String] = []      // repeats folded into this item, "id: said text"
+    var said: String = ""            // everything the user said in the recording
+    var firstElement: String? = nil  // the first pointed element, "role|name"
+    var duration: Double = 0         // length of the recording in seconds
 }
 
 struct ItemState: Codable {
     var source: String        // "session"; older builds wrote "timeline"
     var items: [String: Entry] = [:]
-    struct Entry: Codable { var status: String; var by: String?; var at: Date; var note: String? }
+    struct Entry: Codable {
+        var status: String; var by: String?; var at: Date; var note: String?
+        var commit: String? = nil, branch: String? = nil
+    }
 }
 
 /// What to do with items no project was found for.
@@ -50,6 +61,7 @@ enum Items {
                 let working = e.status == "taken" || e.status == "in_progress"
                 out[i].status = working ? (Date().timeIntervalSince(e.at) > lease ? "open" : "in_progress") : e.status
                 out[i].by = e.by; out[i].note = e.note; out[i].at = e.at
+                out[i].commit = e.commit; out[i].branch = e.branch
             }
         }
         return (source, out)
@@ -89,7 +101,12 @@ enum Items {
         }
         if lines.count == 3 { lines.removeLast(2) }
         let title = words.prefix(12).map(\.text).joined(separator: " ")
-        return Item(id: "", session: "", n: 1, title: title, body: lines.joined(separator: "\n"), crops: crops, status: "open", at: nil)
+        var item = Item(id: "", session: "", n: 1, title: title, body: lines.joined(separator: "\n"), crops: crops, status: "open", at: nil)
+        item.said = words.map(\.text).joined(separator: " ")
+        item.priority = QueueRules.isUrgent(item.said) ? "urgent" : nil
+        item.firstElement = QueueRules.elementIdentity(events.points)
+        item.duration = events.duration
+        return item
     }
 
     static func pointLine(_ p: PointEvent, _ dir: URL, _ crops: inout [URL]) -> String {
@@ -139,25 +156,35 @@ enum Items {
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
     }
 
-    /// Open items oldest first; with `take`, they are marked in progress by `agent` before they are returned.
+    /// Open items, urgent first and then oldest first; with `take`, they are marked in progress by `agent` before they are returned.
     /// With `project`, only that project's items (the path is the same or one is inside the other) and the ones not routed anywhere.
+    /// An item that repeats an earlier open one (see QueueRules.fold) is not handed out; the original carries it in `alsoSaid`.
     static func openItems(limit: Int, take: Bool, agent: String, project: String? = nil,
                           unrouted: Unrouted = .any, since: Date? = nil) -> [Item] {
         locked {
-            var out: [Item] = []
-            for dir in sessionDirs() where out.count < limit {
-                var st = readState(dir)
-                let (source, items) = Self.items(in: dir, state: st)
-                let free = items.filter { $0.status == "open" && belongs($0, to: project, unrouted: unrouted, since: since) }.prefix(limit - out.count)
-                guard !free.isEmpty else { continue }
-                if take {
-                    if st == nil { st = ItemState(source: source) }
-                    for i in free { st!.items[String(i.n)] = .init(status: "in_progress", by: agent, at: Date(), note: nil) }
-                    guard writeState(st!, dir) else { continue }
-                }
-                out += free.map { var i = $0; if take { i.status = "in_progress"; i.by = agent; i.at = Date() }; return i }
+            var states: [String: (dir: URL, state: ItemState?, source: String)] = [:]
+            var everything: [Item] = []
+            for dir in sessionDirs() {
+                let state = readState(dir)
+                let (source, items) = Self.items(in: dir, state: state)
+                states[dir.lastPathComponent] = (dir, state, source)
+                everything += items
             }
-            return out
+            let folded = QueueRules.fold(everything) { belongs($0, to: project, unrouted: unrouted, since: since) }
+            let free = Array(QueueRules.ordered(folded.filter {
+                $0.status == "open" && $0.duplicateOf == nil && belongs($0, to: project, unrouted: unrouted, since: since)
+            }).prefix(limit))
+            guard take else { return free }
+            var failed: Set<String> = []
+            for session in Set(free.map(\.session)) {
+                guard let entry = states[session] else { continue }
+                var state = entry.state ?? ItemState(source: entry.source)
+                for item in free where item.session == session {
+                    state.items[String(item.n)] = .init(status: "in_progress", by: agent, at: Date(), note: nil)
+                }
+                if !writeState(state, entry.dir) { failed.insert(session) }
+            }
+            return free.filter { !failed.contains($0.session) }.map { var item = $0; item.status = "in_progress"; item.by = agent; item.at = Date(); return item }
         }
     }
 
@@ -178,11 +205,21 @@ enum Items {
         return formatter.date(from: session)
     }
 
-    /// Sets items to done or open. Returns what changed and what was not found.
-    static func set(_ ids: [String], status: String, agent: String, note: String?) -> (changed: [String], missing: [String]) {
+    /// Sets items to done or open. Returns what changed and what was not found. `commit` and `branch` are stored with a done item.
+    /// Marking an item done also closes the repeats folded into it (listed in `closedRepeats`).
+    static func set(_ ids: [String], status: String, agent: String, note: String?,
+                    commit: String? = nil, branch: String? = nil) -> (changed: [String], missing: [String], closedRepeats: [String]) {
         locked {
-            var changed: [String] = [], missing: [String] = []
-            let bySession = Dictionary(grouping: ids) { String($0.split(separator: "#").first ?? "") }
+            var changed: [String] = [], missing: [String] = [], closedRepeats: [String] = []
+            var repeatNotes: [String: String] = [:]
+            if status == "done" {
+                for item in all() {
+                    if let original = item.duplicateOf, ids.contains(original), !ids.contains(item.id) {
+                        repeatNotes[item.id] = "Same as \(original), done with it." + (note.map { " \($0)" } ?? "")
+                    }
+                }
+            }
+            let bySession = Dictionary(grouping: ids + repeatNotes.keys.sorted()) { String($0.split(separator: "#").first ?? "") }
             for (session, list) in bySession {
                 let dir = Paths.root.appendingPathComponent(session)
                 guard !session.isEmpty, !session.contains("/"), !session.contains(".."),
@@ -190,22 +227,27 @@ enum Items {
                 var st = readState(dir)
                 let (source, items) = Self.items(in: dir, state: st)
                 if st == nil { st = ItemState(source: source) }
-                var sessionChanged: [String] = []
+                var sessionChanged: [String] = [], closed: [String] = []
                 for id in list {
                     guard let item = items.first(where: { $0.id == id }) else { missing.append(id); continue }
                     if status == "in_progress", item.status == "done" || (item.status == "in_progress" && item.by != agent) {
                         missing.append("\(id) (\(item.status == "done" ? "done" : "in progress by \(item.by ?? "another agent")"))"); continue
                     }
-                    st!.items[String(item.n)] = .init(status: status, by: agent, at: Date(), note: note)
+                    let isRepeat = repeatNotes[id] != nil
+                    st!.items[String(item.n)] = .init(status: status, by: agent, at: Date(), note: repeatNotes[id] ?? note,
+                                                      commit: status == "done" && !isRepeat ? commit : nil,
+                                                      branch: status == "done" && !isRepeat ? branch : nil)
                     sessionChanged.append(id)
+                    if isRepeat { closed.append(id) }
                 }
-                if writeState(st!, dir) { changed += sessionChanged }
-                else { missing += sessionChanged.map { "\($0) (could not save state)" } }
+                let requested = sessionChanged.filter { repeatNotes[$0] == nil }
+                if writeState(st!, dir) { changed += requested; closedRepeats += closed }
+                else { missing += requested.map { "\($0) (could not save state)" } }
             }
-            return (changed, missing)
+            return (changed, missing, closedRepeats)
         }
     }
 
-    /// Every item, oldest first, for an overview.
-    static func all() -> [Item] { sessionDirs().flatMap { items(in: $0, state: readState($0)).items } }
+    /// Every item, oldest first, for an overview. A repeat of an earlier open item shows with `duplicateOf`.
+    static func all() -> [Item] { QueueRules.fold(sessionDirs().flatMap { items(in: $0, state: readState($0)).items }) }
 }

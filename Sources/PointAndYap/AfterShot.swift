@@ -63,9 +63,12 @@ enum AfterShot {
     }
 
     /// Cuts `rect` (global points) out of a full-display image and writes it as a JPEG, at most 1200 px wide, atomically.
-    static func writeCrop(from source: URL, rect: CGRect, display: CGRect, scale: Double, to target: URL) -> Bool {
+    /// With `redactSecrets` (the user's setting by default) the secrets in the cut are blurred before anything is written.
+    static func writeCrop(from source: URL, rect: CGRect, display: CGRect, scale: Double, to target: URL,
+                          redactSecrets: Bool = Prefs.redactSecrets, redactor: Redact.Redactor = Redact.blur) -> Bool {
         guard let full = NSImage(contentsOf: source)?.cgImage(forProposedRect: nil, context: nil, hints: nil),
-              let cut = full.cropping(to: pixelRect(for: rect, display: display, scale: scale)) else { return false }
+              let cropped = full.cropping(to: pixelRect(for: rect, display: display, scale: scale)) else { return false }
+        let cut = redactSecrets ? redactor(cropped).image : cropped
         var image = cut
         if cut.width > 1200 {
             let width = 1200, height = max(1, cut.height * 1200 / cut.width)
