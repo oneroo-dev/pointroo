@@ -19,6 +19,7 @@ final class WebHost {
     init(bridge: WebBridge = WebBridge()) {
         self.bridge = bridge
         let configuration = WKWebViewConfiguration()
+        configuration.setURLSchemeHandler(WebImageHandler(), forURLScheme: WebImages.scheme)   // must come before the web view is made
         let webView = PlainWebView(frame: .zero, configuration: configuration)
         let policy = NavigationPolicy(bundleFolder: Self.bundleFolder, devOrigin: Self.devURL(from: Prefs.webDevURL))
         self.webView = webView

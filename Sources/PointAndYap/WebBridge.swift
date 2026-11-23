@@ -42,6 +42,11 @@ import Foundation
 ///   firstElement  the first pointed element, "role|name"
 ///   duration      length of the recording in seconds
 ///
+/// An Item also has cropURLs: [string] (one pointroo-image:// address per crop, same order as crops) and afterURL? (the address of
+/// after/01.jpg, only when that file exists). A page shows a picture by using these in an img tag. The scheme is
+/// `pointroo-image://session/<session id>/<relative path>`; only files under crops, frames and after of one session are served
+/// (see WebImages).
+///
 /// Question: {id, project, agent, text, choices: [string], asked: seconds since 1970}
 ///   A key with no value is left out (an empty choices list is an empty array).
 ///
@@ -261,6 +266,14 @@ final class WebBridge {
             "id": item.id, "session": item.session, "n": item.n, "title": item.title, "body": item.body,
             "crops": item.crops.map(\.path), "status": item.status,
         ]
+        out["cropURLs"] = item.crops.compactMap { crop -> String? in
+            guard let relative = WebImages.relativePath(of: crop, session: item.session, root: Paths.root) else { return nil }
+            return WebImages.url(session: item.session, relative: relative)
+        }
+        let afterFile = Paths.root.appendingPathComponent(item.session).appendingPathComponent("after/01.jpg")
+        if !item.session.isEmpty, FileManager.default.fileExists(atPath: afterFile.path) {
+            out["afterURL"] = WebImages.url(session: item.session, relative: "after/01.jpg")
+        }
         if let at = item.at { out["at"] = ISO8601DateFormatter().string(from: at) }
         if let by = item.by { out["by"] = by }
         if let note = item.note { out["note"] = note }
