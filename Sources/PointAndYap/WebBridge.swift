@@ -42,6 +42,13 @@ import Foundation
 ///                   of its recording); left out when there is none.
 ///   items.get       params {id: string}
 ///                   result {item: Item}   error not_found when there is no such item
+///   items.search    params {text: string 1...200 characters, status?: "open" | "in_progress" | "done" | "trashed" | "any", limit?: whole number 1...100, default 30}
+///                   status    no status = every item except the trashed ones; "any" = every item, trashed too
+///                   matching  case and accents ignored; every word of text must be found in the item's title, body, said, alsoSaid, note,
+///                   project name or firstElement. Title hits come first, then said/body, then the rest; inside a rank the newest comes first.
+///                   result {items: [Item + match: {field, snippet}]}   field is the best field with a hit; snippet is up to 80
+///                   characters around the first hit, on one line
+///                   error bad_params (text empty or longer than 200, status not allowed, limit not a whole number 1...100)
 ///   items.reroute   params {id: string, project: string}   (project is a project's name or folder path, as in Projects.known())
 ///                   result {moved: true}
 ///                   error not_found (no such item, or no such project), refused (the item is done), not_available (could not save), bad_params
@@ -166,6 +173,7 @@ final class WebBridge {
         "items.list": { bridge, params in try bridge.itemsList(params) },
         "projects.list": { bridge, params in try bridge.projectsList(params) },
         "items.get": { bridge, params in try bridge.itemsGet(params) },
+        "items.search": { bridge, params in try bridge.itemsSearch(params) },
         "items.reroute": { bridge, params in try bridge.itemsReroute(params) },
         "items.done": { bridge, params in try bridge.itemsChangeStatus(params, status: "done", key: "done") },
         "items.reopen": { bridge, params in try bridge.itemsChangeStatus(params, status: "open", key: "reopened") },
@@ -486,6 +494,29 @@ final class WebBridge {
         guard let id = params["id"] as? String, !id.isEmpty else { throw Failure(code: "bad_params", message: "id is needed.") }
         guard let item = loadItems().first(where: { $0.id == id }) else { throw Failure(code: "not_found", message: "No item \(id).") }
         return ["item": Self.dictionary(item)]
+    }
+
+    private func itemsSearch(_ params: [String: Any]) throws -> Any {
+        guard let text = params["text"] as? String, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              text.count <= 200 else {
+            throw Failure(code: "bad_params", message: "text must be 1 to 200 characters.")
+        }
+        var items = loadItems()
+        if let status = params["status"] {
+            guard let wanted = status as? String, ["open", "in_progress", "done", "trashed", "any"].contains(wanted) else {
+                throw Failure(code: "bad_params", message: "status must be open, in_progress, done, trashed or any.")
+            }
+            if wanted != "any" { items = items.filter { $0.status == wanted } }
+        } else {
+            items = items.filter { $0.status != "trashed" }
+        }
+        let limit = try Self.wholeNumber(params["limit"], named: "limit", range: 1...100, defaultValue: 30)
+        let found = ItemSearch.matches(items, text: text).prefix(limit)
+        return ["items": found.map { match -> [String: Any] in
+            var entry = Self.dictionary(match.item)
+            entry["match"] = ["field": match.field, "snippet": match.snippet]
+            return entry
+        }]
     }
 
     private func itemsReroute(_ params: [String: Any]) throws -> Any {
