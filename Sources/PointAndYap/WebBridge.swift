@@ -57,6 +57,10 @@ import Foundation
 ///                   result {copied: true}   error bad_params when text is not a non-empty string
 ///   window.startDrag no params   the page calls this from a mousedown on its own drag area; the window then follows the mouse
 ///                   result {dragging: true}   error not_available when the app gave no way to drag
+///   server.useAnotherPort no params   moves the agents server to the next free port, then the agent install follows it
+///                   result {asked: true}   error not_available when the app gave no way to do it
+///   app.checkUpdates no params   asks the updater to look for a new version
+///                   result {asked: true}   error not_available when the app gave no way to do it
 ///   done.recent     params {limit?: whole number 1...50, default 10}
 ///                   result {items: [Item + doneAt]}   items with status done, newest done first (doneAt is the ISO date it was marked done,
 ///                   the same value as the item's `at`; an item with no date goes last and has no doneAt). Each Item has project, note,
@@ -165,6 +169,8 @@ final class WebBridge {
         "settings.set": { bridge, params in try bridge.settingsSet(params) },
         "status.get": { bridge, params in try bridge.statusGet(params) },
         "permissions.ask": { bridge, params in try bridge.permissionsAsk(params) },
+        "server.useAnotherPort": { bridge, params in try bridge.serverUseAnotherPort(params) },
+        "app.checkUpdates": { bridge, params in try bridge.appCheckUpdates(params) },
     ]
 
     private let defaults: UserDefaults
@@ -179,6 +185,8 @@ final class WebBridge {
     private let unroute: (String) -> Items.UnrouteResult
     private let writeClipboard: (String) -> Void
     private let startDrag: (() -> Void)?
+    private let useAnotherPort: (() -> Void)?
+    private let checkUpdates: (() -> Void)?
     private let now: () -> Date
 
     /// What changing one item's status did.
@@ -208,6 +216,7 @@ final class WebBridge {
     /// `changeStatus` (id, new status, note) serves items.done, items.reopen and items.trash. `unroute` serves items.unroute.
     /// `startDrag` serves window.startDrag; when it is nil, that method answers not_available.
     /// `writeClipboard` serves clipboard.copy. The defaults are the real Items.set, Items.unroute and the general pasteboard.
+    /// `useAnotherPort` serves server.useAnotherPort and `checkUpdates` serves app.checkUpdates; when one is nil, its method answers not_available.
     /// `now` is the clock for the question snooze (tests set it).
     init(defaults: UserDefaults = .standard,
          loadItems: @escaping () -> [Item] = { Items.all() },
@@ -221,6 +230,8 @@ final class WebBridge {
          unroute: @escaping (String) -> Items.UnrouteResult = { Items.unroute(id: $0) },
          writeClipboard: @escaping (String) -> Void = { WebBridge.copyToClipboard($0) },
          startDrag: (() -> Void)? = nil,
+         useAnotherPort: (() -> Void)? = nil,
+         checkUpdates: (() -> Void)? = nil,
          now: @escaping () -> Date = { Date() }) {
         self.defaults = defaults
         self.loadItems = loadItems
@@ -234,6 +245,8 @@ final class WebBridge {
         self.unroute = unroute
         self.writeClipboard = writeClipboard
         self.startDrag = startDrag
+        self.useAnotherPort = useAnotherPort
+        self.checkUpdates = checkUpdates
         self.now = now
     }
 
@@ -481,6 +494,18 @@ final class WebBridge {
         guard let startDrag else { throw Failure(code: "not_available", message: "Dragging the window is not available.") }
         startDrag()
         return ["dragging": true]
+    }
+
+    private func serverUseAnotherPort(_ params: [String: Any]) throws -> Any {
+        guard let useAnotherPort else { throw Failure(code: "not_available", message: "Using another port is not available.") }
+        useAnotherPort()
+        return ["asked": true]
+    }
+
+    private func appCheckUpdates(_ params: [String: Any]) throws -> Any {
+        guard let checkUpdates else { throw Failure(code: "not_available", message: "Checking for updates is not available.") }
+        checkUpdates()
+        return ["asked": true]
     }
 
     private func clipboardCopy(_ params: [String: Any]) throws -> Any {

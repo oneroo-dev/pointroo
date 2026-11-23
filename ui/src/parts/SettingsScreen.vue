@@ -30,6 +30,8 @@ const props = withDefaults(
 const emit = defineEmits<{
   change: [key: SettingKey, value: SettingValue, message: string]
   allow: [which: PermissionName]
+  useAnotherPort: []
+  checkUpdates: []
   back: []
 }>()
 
@@ -114,6 +116,12 @@ function onLanguage(value: string | undefined): void {
         </RooSettingRow>
       </RooSettingsGroup>
 
+      <RooSettingsGroup title="Agents server">
+        <RooSettingRow label="Use another port" description="When another app has port 6742.">
+          <RooButton variant="secondary" size="sm" aria-label="Use another port" @click="emit('useAnotherPort')">Use another port</RooButton>
+        </RooSettingRow>
+      </RooSettingsGroup>
+
       <RooSettingsGroup title="Window">
         <RooSettingRow v-for="row in windowRows" :key="row.key" :label="row.label" :description="row.description">
           <RooSwitch :model-value="flagValue(row)" :disabled="loading" :aria-label="row.label" @update:model-value="(value) => onFlag(row, value)" />
@@ -131,6 +139,12 @@ function onLanguage(value: string | undefined): void {
           <RooStateMark v-if="permissions === undefined" state="muted" label="Checking" />
           <RooStateMark v-else-if="permissions[row.which]" state="ok" label="Allowed" />
           <RooButton v-else variant="secondary" size="sm" :aria-label="`Allow ${row.label}`" @click="emit('allow', row.which)">Allow</RooButton>
+        </RooSettingRow>
+      </RooSettingsGroup>
+
+      <RooSettingsGroup title="About">
+        <RooSettingRow label="Check for updates" description="Looks for a new version of Pointroo.">
+          <RooButton variant="secondary" size="sm" aria-label="Check for updates" @click="emit('checkUpdates')">Check for updates</RooButton>
         </RooSettingRow>
       </RooSettingsGroup>
     </div>

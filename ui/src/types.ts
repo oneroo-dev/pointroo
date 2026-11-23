@@ -127,6 +127,8 @@ export interface BridgeMethods {
   'items.unroute': { params: { id: string }; result: { unrouted: true } }
   'clipboard.copy': { params: { text: string }; result: { copied: true } }
   'window.startDrag': { params: Record<string, never>; result: { dragging: true } }
+  'server.useAnotherPort': { params: Record<string, never>; result: { asked: true } }
+  'app.checkUpdates': { params: Record<string, never>; result: { asked: true } }
 }
 
 export type BridgeMethod = keyof BridgeMethods

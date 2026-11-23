@@ -92,8 +92,6 @@ enum Paths {
     static let support = ProcessInfo.processInfo.environment["POINTANDYAP_SUPPORT"].map { URL(fileURLWithPath: $0) }
         ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Pointroo")
 
-    static var keyFile: URL { support.appendingPathComponent("anthropic-key") }
-
     static func newSession() -> URL {
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd_HHmmss"

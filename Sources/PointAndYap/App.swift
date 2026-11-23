@@ -176,7 +176,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 if outcome == .unrouted { MainActor.assumeIsolated { state.loadSessions() } }
                 return outcome
             },
-            startDrag: { [weak self] in MainActor.assumeIsolated { self?.kitHost?.performWindowDrag() } })
+            startDrag: { [weak self] in MainActor.assumeIsolated { self?.kitHost?.performWindowDrag() } },
+            useAnotherPort: { MainActor.assumeIsolated { state.useAnotherPort() } },
+            checkUpdates: { MainActor.assumeIsolated { Updater.shared.checkNow() } })
         let host = WebHost(bridge: bridge)
         host.load()
         kitHost = host
