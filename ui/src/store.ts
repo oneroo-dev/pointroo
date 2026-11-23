@@ -4,7 +4,7 @@ import { computed, reactive, ref } from 'vue'
 import type { Bridge } from './bridge'
 import { errorText } from './bridge'
 import type { Item, MainBanner, MainTab, MainToast, Project } from './parts/types'
-import type { BridgeAppStatus, BridgeItem, BridgeProject, BridgeQuestion, PermissionName, RecordingPhase } from './types'
+import type { BridgeAppStatus, BridgeItem, BridgeProject, BridgeQuestion, PermissionName, RecordingPhase, SettingKey, SettingValue, SettingsValues } from './types'
 import { matchQuestions, toViewItem, toViewProjects } from './viewModel'
 
 const undoSeconds = 5
@@ -28,15 +28,19 @@ export function createStore(bridge: Bridge) {
   const selectedId = ref<string | undefined>(undefined)
   const toast = ref<MainToast | undefined>(undefined)
   const now = ref(new Date())
+  const view = ref<'queue' | 'settings'>('queue')
+  const settings = ref<SettingsValues>({})
+  const settingsLoaded = ref(false)
 
   let toastTimer: number | undefined
   let undoSteps: UndoStep[] = []
+  let settingUndo: (() => Promise<void>) | undefined
   let refreshing: Promise<void> | undefined
   let refreshAgain = false
 
   const projects = computed<Project[]>(() => toViewProjects(bridgeProjects.value))
   const matched = computed(() => matchQuestions(bridgeItems.value, questions.value))
-  const allItems = computed<Item[]>(() => bridgeItems.value.map((item) => toViewItem(item, matched.value.get(item.id), now.value)))
+  const allItems = computed<Item[]>(() => bridgeItems.value.map((item) => toViewItem(item, matched.value.get(item.id), now.value, projects.value)))
   const nowItems = computed(() => allItems.value.filter((item) => item.state !== 'done' && item.state !== 'done-by-you'))
   const doneItems = computed(() => allItems.value.filter((item) => item.state === 'done' || item.state === 'done-by-you'))
   const filterName = computed(() => projects.value.find((project) => project.id === filter.value)?.name)
@@ -77,6 +81,7 @@ export function createStore(bridge: Bridge) {
 
   function showToast(message: string, tone: MainToast['tone'], undo: boolean): void {
     window.clearTimeout(toastTimer)
+    settingUndo = undefined
     toast.value = { message, tone, undo }
     toastTimer = window.setTimeout(dismissToast, (undo ? undoSeconds : plainToastSeconds) * 1000)
   }
@@ -85,6 +90,7 @@ export function createStore(bridge: Bridge) {
     window.clearTimeout(toastTimer)
     toast.value = undefined
     undoSteps = []
+    settingUndo = undefined
   }
 
   function fail(error: unknown): void {
@@ -191,7 +197,12 @@ export function createStore(bridge: Bridge) {
 
   async function undo(): Promise<void> {
     const steps = undoSteps
+    const revertSetting = settingUndo
     dismissToast()
+    if (revertSetting !== undefined) {
+      await revertSetting()
+      return
+    }
     try {
       for (const step of steps) {
         if (step.previousName === null) {
@@ -277,6 +288,56 @@ export function createStore(bridge: Bridge) {
     }
   }
 
+  async function loadSettings(): Promise<void> {
+    const reply = await bridge.call('settings.get', {})
+    if ('values' in reply) settings.value = reply.values
+    settingsLoaded.value = true
+  }
+
+  /** Opens Settings in the window and asks the app for the saved values and the permissions again. */
+  async function openSettings(): Promise<void> {
+    view.value = 'settings'
+    try {
+      await Promise.all([loadSettings(), loadStatus()])
+    } catch (error) {
+      fail(error)
+    }
+  }
+
+  function closeSettings(): void {
+    view.value = 'queue'
+  }
+
+  /**
+   * Saves one setting at once. The screen shows the new value straight away; if the app refuses, the old value comes back
+   * and a toast says why. A saved change shows a toast (with Undo) that says `message`.
+   */
+  async function setSetting(key: SettingKey, value: SettingValue, message: string, announce = true): Promise<void> {
+    const previous = settings.value[key]
+    settings.value = { ...settings.value, [key]: value }
+    try {
+      const reply = await bridge.call('settings.set', { key, value })
+      settings.value = { ...settings.value, [key]: reply.value }
+    } catch (error) {
+      if (previous === undefined) {
+        const restored = { ...settings.value }
+        delete restored[key]
+        settings.value = restored
+      } else {
+        settings.value = { ...settings.value, [key]: previous }
+      }
+      fail(error)
+      return
+    }
+    if (!announce) return
+    if (previous === undefined) {
+      showToast(message, 'ok', false)
+      return
+    }
+    showToast(message, 'ok', true)
+    settingUndo = () => setSetting(key, previous, 'Change undone', false)
+  }
+
   function select(itemId: string | undefined): void {
     selectedId.value = itemId
   }
@@ -304,6 +365,12 @@ export function createStore(bridge: Bridge) {
     agentsText,
     nowCount: computed(() => nowItems.value.length),
     doneCount: computed(() => doneItems.value.length),
+    view,
+    settings,
+    settingsLoaded,
+    openSettings,
+    closeSettings,
+    setSetting,
     start,
     refresh,
     send,

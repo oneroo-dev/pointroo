@@ -16,6 +16,9 @@ import type {
   BridgeQuestion,
   ItemGroup,
   ItemsListParams,
+  PermissionName,
+  SettingKey,
+  SettingValue,
 } from './types'
 
 const minutesPerUnit: Record<string, number> = { min: 1, hour: 60, hours: 60, day: 1440, days: 1440 }
@@ -92,12 +95,46 @@ export function createFakeBridge(): Bridge {
         inProgress: mine.filter((item) => item.status === 'in_progress').length,
       }
       if (project.listening && index < 9) entry.key = index + 1
+      // Sample dates: the first projects were used most recently; the rest never.
+      if (index < 3) entry.lastUsed = new Date(Date.now() - (index + 1) * 3600000).toISOString()
       return entry
     })
   }
 
+  // Sample permissions: screen recording starts off so Settings shows an Allow button; asking turns it on.
+  const permissions: Record<PermissionName, boolean> = { microphone: true, screenRecording: false, accessibility: true }
+  const settingValues: Record<SettingKey, SettingValue> = {
+    sounds: true,
+    doubleControl: true,
+    escCancels: true,
+    redactSecrets: true,
+    connectAgents: false,
+    showNoSpeech: false,
+    holdToTalk: false,
+    listenAfterDone: false,
+    autoSendSingle: true,
+    kitWindow: true,
+    locale: '',
+  }
+  const languageIds = ['', 'en-US', 'de-DE', 'fr-FR', 'es-ES', 'it-IT', 'pt-BR', 'nl-NL', 'ja-JP', 'zh-CN']
+
+  function isSettingKey(key: string | undefined): key is SettingKey {
+    return key !== undefined && Object.hasOwn(settingValues, key)
+  }
+
+  function setSetting(key: string, value: SettingValue): { key: string; value: SettingValue } {
+    if (!isSettingKey(key)) throw new BridgeError('refused', 'That setting cannot be changed.')
+    if (key === 'locale') {
+      if (typeof value !== 'string' || !languageIds.includes(value)) throw new BridgeError('bad_params', 'locale must be one of the known values.')
+    } else if (typeof value !== 'boolean') {
+      throw new BridgeError('bad_params', `${key} is on or off (true or false).`)
+    }
+    settingValues[key] = value
+    return { key, value }
+  }
+
   function statusNow(): BridgeAppStatus {
-    return { mcpRunning: true, mcpPort: 6742, mcpText: 'Shared MCP server: running on 127.0.0.1:6742', sessions: 2, agents: ['Claude Code', 'Codex'], microphone: true, screenRecording: true, accessibility: true }
+    return { mcpRunning: true, mcpPort: 6742, mcpText: 'Shared MCP server: running on 127.0.0.1:6742', sessions: 2, agents: ['Claude Code', 'Codex'], ...permissions }
   }
 
   function listItems(params: ItemsListParams): { items: BridgeItem[] } | { groups: ItemGroup[] } {
@@ -159,10 +196,18 @@ export function createFakeBridge(): Bridge {
       emit('questions.changed', { count: questions.length })
       return { answered: true }
     },
-    'settings.get': () => ({ values: {} }),
-    'settings.set': (params) => ({ key: params.key, value: params.value }),
+    'settings.get': (params) => {
+      if (params.key === undefined) return { values: { ...settingValues } }
+      if (!isSettingKey(params.key)) throw new BridgeError('refused', 'That setting cannot be read.')
+      return { key: params.key, value: settingValues[params.key] }
+    },
+    'settings.set': (params) => setSetting(params.key, params.value),
     'status.get': () => ({ status: statusNow() }),
-    'permissions.ask': () => ({ asked: true }),
+    'permissions.ask': (params) => {
+      permissions[params.which] = true
+      emit('status.changed', statusNow())
+      return { asked: true }
+    },
     'clipboard.copy': () => ({ copied: true }),
     'window.startDrag': () => ({ dragging: true }),
   }
