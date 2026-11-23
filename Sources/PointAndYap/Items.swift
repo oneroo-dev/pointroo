@@ -32,6 +32,8 @@ struct ItemState: Codable {
     struct Entry: Codable {
         var status: String; var by: String?; var at: Date; var note: String?
         var commit: String? = nil, branch: String? = nil
+        /// The process id of the agent session that took the item (its live session file is `live/<pid>.json`); nil for older entries.
+        var pid: Int32? = nil
     }
 }
 
@@ -43,10 +45,13 @@ enum Unrouted {
 
 enum Items {
     static let lease: TimeInterval = 2 * 3600   // an item in progress that no one finished comes back after two hours
+    /// An item taken by a session that has since closed comes back after this long (so a slow start never frees it).
+    static let closedSessionGrace: TimeInterval = 120
 
     // MARK: Splitting a session
 
-    static func items(in dir: URL, state: ItemState?) -> (source: String, items: [Item]) {
+    static func items(in dir: URL, state: ItemState?,
+                      isTakerAlive: (Int32) -> Bool = { LiveSessions.isAlive(pid: $0) }) -> (source: String, items: [Item]) {
         let id = dir.lastPathComponent
         let source = "session"
         var out = sessionItems(dir)
@@ -60,7 +65,10 @@ enum Items {
             if let e = state?.items[String(out[i].n)] {
                 // "taken" is the older name of in_progress.
                 let working = e.status == "taken" || e.status == "in_progress"
-                out[i].status = working ? (Date().timeIntervalSince(e.at) > lease ? "open" : "in_progress") : e.status
+                let age = Date().timeIntervalSince(e.at)
+                var abandoned = age > lease
+                if working, !abandoned, let takerPid = e.pid, age >= closedSessionGrace, !isTakerAlive(takerPid) { abandoned = true }
+                out[i].status = working ? (abandoned ? "open" : "in_progress") : e.status
                 out[i].by = e.by; out[i].note = e.note; out[i].at = e.at
                 out[i].commit = e.commit; out[i].branch = e.branch
             }
@@ -180,7 +188,7 @@ enum Items {
     /// With `project`, only that project's items (the path is the same or one is inside the other) and the ones not routed anywhere.
     /// An item that repeats an earlier open one (see QueueRules.fold) is not handed out; the original carries it in `alsoSaid`.
     static func openItems(limit: Int, take: Bool, agent: String, project: String? = nil,
-                          unrouted: Unrouted = .any, since: Date? = nil) -> [Item] {
+                          unrouted: Unrouted = .any, since: Date? = nil, takerPid: Int32? = nil) -> [Item] {
         locked {
             var states: [String: (dir: URL, state: ItemState?, source: String)] = [:]
             var everything: [Item] = []
@@ -200,7 +208,7 @@ enum Items {
                 guard let entry = states[session] else { continue }
                 var state = entry.state ?? ItemState(source: entry.source)
                 for item in free where item.session == session {
-                    state.items[String(item.n)] = .init(status: "in_progress", by: agent, at: Date(), note: nil)
+                    state.items[String(item.n)] = .init(status: "in_progress", by: agent, at: Date(), note: nil, pid: takerPid)
                 }
                 if !writeState(state, entry.dir) { failed.insert(session) }
             }
@@ -228,7 +236,7 @@ enum Items {
     /// Sets items to done or open. Returns what changed and what was not found. `commit` and `branch` are stored with a done item.
     /// Marking an item done also closes the repeats folded into it (listed in `closedRepeats`).
     static func set(_ ids: [String], status: String, agent: String, note: String?,
-                    commit: String? = nil, branch: String? = nil) -> (changed: [String], missing: [String], closedRepeats: [String]) {
+                    commit: String? = nil, branch: String? = nil, takerPid: Int32? = nil) -> (changed: [String], missing: [String], closedRepeats: [String]) {
         locked {
             var changed: [String] = [], missing: [String] = [], closedRepeats: [String] = []
             var repeatNotes: [String: String] = [:]
@@ -256,7 +264,8 @@ enum Items {
                     let isRepeat = repeatNotes[id] != nil
                     st!.items[String(item.n)] = .init(status: status, by: agent, at: Date(), note: repeatNotes[id] ?? note,
                                                       commit: status == "done" && !isRepeat ? commit : nil,
-                                                      branch: status == "done" && !isRepeat ? branch : nil)
+                                                      branch: status == "done" && !isRepeat ? branch : nil,
+                                                      pid: status == "in_progress" ? takerPid : nil)
                     sessionChanged.append(id)
                     if isRepeat { closed.append(id) }
                 }

@@ -87,6 +87,51 @@ final class QueueTests: XCTestCase {
         XCTAssertNil(state.items["1"]?.branch)
     }
 
+    private func statusAfterTaking(_ directory: URL, pid: Int32?, minutesAgo: Double, alive: Bool) -> String? {
+        var state = ItemState(source: "session")
+        state.items["1"] = .init(status: "in_progress", by: "a", at: Date().addingTimeInterval(-minutesAgo * 60), note: nil, pid: pid)
+        Items.writeState(state, directory)
+        return Items.items(in: directory, state: Items.readState(directory), isTakerAlive: { _ in alive }).items.first?.status
+    }
+
+    func testItemTakenByAClosedSessionComesBackAfterTwoMinutes() throws {
+        let directory = try makeSession("2031-03-01_100000", said: "make the logo bigger", title: "Logo", project: "/work/queue-r15a")
+        XCTAssertEqual(statusAfterTaking(directory, pid: 4242, minutesAgo: 3, alive: false), "open")
+    }
+
+    func testItemTakenAMomentAgoStaysInProgressEvenIfTheSessionLooksClosed() throws {
+        let directory = try makeSession("2031-03-02_100000", said: "make the logo smaller", title: "Logo", project: "/work/queue-r15b")
+        XCTAssertEqual(statusAfterTaking(directory, pid: 4242, minutesAgo: 0.5, alive: false), "in_progress")
+    }
+
+    func testItemOfALiveSessionStaysInProgress() throws {
+        let directory = try makeSession("2031-03-03_100000", said: "make the logo red", title: "Logo", project: "/work/queue-r15c")
+        XCTAssertEqual(statusAfterTaking(directory, pid: 4242, minutesAgo: 30, alive: true), "in_progress")
+    }
+
+    func testItemWithoutAPidKeepsTheTwoHourRule() throws {
+        let directory = try makeSession("2031-03-04_100000", said: "make the logo green", title: "Logo", project: "/work/queue-r15d")
+        XCTAssertEqual(statusAfterTaking(directory, pid: nil, minutesAgo: 30, alive: false), "in_progress")
+        XCTAssertEqual(statusAfterTaking(directory, pid: nil, minutesAgo: 121, alive: false), "open")
+    }
+
+    func testOldStateFilesWithoutAPidStillDecode() throws {
+        let old = Data(#"{"source":"session","items":{"1":{"status":"in_progress","by":"claude","at":"2026-10-17T14:20:00Z","note":null}}}"#.utf8)
+        let state = try JSONDecoder.iso.decode(ItemState.self, from: old)
+        XCTAssertEqual(state.items["1"]?.status, "in_progress")
+        XCTAssertNil(state.items["1"]?.pid)
+    }
+
+    func testTakingStoresThePidOfAConnectionWithALiveSessionOnly() throws {
+        let directory = try makeSession("2031-03-05_100000", said: "make the logo wider", title: "Logo", project: "/work/queue-r15e")
+        let withPid = MCPConnection(cwd: "/work/queue-r15e", livePid: 777)
+        XCTAssertEqual(Items.openItems(limit: 1, take: true, agent: withPid.agent, project: "/work/queue-r15e", unrouted: .never, takerPid: withPid.livePid).count, 1)
+        XCTAssertEqual(Items.readState(directory)?.items["1"]?.pid, 777)
+        XCTAssertNil(MCPConnection(cwd: "/work/queue-r15e").livePid)
+        XCTAssertNil(MCPConnection(cwd: "/work/queue-r15e", livePid: nil).livePid)
+        XCTAssertEqual(MCPConnection(cwd: "/work/queue-r15e", manageLiveSession: true).livePid, getpid())
+    }
+
     func testCommitAndBranchRules() {
         XCTAssertTrue(QueueRules.isValidCommit("abc1234"))
         XCTAssertTrue(QueueRules.isValidCommit(String(repeating: "a", count: 40)))
