@@ -12,7 +12,7 @@ struct Main {
         // Claude Code Stop hook: Pointroo --hook-stop (JSON on stdin)
         if args.contains("--hook-stop") { HookStop.run(); return }
         // Local MCP server for coding agents: Pointroo --mcp
-        if args.contains("--mcp") { MCPServer.run(); return }
+        if args.contains("--mcp") { MCPBridge.run(); return }
         // Headless: Pointroo --process <session dir>
         if let i = args.firstIndex(of: "--process"), i + 1 < args.count {
             let dir = URL(fileURLWithPath: args[i + 1])
@@ -82,6 +82,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let app = n.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
             MainActor.assumeIsolated { if let app, app != .current { self?.previousApp = app } }
         }
+        MCPListener.startAtLaunch { [weak self] in self?.state.toast = $0 }
         state.ownUI = { [weak self] in self?.pillRect() }
         state.onRecordingChanged = { [weak self] on in self?.recording(on) }
         // Agent configs are only touched after a yes: the first launch asks, later launches follow the switch.

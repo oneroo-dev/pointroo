@@ -85,6 +85,9 @@ struct SettingsView: View {
                         }
                     }.buttonStyle(SmallButton())
                 }.frame(height: 40)
+                line
+                Text(MCPListener.status).font(.geist(11)).foregroundStyle(Ink.muted)
+                    .fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 8)
             }
 
             section("General")
