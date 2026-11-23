@@ -190,7 +190,7 @@ enum MCPServer {
 
     static func listItems(_ status: String?) -> [String: Any] {
         let all = Items.all()
-        let shown = status.map { st in all.filter { $0.status == st } } ?? all.filter { $0.status != "done" }
+        let shown = status.map { st in all.filter { $0.status == st } } ?? all.filter { $0.status != "done" && $0.status != "trashed" }
         guard !shown.isEmpty else { return text(status == nil ? "Nothing open or in progress." : "No items \(status!).") }
         let f = DateFormatter(); f.dateFormat = "d MMM HH:mm"
         let rows = shown.map { i -> String in

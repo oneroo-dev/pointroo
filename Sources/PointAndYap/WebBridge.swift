@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// The line between the web screens (the kit app in a web view) and the app. Plain request in, plain reply out, no web view needed.
@@ -21,8 +22,8 @@ import Foundation
 /// Error codes: bad_request (not valid JSON, or no method), unknown_method, bad_params, not_found, not_available, refused.
 ///
 /// Methods
-///   items.list      params {status?: "open" | "in_progress" | "done", project?: string, maxAgeHours?: number, groupBy?: "project"}
-///                   status    no status = every item
+///   items.list      params {status?: "open" | "in_progress" | "done" | "trashed", project?: string, maxAgeHours?: number, groupBy?: "project"}
+///                   status    no status = every item except the trashed ones; "trashed" gives only the trashed ones
 ///                   project   a project's name or folder path; "none" means items with no project; error not_found when unknown
 ///                   maxAgeHours  a number above 0: only items made within that many hours (uses the item's `at` date; an item with no date is left out)
 ///                   groupBy   only "project" is allowed
@@ -40,6 +41,20 @@ import Foundation
 ///   items.reroute   params {id: string, project: string}   (project is a project's name or folder path, as in Projects.known())
 ///                   result {moved: true}
 ///                   error not_found (no such item, or no such project), refused (the item is done), not_available (could not save), bad_params
+///   items.done      params {id: string, note?: string}   the same as the Done button: status done, by "user"
+///                   result {done: true}   error not_found, not_available (could not save), bad_params (no id, or note is not text)
+///   items.reopen    params {id: string}   back to open (works for done and trashed items; an item in progress goes back to open too)
+///                   result {reopened: true}   error not_found, not_available, bad_params
+///   items.trash     params {id: string}   hides the item from the queue; nothing is deleted. Its status becomes "trashed": agents are
+///                   never given it, and items.list leaves it out unless status "trashed" is asked. items.reopen brings it back.
+///                   result {trashed: true}   error not_found, not_available, bad_params
+///   items.unroute   params {id: string}   undoes a send: removes the route of the item's recording (route.json is per recording, so
+///                   every item of that recording is then unrouted). A recording that has no route answers unrouted too.
+///                   result {unrouted: true}   error not_found, refused (an agent took the item or it is done), not_available, bad_params
+///   clipboard.copy  params {text: string}   puts the text on the clipboard
+///                   result {copied: true}   error bad_params when text is not a non-empty string
+///   window.startDrag no params   the page calls this from a mousedown on its own drag area; the window then follows the mouse
+///                   result {dragging: true}   error not_available when the app gave no way to drag
 ///   questions.list  no params
 ///                   result {questions: [Question]}   unanswered questions from agents, oldest first
 ///   questions.answer params {id: string, text: string}
@@ -75,7 +90,7 @@ import Foundation
 /// Question: {id, project, agent, text, choices: [string], asked: seconds since 1970}
 ///   A key with no value is left out (an empty choices list is an empty array).
 ///
-/// Settings keys: sounds, doubleControl, escCancels, redactSecrets, connectAgents, showNoSpeech, holdToTalk, listenAfterDone (all bool);
+/// Settings keys: sounds, doubleControl, escCancels, redactSecrets, connectAgents, showNoSpeech, holdToTalk, listenAfterDone, kitWindow (all bool);
 /// locale (string, one of the ids in Prefs.languages).
 final class WebBridge {
     struct Request {
@@ -106,6 +121,7 @@ final class WebBridge {
         ("showNoSpeech", .flag(defaultValue: false)),
         ("holdToTalk", .flag(defaultValue: false)),
         ("listenAfterDone", .flag(defaultValue: false)),
+        ("kitWindow", .flag(defaultValue: true)),
         ("locale", .choice(allowed: Prefs.languages.map(\.id), defaultValue: "")),
     ]
 
@@ -115,6 +131,12 @@ final class WebBridge {
         "projects.list": { bridge, params in try bridge.projectsList(params) },
         "items.get": { bridge, params in try bridge.itemsGet(params) },
         "items.reroute": { bridge, params in try bridge.itemsReroute(params) },
+        "items.done": { bridge, params in try bridge.itemsChangeStatus(params, status: "done", key: "done") },
+        "items.reopen": { bridge, params in try bridge.itemsChangeStatus(params, status: "open", key: "reopened") },
+        "items.trash": { bridge, params in try bridge.itemsChangeStatus(params, status: "trashed", key: "trashed") },
+        "items.unroute": { bridge, params in try bridge.itemsUnroute(params) },
+        "clipboard.copy": { bridge, params in try bridge.clipboardCopy(params) },
+        "window.startDrag": { bridge, params in try bridge.windowStartDrag(params) },
         "questions.list": { bridge, params in try bridge.questionsList(params) },
         "questions.answer": { bridge, params in try bridge.questionsAnswer(params) },
         "settings.get": { bridge, params in try bridge.settingsGet(params) },
@@ -131,12 +153,38 @@ final class WebBridge {
     private let loadLive: () -> [LiveSession]
     private let loadStatus: () -> AppStatus
     private let askPermission: ((String) -> Void)?
+    private let changeStatus: (String, String, String?) -> StatusChange
+    private let unroute: (String) -> Items.UnrouteResult
+    private let writeClipboard: (String) -> Void
+    private let startDrag: (() -> Void)?
+
+    /// What changing one item's status did.
+    enum StatusChange: Equatable {
+        case changed
+        case missing
+        case saveFailed
+    }
+
+    /// The real status change: Items.set for one item, by "user" (the same call the Done button makes).
+    static func changeItemStatus(id: String, status: String, note: String?) -> StatusChange {
+        let result = Items.set([id], status: status, agent: "user", note: note)
+        if !result.changed.isEmpty { return .changed }
+        return result.missing.contains { $0.contains("could not save") } ? .saveFailed : .missing
+    }
+
+    static func copyToClipboard(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
 
     /// `loadStatus` gives the MCP and permission state for status.get (the default reads the real values).
     /// `askPermission` is called with "microphone", "screenRecording" or "accessibility"; when it is nil, permissions.ask answers not_available.
     /// `findProject` turns the page's text (a name or a folder path) into a known project. `reroute` moves the item.
     /// `loadProjects` and `loadLive` give the projects and the running agent sessions for projects.list and the grouping.
     /// The defaults use the real project list and Items.reroute (the same call AppState.reroute makes, without its banner).
+    /// `changeStatus` (id, new status, note) serves items.done, items.reopen and items.trash. `unroute` serves items.unroute.
+    /// `startDrag` serves window.startDrag; when it is nil, that method answers not_available.
+    /// `writeClipboard` serves clipboard.copy. The defaults are the real Items.set, Items.unroute and the general pasteboard.
     init(defaults: UserDefaults = .standard,
          loadItems: @escaping () -> [Item] = { Items.all() },
          findProject: @escaping (String) -> Project? = { WebBridge.knownProject($0) },
@@ -144,7 +192,11 @@ final class WebBridge {
          loadProjects: @escaping () -> [Project] = { Projects.load() },
          loadLive: @escaping () -> [LiveSession] = { LiveSessions.all() },
          loadStatus: @escaping () -> AppStatus = { AppStatus.readNow() },
-         askPermission: ((String) -> Void)? = nil) {
+         askPermission: ((String) -> Void)? = nil,
+         changeStatus: @escaping (String, String, String?) -> StatusChange = { WebBridge.changeItemStatus(id: $0, status: $1, note: $2) },
+         unroute: @escaping (String) -> Items.UnrouteResult = { Items.unroute(id: $0) },
+         writeClipboard: @escaping (String) -> Void = { WebBridge.copyToClipboard($0) },
+         startDrag: (() -> Void)? = nil) {
         self.defaults = defaults
         self.loadItems = loadItems
         self.findProject = findProject
@@ -153,6 +205,10 @@ final class WebBridge {
         self.loadLive = loadLive
         self.loadStatus = loadStatus
         self.askPermission = askPermission
+        self.changeStatus = changeStatus
+        self.unroute = unroute
+        self.writeClipboard = writeClipboard
+        self.startDrag = startDrag
     }
 
     /// A known project whose folder is this path, or whose name is this text (ignoring case).
@@ -222,10 +278,12 @@ final class WebBridge {
     private func itemsList(_ params: [String: Any]) throws -> Any {
         var items = loadItems()
         if let status = params["status"] {
-            guard let wanted = status as? String, ["open", "in_progress", "done"].contains(wanted) else {
-                throw Failure(code: "bad_params", message: "status must be open, in_progress or done.")
+            guard let wanted = status as? String, ["open", "in_progress", "done", "trashed"].contains(wanted) else {
+                throw Failure(code: "bad_params", message: "status must be open, in_progress, done or trashed.")
             }
             items = items.filter { $0.status == wanted }
+        } else {
+            items = items.filter { $0.status != "trashed" }
         }
         var onlyProject: Project?
         if let project = params["project"] {
@@ -352,6 +410,42 @@ final class WebBridge {
         case .done: throw Failure(code: "refused", message: "A done item cannot be moved.")
         case .saveFailed: throw Failure(code: "not_available", message: "Could not save the move.")
         }
+    }
+
+    private func itemsChangeStatus(_ params: [String: Any], status: String, key: String) throws -> Any {
+        guard let id = params["id"] as? String, !id.isEmpty else { throw Failure(code: "bad_params", message: "id is needed.") }
+        var note: String?
+        if status == "done", let value = params["note"] {
+            guard let text = value as? String else { throw Failure(code: "bad_params", message: "note must be text.") }
+            note = text.isEmpty ? nil : text
+        }
+        switch changeStatus(id, status, note) {
+        case .changed: return [key: true]
+        case .missing: throw Failure(code: "not_found", message: "No item \(id).")
+        case .saveFailed: throw Failure(code: "not_available", message: "Could not save the change.")
+        }
+    }
+
+    private func itemsUnroute(_ params: [String: Any]) throws -> Any {
+        guard let id = params["id"] as? String, !id.isEmpty else { throw Failure(code: "bad_params", message: "id is needed.") }
+        switch unroute(id) {
+        case .unrouted: return ["unrouted": true]
+        case .missing: throw Failure(code: "not_found", message: "No item \(id).")
+        case .taken: throw Failure(code: "refused", message: "An agent already took this item, so it cannot be unsent.")
+        case .saveFailed: throw Failure(code: "not_available", message: "Could not remove the route.")
+        }
+    }
+
+    private func windowStartDrag(_ params: [String: Any]) throws -> Any {
+        guard let startDrag else { throw Failure(code: "not_available", message: "Dragging the window is not available.") }
+        startDrag()
+        return ["dragging": true]
+    }
+
+    private func clipboardCopy(_ params: [String: Any]) throws -> Any {
+        guard let text = params["text"] as? String, !text.isEmpty else { throw Failure(code: "bad_params", message: "text must be a non-empty string.") }
+        writeClipboard(text)
+        return ["copied": true]
     }
 
     private func questionsList(_ params: [String: Any]) throws -> Any {

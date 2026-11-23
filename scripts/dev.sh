@@ -16,6 +16,10 @@ update_and_relaunch() {
   cp Resources/Info.plist "$APP/Contents/Info.plist" || return 1
   rm -rf "$APP/Contents/Resources/skill"
   cp -R Resources/skill "$APP/Contents/Resources/" || return 1
+  rm -rf "$APP/Contents/Resources/ui"
+  if [ -f ui/dist/index.html ]; then
+    cp -R ui/dist "$APP/Contents/Resources/ui" || return 1
+  fi
   codesign --force ${SIGN_OPTIONS[@]+"${SIGN_OPTIONS[@]}"} --sign "$CODESIGN_IDENTITY" \
     --entitlements Resources/PointAndYap.entitlements "$APP" || return 1
   if pgrep -x Pointroo >/dev/null; then pkill -x Pointroo; sleep 1; fi

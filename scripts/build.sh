@@ -29,6 +29,10 @@ cp -R Resources/skill "$APP/Contents/Resources/"
 cp -R Resources/Sounds "$APP/Contents/Resources/"
 mkdir -p "$APP/Contents/Resources/Welcome"
 cp Resources/Welcome/welcome.mp4 Resources/Welcome/welcome-poster.png "$APP/Contents/Resources/Welcome/"
+# The kit screens (built by npm run build in ui/); without them the app shows its old window.
+if [ -f ui/dist/index.html ]; then
+  cp -R ui/dist "$APP/Contents/Resources/ui"
+fi
 # Sparkle (updates), signed from the inside out as its documentation asks for apps built outside Xcode.
 mkdir -p "$APP/Contents/Frameworks"
 ditto .build/release/Sparkle.framework "$APP/Contents/Frameworks/Sparkle.framework"

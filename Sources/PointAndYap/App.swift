@@ -42,6 +42,7 @@ struct Main {
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let state = AppState()
     private var window: NSWindow!
+    private var kitHost: WebHost?
     private var pill: NSPanel!
     private var previousApp: NSRunningApplication?
     private var doubleControl: DoubleControl?
@@ -50,18 +51,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationDidFinishLaunching(_ note: Notification) {
         NSApp.mainMenu = makeMenu()
-        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 590),
-                          styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView], backing: .buffered, defer: false)
-        window.titlebarAppearsTransparent = true
-        window.titleVisibility = .hidden
-        window.isMovableByWindowBackground = true
-        window.backgroundColor = .white
-        window.appearance = NSAppearance(named: .aqua)
-        window.isReleasedWhenClosed = false
-        window.delegate = self
-        window.contentView = NSHostingView(rootView: MainView(state: state))
-        window.center()
-        window.setFrameAutosaveName("PointMain")
+        if Self.kitWindowAvailable {
+            makeKitWindow()
+        } else {
+            makeClassicWindow()
+        }
 
         pill = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 200, height: 40), styleMask: [.borderless, .nonactivatingPanel],
                        backing: .buffered, defer: false)
@@ -126,8 +120,95 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         state.loadSessions()
         Updater.shared.start(state: state)
         Heartbeat.start()
-        window.makeKeyAndOrderFront(nil)
+        bringWindowToFront()
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// The kit window is used when the kitWindow setting is on (it is on unless the user turned it off) and the built screens
+    /// are in the app (Contents/Resources/ui/index.html), or a dev address is set. Read once at launch.
+    private static var kitWindowAvailable: Bool {
+        guard UserDefaults.standard.object(forKey: "kitWindow") as? Bool ?? true else { return false }
+        if WebHost.devURL(from: Prefs.webDevURL) != nil { return true }
+        guard let folder = WebHost.bundleFolder else { return false }
+        return FileManager.default.fileExists(atPath: folder.appendingPathComponent("index.html").path)
+    }
+
+    /// The old SwiftUI main window.
+    private func makeClassicWindow() {
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 590),
+                          styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView], backing: .buffered, defer: false)
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.isMovableByWindowBackground = true
+        window.backgroundColor = .white
+        window.appearance = NSAppearance(named: .aqua)
+        window.isReleasedWhenClosed = false
+        window.delegate = self
+        window.contentView = NSHostingView(rootView: MainView(state: state))
+        window.center()
+        window.setFrameAutosaveName("PointMain")
+    }
+
+    /// The main window made of the kit screens (a web view). The traffic lights stay native over the page.
+    /// The bridge runs on the main actor (WebHost hands each page message to it there), so its closures use MainActor.assumeIsolated
+    /// to reach AppState. After a change they call loadSessions, so the SwiftUI side and the status item see it too.
+    private func makeKitWindow() {
+        let state = self.state
+        let bridge = WebBridge(
+            reroute: { id, project in MainActor.assumeIsolated { state.reroute(id, to: project) } },
+            askPermission: { which in
+                MainActor.assumeIsolated {
+                    switch which {
+                    case "microphone": state.askMic()
+                    case "screenRecording": state.askScreen()
+                    case "accessibility": state.askAX()
+                    default: break
+                    }
+                }
+            },
+            changeStatus: { id, status, note in
+                let outcome = WebBridge.changeItemStatus(id: id, status: status, note: note)
+                if outcome == .changed { MainActor.assumeIsolated { state.loadSessions() } }
+                return outcome
+            },
+            unroute: { id in
+                let outcome = Items.unroute(id: id)
+                if outcome == .unrouted { MainActor.assumeIsolated { state.loadSessions() } }
+                return outcome
+            },
+            startDrag: { [weak self] in MainActor.assumeIsolated { self?.kitHost?.performWindowDrag() } })
+        let host = WebHost(bridge: bridge)
+        host.load()
+        kitHost = host
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 960, height: 640),
+                          styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
+        window.title = "Pointroo"
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.minSize = NSSize(width: 480, height: 420)
+        window.isReleasedWhenClosed = false
+        window.delegate = self
+        window.contentView = host.webView
+        window.center()
+        window.setFrameAutosaveName("PointKitMain")
+    }
+
+    /// Shows the main window; the kit window also starts telling its page about changes.
+    private func bringWindowToFront() {
+        window.makeKeyAndOrderFront(nil)
+        kitHost?.startEvents(state: state)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        kitHost?.stopEvents()
+    }
+
+    func applicationDidHide(_ notification: Notification) {
+        kitHost?.stopEvents()
+    }
+
+    func applicationDidUnhide(_ notification: Notification) {
+        if window.isVisible { kitHost?.startEvents(state: state) }
     }
 
     /// pointroo://item/<id>: show the main window on that item.
@@ -139,19 +220,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationShouldHandleReopen(_ app: NSApplication, hasVisibleWindows: Bool) -> Bool {
         if case .recording = state.phase { return false }
-        window.makeKeyAndOrderFront(nil)
+        bringWindowToFront()
         return true
     }
 
     private func showWindow() {
         NSApp.activate(ignoringOtherApps: true)
-        window.makeKeyAndOrderFront(nil)
+        bringWindowToFront()
     }
 
     private func recording(_ on: Bool) {
         DoneBanner.shared.paused = on
         if on {
             window.orderOut(nil)
+            kitHost?.stopEvents()
             let screen = NSScreen.main ?? NSScreen.screens[0]
             let f = screen.visibleFrame
             pill.setFrameOrigin(NSPoint(x: f.midX - 100, y: f.maxY - 52))
@@ -180,7 +262,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func openSettings() {
         state.showSettings = true
-        window.makeKeyAndOrderFront(nil)
+        bringWindowToFront()
         NSApp.activate(ignoringOtherApps: true)
     }
 
