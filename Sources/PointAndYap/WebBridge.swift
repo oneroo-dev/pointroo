@@ -15,6 +15,8 @@ import Foundation
 ///   items.changed      {count, open, inProgress}   an item came, went, or changed status, note or project
 ///   questions.changed  {count}                     the set of unanswered agent questions changed
 ///   recording.changed  {phase, pointCount}         phase is "idle", "recording" or "processing"
+///   status.changed     {mcpRunning, mcpPort, mcpText, sessions, agents, microphone, screenRecording, accessibility}
+///                      the same object status.get returns inside `status`; sent when any part of it changed
 ///
 /// Error codes: bad_request (not valid JSON, or no method), unknown_method, bad_params, not_found, not_available, refused.
 ///
@@ -46,6 +48,12 @@ import Foundation
 ///                   result {key, value} for one key, or {values: {key: value}} for all allowed keys
 ///   settings.set    params {key: string, value: bool | string}
 ///                   result {key, value}   error refused when the key is not in the allowed list, bad_params when the value has the wrong kind
+///   status.get      no params
+///                   result {status: {mcpRunning: bool (the listener has a port), mcpPort: number (the bound port, else the configured one),
+///                   mcpText: string (the listener's status line), sessions: number (running agent sessions), agents: [string] (distinct, sorted),
+///                   microphone: bool, screenRecording: bool, accessibility: bool}}
+///   permissions.ask params {which: "microphone" | "screenRecording" | "accessibility"}
+///                   result {asked: true}   error bad_params when which is missing or unknown, not_available when the app gave no way to ask
 ///
 /// Item: {id, session, n, title, body, crops: [path], status, alsoSaid: [string], at?: ISO date, by?, note?, project?, routeHow?,
 ///        priority?, commit?, branch?, duplicateOf?, said?, firstElement?, duration?}
@@ -111,6 +119,8 @@ final class WebBridge {
         "questions.answer": { bridge, params in try bridge.questionsAnswer(params) },
         "settings.get": { bridge, params in try bridge.settingsGet(params) },
         "settings.set": { bridge, params in try bridge.settingsSet(params) },
+        "status.get": { bridge, params in try bridge.statusGet(params) },
+        "permissions.ask": { bridge, params in try bridge.permissionsAsk(params) },
     ]
 
     private let defaults: UserDefaults
@@ -119,7 +129,11 @@ final class WebBridge {
     private let reroute: (String, Project) -> Items.RerouteResult
     private let loadProjects: () -> [Project]
     private let loadLive: () -> [LiveSession]
+    private let loadStatus: () -> AppStatus
+    private let askPermission: ((String) -> Void)?
 
+    /// `loadStatus` gives the MCP and permission state for status.get (the default reads the real values).
+    /// `askPermission` is called with "microphone", "screenRecording" or "accessibility"; when it is nil, permissions.ask answers not_available.
     /// `findProject` turns the page's text (a name or a folder path) into a known project. `reroute` moves the item.
     /// `loadProjects` and `loadLive` give the projects and the running agent sessions for projects.list and the grouping.
     /// The defaults use the real project list and Items.reroute (the same call AppState.reroute makes, without its banner).
@@ -128,13 +142,17 @@ final class WebBridge {
          findProject: @escaping (String) -> Project? = { WebBridge.knownProject($0) },
          reroute: @escaping (String, Project) -> Items.RerouteResult = { Items.reroute(id: $0, to: $1) },
          loadProjects: @escaping () -> [Project] = { Projects.load() },
-         loadLive: @escaping () -> [LiveSession] = { LiveSessions.all() }) {
+         loadLive: @escaping () -> [LiveSession] = { LiveSessions.all() },
+         loadStatus: @escaping () -> AppStatus = { AppStatus.readNow() },
+         askPermission: ((String) -> Void)? = nil) {
         self.defaults = defaults
         self.loadItems = loadItems
         self.findProject = findProject
         self.reroute = reroute
         self.loadProjects = loadProjects
         self.loadLive = loadLive
+        self.loadStatus = loadStatus
+        self.askPermission = askPermission
     }
 
     /// A known project whose folder is this path, or whose name is this text (ignoring case).
@@ -374,6 +392,19 @@ final class WebBridge {
             defaults.set(text, forKey: name)
         }
         return ["key": name, "value": value(name, kind)]
+    }
+
+    private func statusGet(_ params: [String: Any]) throws -> Any {
+        ["status": loadStatus().dictionary]
+    }
+
+    private func permissionsAsk(_ params: [String: Any]) throws -> Any {
+        guard let which = params["which"] as? String, AppStatus.permissionNames.contains(which) else {
+            throw Failure(code: "bad_params", message: "which must be microphone, screenRecording or accessibility.")
+        }
+        guard let askPermission else { throw Failure(code: "not_available", message: "Asking for a permission is not available yet.") }
+        askPermission(which)
+        return ["asked": true]
     }
 
     private static func kind(of key: String) -> SettingKind? {

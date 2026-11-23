@@ -409,6 +409,58 @@ final class WebBridgeTests: XCTestCase {
         XCTAssertEqual(try code(subject, "items.list", ["groupBy": 1]), "bad_params")
     }
 
+    private let sampleStatus = AppStatus(mcpRunning: true, mcpPort: 6742, mcpText: "Shared MCP server: running", sessions: 2,
+                                         agents: ["claude", "codex"], microphone: true, screenRecording: false, accessibility: true)
+
+    func testStatusGetReturnsTheStatusShape() throws {
+        let subject = WebBridge(defaults: defaults, loadStatus: { self.sampleStatus })
+        let status = try XCTUnwrap(result(subject, "status.get")["status"] as? [String: Any])
+        XCTAssertEqual(status["mcpRunning"] as? Bool, true)
+        XCTAssertEqual(status["mcpPort"] as? Int, 6742)
+        XCTAssertEqual(status["mcpText"] as? String, "Shared MCP server: running")
+        XCTAssertEqual(status["sessions"] as? Int, 2)
+        XCTAssertEqual(status["agents"] as? [String], ["claude", "codex"])
+        XCTAssertEqual(status["microphone"] as? Bool, true)
+        XCTAssertEqual(status["screenRecording"] as? Bool, false)
+        XCTAssertEqual(status["accessibility"] as? Bool, true)
+    }
+
+    func testAppStatusMakeUsesBoundPortAndDistinctSortedAgents() {
+        let running = AppStatus.make(boundPort: 6743, configuredPort: 6742, text: "t",
+                                     live: [live("/a", agent: "codex", pid: 1), live("/b", agent: "claude", pid: 2), live("/c", agent: "codex", pid: 3)],
+                                     microphone: false, screenRecording: false, accessibility: false)
+        XCTAssertTrue(running.mcpRunning)
+        XCTAssertEqual(running.mcpPort, 6743)
+        XCTAssertEqual(running.sessions, 3)
+        XCTAssertEqual(running.agents, ["claude", "codex"])
+        let stopped = AppStatus.make(boundPort: 0, configuredPort: 6742, text: "t", live: [],
+                                     microphone: false, screenRecording: false, accessibility: false)
+        XCTAssertFalse(stopped.mcpRunning)
+        XCTAssertEqual(stopped.mcpPort, 6742)
+    }
+
+    func testPermissionsAskCallsTheClosureForEachKnownName() throws {
+        var asked: [String] = []
+        let subject = WebBridge(defaults: defaults, askPermission: { asked.append($0) })
+        for name in ["microphone", "screenRecording", "accessibility"] {
+            XCTAssertEqual(try result(subject, "permissions.ask", ["which": name])["asked"] as? Bool, true)
+        }
+        XCTAssertEqual(asked, ["microphone", "screenRecording", "accessibility"])
+    }
+
+    func testPermissionsAskBadWhichIsBadParams() throws {
+        var asked: [String] = []
+        let subject = WebBridge(defaults: defaults, askPermission: { asked.append($0) })
+        XCTAssertEqual(try code(subject, "permissions.ask", [:]), "bad_params")
+        XCTAssertEqual(try code(subject, "permissions.ask", ["which": "camera"]), "bad_params")
+        XCTAssertEqual(try code(subject, "permissions.ask", ["which": 3]), "bad_params")
+        XCTAssertTrue(asked.isEmpty)
+    }
+
+    func testPermissionsAskWithoutAClosureIsNotAvailable() throws {
+        XCTAssertEqual(try code(WebBridge(defaults: defaults), "permissions.ask", ["which": "microphone"]), "not_available")
+    }
+
     func testItemsListWithoutNewParamsKeepsTheQueueOrderAndShape() throws {
         let items = [routed("a#1", project: "/work/alpha", hoursAgo: 9), routed("b#1", project: "/work/beta", hoursAgo: 1)]
         let out = try result(projectBridge(items: items), "items.list")

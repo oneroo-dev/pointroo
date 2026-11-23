@@ -90,6 +90,49 @@ final class WebEventsTests: XCTestCase {
         XCTAssertEqual(started[0].data["phase"] as? String, "recording")
     }
 
+    private func appStatus(running: Bool = true, sessions: Int = 1, microphone: Bool = true) -> AppStatus {
+        AppStatus(mcpRunning: running, mcpPort: 6742, mcpText: "text", sessions: sessions, agents: ["claude"],
+                  microphone: microphone, screenRecording: true, accessibility: true)
+    }
+
+    func testFirstStatusCallEmitsTheDictionary() {
+        var events = WebEvents()
+        let result = events.status(appStatus())
+        XCTAssertEqual(result.map(\.name), ["status.changed"])
+        XCTAssertEqual(result[0].data["mcpPort"] as? Int, 6742)
+        XCTAssertEqual(result[0].data["sessions"] as? Int, 1)
+        XCTAssertEqual(result[0].data["microphone"] as? Bool, true)
+    }
+
+    func testSameStatusDoesNotEmitAgain() {
+        var events = WebEvents()
+        _ = events.status(appStatus())
+        XCTAssertTrue(events.status(appStatus()).isEmpty)
+    }
+
+    func testPermissionFlipEmits() {
+        var events = WebEvents()
+        _ = events.status(appStatus())
+        let result = events.status(appStatus(microphone: false))
+        XCTAssertEqual(result.count, 1)
+        XCTAssertEqual(result[0].data["microphone"] as? Bool, false)
+    }
+
+    func testMcpStartAndStopEmit() {
+        var events = WebEvents()
+        _ = events.status(appStatus(running: false))
+        XCTAssertEqual(events.status(appStatus(running: true)).count, 1)
+        XCTAssertEqual(events.status(appStatus(running: false)).count, 1)
+    }
+
+    func testSessionCountChangeEmits() {
+        var events = WebEvents()
+        _ = events.status(appStatus(sessions: 1))
+        let result = events.status(appStatus(sessions: 2))
+        XCTAssertEqual(result.count, 1)
+        XCTAssertEqual(result[0].data["sessions"] as? Int, 2)
+    }
+
     func testPointCountChangeEmits() {
         var events = WebEvents()
         _ = events.recording(phase: "recording", pointCount: 0)
