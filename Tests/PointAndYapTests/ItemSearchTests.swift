@@ -84,12 +84,12 @@ final class ItemSearchTests: XCTestCase {
         let old = Date(timeIntervalSince1970: 1_000)
         let new = Date(timeIntervalSince1970: 2_000)
         let items = [
-            item("rest-old", note: "login", at: old),
+            item("rest-old", at: old, note: "login"),
             item("said-old", said: "login", at: old),
             item("title-old", title: "login", at: old),
             item("body-new", body: "login", at: new),
             item("title-new", title: "login", at: new),
-            item("rest-new", note: "login", at: new),
+            item("rest-new", at: new, note: "login"),
             item("title-none", title: "login"),
         ]
         XCTAssertEqual(names(search(items, "login")),
