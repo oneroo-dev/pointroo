@@ -23,30 +23,11 @@ const { createServer, build } = await import('vite')
 const appRequire = createRequire(join(appRoot, 'package.json'))
 const vueRuntime = join(dirname(appRequire.resolve('vue/package.json')), 'dist/vue.runtime.esm-bundler.js')
 
-// Workaround for a kit style that this Vue build compiles wrongly. RooIconButton writes
-//   :global(.roo-force-reduced) .roo-icon-button-fill, :global([data-motion='still']) .roo-icon-button-fill { display: none }
-// and the compiled rule loses ".roo-icon-button-fill", so it becomes "html.roo-force-reduced { display: none }" and the
-// whole page disappears in the still-motion mockups shell. Writing each selector as one :global() keeps the descendant.
-// To be fixed in the kit (or by a Vue pin); drop this plugin then.
-function kitSelectorFix() {
-  return {
-    name: 'pointroo-kit-selector-fix',
-    enforce: 'pre',
-    transform(code, id) {
-      if (!id.includes('RooIconButton.vue')) return null
-      const fixed = code
-        .replace(':global(.roo-force-reduced) .roo-icon-button-fill', ':global(.roo-force-reduced .roo-icon-button-fill)')
-        .replace(":global([data-motion='still']) .roo-icon-button-fill", ":global([data-motion='still'] .roo-icon-button-fill)")
-      return fixed === code ? null : { code: fixed, map: null }
-    },
-  }
-}
-
 const base = createMockupsConfig({ appRoot, outDirectory: join(appRoot, 'mockups-dist'), port: Number(values.port) })
 const config = {
   ...base,
   resolve: { ...base.resolve, alias: [{ find: /^vue$/, replacement: vueRuntime }] },
-  plugins: [...(base.plugins ?? []), kitSelectorFix()],
+  plugins: base.plugins ?? [],
   server: { ...base.server, fs: { allow: [...base.server.fs.allow, appRoot] } },
 }
 
