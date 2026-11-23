@@ -23,7 +23,7 @@ notarize() {
 }
 
 POINTANDYAP_NO_INSTALL=1 POINTANDYAP_VERSION="$VERSION" bash scripts/build.sh
-APP="build/Point and Yap.app"
+APP="build/Pointroo.app"
 
 # The app itself, so it stays valid offline once copied out of the DMG.
 rm -f build/PointAndYap.zip
@@ -34,7 +34,7 @@ xcrun stapler staple "$APP"
 # The disk image: the app, a link to Applications, the background and the window layout (scripts/dmg).
 DMG=build/PointAndYap.dmg
 STAGE=build/dmg
-MNT="/Volumes/Point and Yap"
+MNT="/Volumes/Pointroo"
 rm -rf "$STAGE" "$DMG" build/dmg-rw.dmg build/dmg-bg
 mkdir -p "$STAGE/.background"
 cp -R "$APP" "$STAGE/"
@@ -45,11 +45,11 @@ cp Resources/AppIcon.icns "$STAGE/.VolumeIcon.icns"
 [ -x build/dmg-tools/bin/python ] || { python3 -m venv build/dmg-tools && build/dmg-tools/bin/pip install -q ds-store==1.3.1 mac-alias==2.2.2; }
 # Mounted where a user's Mac mounts it: the layout's alias records the mount point, so a mount inside the clone would
 # ship this Mac's folder path. The volume name must be free while building, or the alias names the wrong volume.
-[ ! -e "$MNT" ] || { echo "eject the mounted Point and Yap volume first" >&2; exit 1; }
-hdiutil create -volname "Point and Yap" -srcfolder "$STAGE" -ov -fs HFS+ -format UDRW -quiet build/dmg-rw.dmg
+[ ! -e "$MNT" ] || { echo "eject the mounted Pointroo volume first" >&2; exit 1; }
+hdiutil create -volname "Pointroo" -srcfolder "$STAGE" -ov -fs HFS+ -format UDRW -quiet build/dmg-rw.dmg
 hdiutil attach build/dmg-rw.dmg -readwrite -noverify -noautoopen -nobrowse -quiet
 [ -d "$MNT" ] || { echo "the image did not mount at $MNT" >&2; exit 1; }
-build/dmg-tools/bin/python -I scripts/dmg/layout.py "$MNT" "Point and Yap.app"
+build/dmg-tools/bin/python -I scripts/dmg/layout.py "$MNT" "Pointroo.app"
 SetFile -a C "$MNT"
 SetFile -a V "$MNT/.background" "$MNT/.VolumeIcon.icns" "$MNT/.DS_Store"
 hdiutil detach "$MNT" -quiet
@@ -67,6 +67,6 @@ if gh release view "$TAG" >/dev/null 2>&1; then
   gh release upload "$TAG" "$DMG" --clobber
 else
   gh release create "$TAG" "$DMG" --draft --target "$(git rev-parse HEAD)" \
-    --title "Point and Yap $VERSION" --notes-file build/notes.md
+    --title "Pointroo $VERSION" --notes-file build/notes.md
 fi
 echo "draft release $TAG with $DMG"
