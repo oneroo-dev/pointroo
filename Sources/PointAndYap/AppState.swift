@@ -106,11 +106,11 @@ final class AppState: ObservableObject {
             let dir = await r.stop()
             loadSessions()
             // The short pointer goes on the clipboard as soon as the timeline exists; the MCP and the folder fill in after.
-            _ = await Process.run(dir: dir, onTimeline: { [weak self] in
-                self?.copyPointer(dir)
+            _ = await Process.run(dir: dir, onTimeline: {
+                self.copyPointer(dir)
                 Sounds.play("done")
-                if let route = Router.readRoute(dir) { self?.say("Sent to \(route.project)") }
-                else { self?.say("Copied. Paste it into your agent") }
+                if let route = Router.readRoute(dir) { self.say("Sent to \(route.project)") }
+                else { self.say("Copied. Paste it into your agent") }
             })
             phase = .idle
             loadSessions()
@@ -204,9 +204,10 @@ final class AppState: ObservableObject {
         let previous = lastSignature
         let stale = Date().timeIntervalSince(lastScan) > 60
         Task.detached(priority: .utility) { [weak self] in
+            let owner = self
             let signature = QueueStatus.signature()
             if before != nil, !stale, signature == previous {
-                await MainActor.run { self?.scanning = false }
+                await MainActor.run { owner?.scanning = false }
                 return
             }
             let items = Items.all()
@@ -216,14 +217,14 @@ final class AppState: ObservableObject {
             let active = items.filter { $0.status == "open" || $0.status == "in_progress" }
             let statuses = QueueStatus.statusByID(items)
             await MainActor.run {
-                guard let self else { return }
-                self.scanning = false
-                self.lastSignature = signature
-                self.lastScan = Date()
-                self.lastItemStatus = statuses
-                self.counts = counts
-                self.onQueue?(counts, active)
-                for (item, project) in finished { self.onDone?(item, project) }
+                guard let owner else { return }
+                owner.scanning = false
+                owner.lastSignature = signature
+                owner.lastScan = Date()
+                owner.lastItemStatus = statuses
+                owner.counts = counts
+                owner.onQueue?(counts, active)
+                for (item, project) in finished { owner.onDone?(item, project) }
             }
         }
     }

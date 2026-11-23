@@ -28,7 +28,8 @@ enum MCPServer {
     projects: you get the ones for the folder you run in, plus the ones not routed anywhere (scope "all" shows every project's). \
     To listen for new items without the user pasting anything, call wait_for_next: it waits until an item for this project \
     arrives and returns it like get_open_items; it returns after up to 50 s with nothing new, so call it again in a loop: \
-    do the item, mark_done, then call wait_for_next again.
+    do the item, mark_done, then call wait_for_next again. When you need an answer from the user, call ask_user; if it \
+    says there is no answer yet, carry on and call it again with the question_id it gave you.
     """
 
     static let tools: [[String: Any]] = [
@@ -44,6 +45,13 @@ enum MCPServer {
          "inputSchema": ["type": "object", "properties": [
             "timeout_seconds": ["type": "integer", "description": "How long to wait, default 50, max 55"],
             "images": ["type": "boolean", "description": "Include the crops as images, default true"]]]],
+        ["name": "ask_user",
+         "description": "Ask the user a question and wait for the answer (up to 50 s by default, 55 s at most). Use it when you cannot go on without them. If it says there is no answer yet, do other work and call it again with the question_id it gave you. If Pointroo is not running or cannot show questions, it says so: ask in chat instead.",
+         "inputSchema": ["type": "object", "properties": [
+            "question": ["type": "string", "description": "The question, short and plain. Required unless you pass question_id"],
+            "choices": ["type": "array", "items": ["type": "string"], "description": "Up to 4 answers to pick from (optional)"],
+            "question_id": ["type": "string", "description": "Only wait for the answer to an earlier question; asks nothing new"],
+            "timeout_seconds": ["type": "number", "description": "How long to wait, default 50, max 55"]]]],
         ["name": "mark_done",
          "description": "Mark items done once the change is made, so they are never handed out again.",
          "inputSchema": ["type": "object", "required": ["ids"], "properties": [
@@ -254,6 +262,7 @@ final class MCPConnection {
         case "wait_for_next":
             let seconds = (a["timeout_seconds"] as? Int) ?? (a["timeout_seconds"] as? Double).map { Int($0) } ?? MCPServer.defaultWait
             return waitForNext(timeout: MCPServer.waitTimeout(seconds), images: a["images"] as? Bool ?? true)
+        case "ask_user": return askUser(a)
         case "mark_done": return setItems(a["ids"], status: "done", note: a["note"] as? String)
         case "start_items": return setItems(a["ids"], status: "in_progress", note: nil)
         case "list_items": return MCPServer.listItems(a["status"] as? String)

@@ -95,7 +95,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         statusItem = StatusItem(openWindow: { [weak self] in self?.showWindow() }, quit: { [weak self] in self?.quitByUser() })
         state.onQueue = { [weak self] counts, active in self?.statusItem?.update(counts, active: active) }
         state.onDone = { [weak self] item, project in
-            DoneBanner.shared.show(project: project, note: item.note ?? item.title) { self?.showWindow() }
+            Task {
+                let notice = await AfterShot.notice(item: item, project: project)
+                DoneBanner.shared.show(project: notice.project, note: notice.note, before: notice.before, after: notice.after,
+                                       session: notice.session) { self?.showWindow() }
+            }
         }
         // Agents mark items done from their own processes: look again, with the window hidden too (the scan is off the main actor).
         Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
@@ -111,6 +115,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                                       escape: { [weak self] in if Prefs.escCancels { self?.state.cancel() } })
         state.loadSessions()
         Updater.shared.start(state: state)
+        Heartbeat.start()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
