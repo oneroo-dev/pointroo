@@ -87,7 +87,7 @@ function onRowKey(event: KeyboardEvent, itemId: string): void {
 <template>
   <section class="list" aria-label="Recordings">
     <div class="list-head">
-      <RooSegmented v-model="tabModel" label="Show" size="sm" :options="options" />
+      <RooSegmented v-model="tabModel" label="Show" size="md" :options="options" />
     </div>
     <div class="list-body" role="listbox" aria-label="Recordings">
       <component :is="grouped ? RooSidebarGroup : 'div'" v-for="group in groups" :key="group.name" v-bind="grouped ? { label: group.name, count: group.rows.length, collapsible: true, placement: 'sidebar' } : {}">

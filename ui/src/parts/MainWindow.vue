@@ -258,7 +258,7 @@ function onSheetChange(open: boolean): void {
 
       <template #ledge>
         <RooLedge>
-          <RooLedgeFact form="popover" label="Sessions" :value="sessionsText" :tone="sessionsWarn ? 'warn' : undefined">
+          <RooLedgeFact form="popover" label="Sessions" :value="sessionsText" v-bind="sessionsWarn ? { tone: 'warn' as const } : {}">
             <template #popover>
               <ul class="facts">
                 <li v-for="project in listeningProjects" :key="project.id"><RooLiveDot state="live" :word="project.name" /><code>{{ project.folder }}</code></li>
