@@ -26,6 +26,8 @@ final class Recorder {
 
     /// The app's own UI (the pill), in global top-left points: nothing there is a point.
     var ignore: (() -> CGRect?)?
+    /// Called with the number of points so far each time one is added (the pill shows it live).
+    var onPointCount: ((Int) -> Void)?
 
     init() { dir = Paths.newSession() }
 
@@ -77,6 +79,7 @@ final class Recorder {
         points.append(PointEvent(index: index, t: round3(t), end: round3(t), at: Pt(x: round1(p.x), y: round1(p.y)),
                                  kind: kind, app: app?.localizedName, bundleID: app?.bundleIdentifier,
                                  window: nil, url: nil, element: nil, frame: frame))
+        onPointCount?(points.count)
         DispatchQueue.global(qos: .userInitiated).async {
             let (el, window, url) = AXProbe.element(at: p)
             DispatchQueue.main.async {

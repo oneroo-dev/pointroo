@@ -23,6 +23,7 @@ struct Item {
     var said: String = ""            // everything the user said in the recording
     var firstElement: String? = nil  // the first pointed element, "role|name"
     var duration: Double = 0         // length of the recording in seconds
+    var practice: Bool = false       // a practice recording: done by "you" at once, never handed out
 }
 
 struct ItemState: Codable {
@@ -62,6 +63,12 @@ enum Items {
                 out[i].status = working ? (Date().timeIntervalSince(e.at) > lease ? "open" : "in_progress") : e.status
                 out[i].by = e.by; out[i].note = e.note; out[i].at = e.at
                 out[i].commit = e.commit; out[i].branch = e.branch
+            }
+            if Practice.isPractice(dir) {
+                out[i].practice = true
+                out[i].status = "done"
+                out[i].by = Practice.agent
+                if out[i].note == nil { out[i].note = "Practice" }
             }
         }
         return (source, out)

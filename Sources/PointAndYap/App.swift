@@ -120,6 +120,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    /// pointroo://item/<id>: show the main window on that item.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls where state.handle(url: url) { showWindow() }
+    }
+
     func applicationDidBecomeActive(_ note: Notification) { state.refreshAccess(); state.loadSessions() }
 
     func applicationShouldHandleReopen(_ app: NSApplication, hasVisibleWindows: Bool) -> Bool {

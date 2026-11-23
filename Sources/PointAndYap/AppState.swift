@@ -35,6 +35,12 @@ final class AppState: ObservableObject {
     }
     /// A new version downloaded and ready to install (Updater).
     @Published var updateReady: String?
+    /// The points added so far in the recording that is running (0 when idle); the pill shows it.
+    @Published var pointCount = 0
+    /// The item the main window should show (set by a pointroo://item/<id> link or by the list).
+    @Published var selectedItem: String?
+    /// The next recording is a practice one (the "Try it" card): it is done by "you" at once.
+    @Published var practiceNext = false
     /// The coding agents found on this Mac, while the first-run question is open.
     @Published var askAgents: [String] = []
 
@@ -67,6 +73,8 @@ final class AppState: ObservableObject {
         guard phase == .idle else { return }
         let r = Recorder()
         r.ignore = { [weak self] in self?.ownUI?() }
+        r.onPointCount = { [weak self] count in self?.pointCount = count }
+        pointCount = 0
         do { try r.start() } catch {
             say("Couldn't start: \(error.localizedDescription)")
             return
@@ -82,6 +90,7 @@ final class AppState: ObservableObject {
         guard case .recording = phase, let r = recorder else { return }
         recorder = nil
         r.cancel()
+        pointCount = 0
         phase = .idle
         onRecordingChanged?(false)
         if Prefs.sounds { NSSound(named: "Pop")?.play() }
@@ -101,9 +110,13 @@ final class AppState: ObservableObject {
         guard case .recording = phase, let r = recorder else { return }
         recorder = nil
         phase = .processing
+        pointCount = 0
         onRecordingChanged?(false)
+        let practice = practiceNext
+        practiceNext = false
         Task {
             let dir = await r.stop()
+            if practice { Practice.mark(dir) }
             loadSessions()
             // The short pointer goes on the clipboard as soon as the timeline exists; the MCP and the folder fill in after.
             _ = await Process.run(dir: dir, onTimeline: {
@@ -166,6 +179,36 @@ final class AppState: ObservableObject {
         if yes {
             DispatchQueue.global(qos: .userInitiated).async { AgentInstall.run() }
             say("Connected")
+        }
+    }
+
+    /// A pointroo://item/<id> link: opens the main window on that item. A link with an unsafe id does nothing.
+    @discardableResult
+    func handle(url: URL) -> Bool {
+        guard let id = DeepLink.itemID(from: url) else { return false }
+        selectedItem = id
+        return true
+    }
+
+    /// Moves an item to another project (the "Change" button). The router learns it like a picker pick.
+    func reroute(_ id: String, to project: Project) -> Items.RerouteResult {
+        let result = Items.reroute(id: id, to: project)
+        if result == .moved { say("Sent to \(project.name)"); loadSessions() }
+        return result
+    }
+
+    /// "Use another port": the next free port, then the listener and the agent install follow it.
+    func useAnotherPort() {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = MCPPort.useAnother()
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    switch result {
+                    case .success(let port): self.say("Agents now use port \(port)")
+                    case .failure(let error): self.say(error.message)
+                    }
+                }
+            }
         }
     }
 

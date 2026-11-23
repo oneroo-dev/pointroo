@@ -77,10 +77,10 @@ enum MCPListener {
     nonisolated(unsafe) private static var boundPortValue: UInt16 = 0
     nonisolated(unsafe) private static var statusText = "Shared MCP server: not started"
 
-    /// The port from `defaults write dev.oneroodev.pointroo mcpPort <n>`, else 6742.
+    /// The port from `defaults write dev.oneroodev.pointroo mcpPort <n>` when it is in 6740...6759, else 6742.
     static var mcpPort: UInt16 {
-        let value = UserDefaults.standard.integer(forKey: "mcpPort")
-        return value > 0 && value < 65536 ? UInt16(value) : 6742
+        let saved = UserDefaults.standard.integer(forKey: "mcpPort")
+        return UInt16(MCPPort.normalized(saved))
     }
 
     /// One plain line for Settings.
