@@ -100,7 +100,7 @@ final class MCPSharedTests: XCTestCase {
         let occupant = socket(AF_INET, SOCK_STREAM, 0)
         defer { close(occupant) }
         var address = SocketIO.loopbackAddress(port: 0)
-        let bound = withUnsafePointer(to: &address) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(occupant, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
+        let bound = withUnsafePointer(to: &address) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.bind(occupant, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
         XCTAssertEqual(bound, 0)
         XCTAssertEqual(listen(occupant, 1), 0)
         var length = socklen_t(MemoryLayout<sockaddr_in>.size)
@@ -123,10 +123,10 @@ final class MCPSharedTests: XCTestCase {
         let early = try XCTUnwrap(TestClient(port: port, hello: initializeLine(client: "claude-code")))
         XCTAssertNil(early.read(), "a request before the hello is closed")
         early.close()
-        let token = try String(contentsOf: MCPListener.tokenFile, encoding: .utf8)
+        let fileToken = try String(contentsOf: MCPListener.tokenFile, encoding: .utf8)
         let attributes = try FileManager.default.attributesOfItem(atPath: MCPListener.tokenFile.path)
         XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, 0o600)
-        XCTAssertFalse(token.isEmpty)
+        XCTAssertFalse(fileToken.isEmpty)
     }
 
     func testTwoConnectionsWaitAtTheSameTime() throws {
@@ -189,7 +189,7 @@ final class MCPSharedTests: XCTestCase {
     func testTheBridgeFallsBackWhenNothingListensOrNobodyAnswers() throws {
         let probe = socket(AF_INET, SOCK_STREAM, 0)
         var address = SocketIO.loopbackAddress(port: 0)
-        _ = withUnsafePointer(to: &address) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(probe, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
+        _ = withUnsafePointer(to: &address) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.bind(probe, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
         var length = socklen_t(MemoryLayout<sockaddr_in>.size)
         _ = withUnsafeMutablePointer(to: &address) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(probe, $0, &length) } }
         let port = UInt16(bigEndian: address.sin_port)
@@ -199,7 +199,7 @@ final class MCPSharedTests: XCTestCase {
         let silent = socket(AF_INET, SOCK_STREAM, 0)
         defer { close(silent) }
         var silentAddress = SocketIO.loopbackAddress(port: 0)
-        _ = withUnsafePointer(to: &silentAddress) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(silent, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
+        _ = withUnsafePointer(to: &silentAddress) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.bind(silent, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
         listen(silent, 1)
         var silentLength = socklen_t(MemoryLayout<sockaddr_in>.size)
         _ = withUnsafeMutablePointer(to: &silentAddress) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(silent, $0, &silentLength) } }
