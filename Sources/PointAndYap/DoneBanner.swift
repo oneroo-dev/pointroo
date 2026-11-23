@@ -4,6 +4,10 @@ import SwiftUI
 struct BannerNotice: Equatable {
     var project: String
     var note: String
+    /// The crop from the recording, the screen when the agent finished, and the recording's folder. All optional; the banner view does not show them yet.
+    var before: URL? = nil
+    var after: URL? = nil
+    var session: URL? = nil
 }
 
 /// Waiting banners. One shows at a time; none start while `paused` (recording).
@@ -59,9 +63,9 @@ final class DoneBanner {
     private var queue = BannerQueue()
     private var panel: NSPanel?
 
-    func show(project: String, note: String, onClick: @escaping () -> Void) {
+    func show(project: String, note: String, before: URL? = nil, after: URL? = nil, session: URL? = nil, onClick: @escaping () -> Void) {
         self.onClick = onClick
-        queue.add(BannerNotice(project: project, note: note))
+        queue.add(BannerNotice(project: project, note: note, before: before, after: after, session: session))
         showNext()
     }
 
