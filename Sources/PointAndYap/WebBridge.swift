@@ -25,7 +25,17 @@ import Foundation
 ///   settings.set    params {key: string, value: bool | string}
 ///                   result {key, value}   error refused when the key is not in the allowed list, bad_params when the value has the wrong kind
 ///
-/// Item: {id, session, n, title, body, crops: [path], status, at?: ISO date, by?, note?, project?, routeHow?}
+/// Item: {id, session, n, title, body, crops: [path], status, alsoSaid: [string], at?: ISO date, by?, note?, project?, routeHow?,
+///        priority?, commit?, branch?, duplicateOf?, said?, firstElement?, duration?}
+///   A key marked ? is left out when it has no value (never null).
+///   alsoSaid      repeats folded into this item, "id: said text" (empty array when none)
+///   priority      "urgent" when the user said urgent, asap or right now
+///   commit        the commit the agent made when it marked the item done
+///   branch        the branch that commit is on
+///   duplicateOf   the id of the open item this one repeats
+///   said          everything the user said in the recording
+///   firstElement  the first pointed element, "role|name"
+///   duration      length of the recording in seconds
 ///
 /// Settings keys: sounds, doubleControl, escCancels, redactSecrets, connectAgents, showNoSpeech (all bool);
 /// locale (string, one of the ids in Prefs.languages).
@@ -200,6 +210,14 @@ final class WebBridge {
         if let note = item.note { out["note"] = note }
         if let project = item.project { out["project"] = project }
         if let how = item.routeHow { out["routeHow"] = how }
+        if let priority = item.priority { out["priority"] = priority }
+        if let commit = item.commit { out["commit"] = commit }
+        if let branch = item.branch { out["branch"] = branch }
+        if let duplicateOf = item.duplicateOf { out["duplicateOf"] = duplicateOf }
+        out["alsoSaid"] = item.alsoSaid
+        if !item.said.isEmpty { out["said"] = item.said }
+        if let firstElement = item.firstElement { out["firstElement"] = firstElement }
+        if item.duration > 0 { out["duration"] = item.duration }
         return out
     }
 }
