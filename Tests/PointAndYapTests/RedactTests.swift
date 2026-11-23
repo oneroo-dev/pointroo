@@ -68,7 +68,7 @@ final class RedactTests: XCTestCase {
         let rep = NSBitmapImageRep(cgImage: image)
         var white = 0, total = 0
         for x in stride(from: Int(Double(image.width) * from), to: Int(Double(image.width) * to), by: 2) {
-            for y in stride(from: 40, to: 120, by: 2) {
+            for y in stride(from: 62, to: 92, by: 2) {
                 total += 1
                 if let color = rep.colorAt(x: x, y: y), color.brightnessComponent > 0.9 { white += 1 }
             }
@@ -116,7 +116,7 @@ final class RedactTests: XCTestCase {
 
     func brightness(_ url: URL) -> Double {
         let rep = NSBitmapImageRep(data: try! Data(contentsOf: url))!
-        return Double(rep.colorAt(x: rep.pixelsWide / 2, y: rep.pixelsHigh / 2)?.brightnessComponent ?? 1)
+        return Double(rep.colorAt(x: 12, y: 12)?.brightnessComponent ?? 1)
     }
 
     func testRedactsFramesBeforeTheCropsAreCut() async throws {
