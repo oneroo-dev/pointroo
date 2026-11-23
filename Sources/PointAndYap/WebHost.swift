@@ -79,7 +79,9 @@ final class WebHost {
     }
 
     private func tick(state: AppState) {
-        for event in webEvents.recording(phase: Self.phaseName(state.phase), pointCount: state.pointCount) {
+        let picker = ProjectPicker.snapshot()
+        let recording = Self.recordingSnapshot(state: state, pickerOpen: picker != nil)
+        for event in webEvents.recording(phase: recording.phase, pointCount: recording.points) + webEvents.picker(picker) {
             emit(event.name, event.data)
         }
         guard !isReadingEvents else { return }
@@ -103,7 +105,21 @@ final class WebHost {
         }
     }
 
-    /// recording.changed phase: idle, recording, or processing (every case of AppState.Phase).
+    /// The one recording snapshot: recording.get and recording.changed both use it. "picking" while the project picker is open
+    /// (AppState is idle then, but it is waiting for the answer).
+    static func recordingSnapshot(state: AppState, pickerOpen: Bool) -> RecordingSnapshot {
+        recordingSnapshot(phase: state.phase, pointCount: state.pointCount, pickerOpen: pickerOpen)
+    }
+
+    nonisolated static func recordingSnapshot(phase: AppState.Phase, pointCount: Int, pickerOpen: Bool) -> RecordingSnapshot {
+        var name = phaseName(phase)
+        if pickerOpen, name == "idle" { name = "picking" }
+        var startedAt: Date?
+        if case .recording(let date) = phase { startedAt = date }
+        return RecordingSnapshot(phase: name, startedAt: startedAt, points: pointCount)
+    }
+
+    /// recording.changed phase: idle, recording, or processing (every case of AppState.Phase); the snapshot adds picking.
     nonisolated static func phaseName(_ phase: AppState.Phase) -> String {
         switch phase {
         case .idle: return "idle"

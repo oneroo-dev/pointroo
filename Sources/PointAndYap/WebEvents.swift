@@ -1,5 +1,27 @@
 import Foundation
 
+/// What recording.get reports and recording.changed is built from. `phase` is idle, recording, processing or picking.
+struct RecordingSnapshot: Equatable {
+    var phase: String
+    var startedAt: Date?
+    var points: Int
+    var words: [String] = []
+}
+
+/// What picker.get reports: the open project picker. `countdown` is the seconds left before it skips by itself.
+struct PickerSnapshot: Equatable {
+    struct Choice: Equatable {
+        var name: String
+        var path: String
+        var key: Int
+        var suggested: Bool
+    }
+
+    var session: String?
+    var choices: [Choice]
+    var countdown: Int?
+}
+
 /// Decides what the page should be told. Snapshot in, events out: no timers, no disk, no web view.
 /// Each call compares the snapshot with the one before and returns an event only when something changed.
 /// The first call of each kind always returns its event.
@@ -11,6 +33,7 @@ struct WebEvents {
     private var recordingState: (phase: String, pointCount: Int)?
 
     private var lastStatus: AppStatus?
+    private var pickerSignature: String?
 
     init() {}
 
@@ -41,7 +64,17 @@ struct WebEvents {
         return [(name: "status.changed", data: status.dictionary)]
     }
 
-    /// `recording.changed` {phase: "idle" | "recording" | "processing", pointCount} when the phase or the point count changed.
+    /// `picker.changed` {open, session?} when the project picker opened or closed (the countdown alone never emits).
+    mutating func picker(_ snapshot: PickerSnapshot?) -> [Event] {
+        let signature = snapshot.map { "open\u{1F}\($0.session ?? "")" } ?? "closed"
+        guard signature != pickerSignature else { return [] }
+        pickerSignature = signature
+        var data: [String: Any] = ["open": snapshot != nil]
+        if let session = snapshot?.session { data["session"] = session }
+        return [(name: "picker.changed", data: data)]
+    }
+
+    /// `recording.changed` {phase: "idle" | "recording" | "processing" | "picking", pointCount} when the phase or the point count changed.
     mutating func recording(phase: String, pointCount: Int) -> [Event] {
         if let last = recordingState, last.phase == phase, last.pointCount == pointCount { return [] }
         recordingState = (phase: phase, pointCount: pointCount)
