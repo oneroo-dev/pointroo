@@ -43,6 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let state = AppState()
     private var window: NSWindow!
     private var kitHost: WebHost?
+    private var windowSwapper: MainWindowSwapper?
     private var pill: NSPanel!
     private var previousApp: NSRunningApplication?
     private var doubleControl: DoubleControl?
@@ -51,10 +52,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationDidFinishLaunching(_ note: Notification) {
         NSApp.mainMenu = makeMenu()
-        if Self.kitWindowAvailable {
-            makeKitWindow()
-        } else {
-            makeClassicWindow()
+        let firstChoice = Self.wantedWindowChoice()
+        buildWindow(firstChoice)
+        let swapper = MainWindowSwapper(shown: firstChoice, wanted: { Self.wantedWindowChoice() },
+                                        swap: { [weak self] choice in self?.swapWindow(to: choice) })
+        windowSwapper = swapper
+        // The kitWindow setting is read again whenever UserDefaults changes, so the window switches at once.
+        NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { _ in
+            // Later, not inside the write: the switch in the web Settings screen must finish its bridge call before its web view moves.
+            DispatchQueue.main.async { MainActor.assumeIsolated { _ = swapper.settingsMayHaveChanged() } }
         }
 
         pill = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 200, height: 40), styleMask: [.borderless, .nonactivatingPanel],
@@ -125,12 +131,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     /// The kit window is used when the kitWindow setting is on (it is on unless the user turned it off) and the built screens
-    /// are in the app (Contents/Resources/ui/index.html), or a dev address is set. Read once at launch.
-    private static var kitWindowAvailable: Bool {
-        guard UserDefaults.standard.object(forKey: "kitWindow") as? Bool ?? true else { return false }
+    /// are in the app (Contents/Resources/ui/index.html), or a dev address is set. Read at launch and again on every settings change.
+    private static func wantedWindowChoice() -> MainWindowChoice {
+        MainWindowChoice.decide(kitWindow: UserDefaults.standard.object(forKey: "kitWindow") as? Bool ?? true,
+                                uiAvailable: uiAvailable)
+    }
+
+    private static var uiAvailable: Bool {
         if WebHost.devURL(from: Prefs.webDevURL) != nil { return true }
         guard let folder = WebHost.bundleFolder else { return false }
         return FileManager.default.fileExists(atPath: folder.appendingPathComponent("index.html").path)
+    }
+
+    private func buildWindow(_ choice: MainWindowChoice) {
+        switch choice {
+        case .kit: makeKitWindow()
+        case .classic: makeClassicWindow()
+        }
+    }
+
+    /// Replaces the main window with the other kind, keeping the top-left corner where it was. A shown window is replaced by a shown
+    /// one; a hidden window by a hidden one, so the next show already has the right kind. The old window loses its delegate first,
+    /// so closing it does not stop the events of the new one.
+    private func swapWindow(to choice: MainWindowChoice) {
+        let oldWindow: NSWindow = window
+        let wasVisible = oldWindow.isVisible
+        let topLeft = NSPoint(x: oldWindow.frame.minX, y: oldWindow.frame.maxY)
+        kitHost?.stopEvents()
+        oldWindow.delegate = nil
+        buildWindow(choice)
+        window.setFrameTopLeftPoint(topLeft)
+        oldWindow.orderOut(nil)
+        oldWindow.contentView = nil
+        oldWindow.close()
+        if wasVisible { bringWindowToFront() }
     }
 
     /// The old SwiftUI main window.
@@ -177,9 +211,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 return outcome
             },
             startDrag: { [weak self] in MainActor.assumeIsolated { self?.kitHost?.performWindowDrag() } })
-        let host = WebHost(bridge: bridge)
-        host.load()
-        kitHost = host
+        // One WebHost for the life of the app: a swap back to the kit window moves the same web view into the new window.
+        let host: WebHost
+        if let existing = kitHost {
+            host = existing
+        } else {
+            host = WebHost(bridge: bridge)
+            host.load()
+            kitHost = host
+        }
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 960, height: 640),
                           styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
         window.title = "Pointroo"
@@ -196,7 +236,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// Shows the main window; the kit window also starts telling its page about changes.
     private func bringWindowToFront() {
         window.makeKeyAndOrderFront(nil)
-        kitHost?.startEvents(state: state)
+        if windowSwapper?.shown != .classic { kitHost?.startEvents(state: state) }
     }
 
     func windowWillClose(_ notification: Notification) {
@@ -208,7 +248,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationDidUnhide(_ notification: Notification) {
-        if window.isVisible { kitHost?.startEvents(state: state) }
+        if window.isVisible, windowSwapper?.shown != .classic { kitHost?.startEvents(state: state) }
     }
 
     /// pointroo://item/<id>: show the main window on that item.
