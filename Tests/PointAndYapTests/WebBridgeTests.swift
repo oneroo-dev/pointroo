@@ -52,6 +52,46 @@ final class WebBridgeTests: XCTestCase {
         XCTAssertEqual(try errorCode(bridge().handle(message: ["id": 1, "method": "items.get", "params": ["id": "nope"]])), "not_found")
     }
 
+    func testSendsTheFullItemFields() {
+        var full = item("a#1")
+        full.priority = "urgent"
+        full.commit = "abc123"
+        full.branch = "fix-it"
+        full.duplicateOf = "a#0"
+        full.alsoSaid = ["a#2: same again"]
+        full.firstElement = "button|Save"
+        full.said = "fix the save button"
+        full.duration = 4.5
+        let out = WebBridge.dictionary(full)
+        XCTAssertEqual(out["priority"] as? String, "urgent")
+        XCTAssertEqual(out["commit"] as? String, "abc123")
+        XCTAssertEqual(out["branch"] as? String, "fix-it")
+        XCTAssertEqual(out["duplicateOf"] as? String, "a#0")
+        XCTAssertEqual(out["alsoSaid"] as? [String], ["a#2: same again"])
+        XCTAssertEqual(out["firstElement"] as? String, "button|Save")
+        XCTAssertEqual(out["said"] as? String, "fix the save button")
+        XCTAssertEqual(out["duration"] as? Double, 4.5)
+    }
+
+    func testLeavesOutKeysThatHaveNoValue() {
+        let out = WebBridge.dictionary(item("a#1"))
+        for key in ["priority", "commit", "branch", "duplicateOf", "firstElement", "said", "duration", "project", "routeHow"] {
+            XCTAssertNil(out[key], key)
+        }
+        XCTAssertEqual(out["alsoSaid"] as? [String], [])
+    }
+
+    func testKeepsTheOldItemKeys() {
+        let out = WebBridge.dictionary(item("a#1", title: "T", status: "done"))
+        XCTAssertEqual(out["id"] as? String, "a#1")
+        XCTAssertEqual(out["session"] as? String, "s")
+        XCTAssertEqual(out["n"] as? Int, 1)
+        XCTAssertEqual(out["title"] as? String, "T")
+        XCTAssertEqual(out["body"] as? String, "body")
+        XCTAssertEqual(out["crops"] as? [String], [])
+        XCTAssertEqual(out["status"] as? String, "done")
+    }
+
     func testErrorsOnAnUnknownMethod() throws {
         XCTAssertEqual(try errorCode(bridge().handle(message: ["id": 1, "method": "files.delete"])), "unknown_method")
     }
