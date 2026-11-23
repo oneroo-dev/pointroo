@@ -5,6 +5,8 @@ final class WebBridgeTests: XCTestCase {
     private var suiteName = ""
     private var defaults: UserDefaults!
 
+    override class func setUp() { _ = PointAndYapTests.root }
+
     override func setUp() {
         suiteName = "WebBridgeTests-\(UUID().uuidString)"
         defaults = UserDefaults(suiteName: suiteName)
@@ -101,10 +103,84 @@ final class WebBridgeTests: XCTestCase {
         XCTAssertEqual(try errorCode(bridge().handle(message: ["method": "items.list"])), "bad_request")
     }
 
-    func testRerouteSaysNotAvailableYet() throws {
-        let script = bridge().handle(message: ["id": 2, "method": "items.reroute", "params": ["id": "a#1", "project": "/x"]])
-        XCTAssertEqual(try errorCode(script), "not_available")
-        XCTAssertTrue(script.contains("not available yet"))
+    private final class RerouteCalls {
+        var calls: [(String, Project)] = []
+    }
+
+    func testRerouteCallsTheInjectedClosureWithTheProject() throws {
+        let calls = RerouteCalls()
+        let target = Project(name: "backend", path: "/work/backend")
+        let subject = WebBridge(defaults: defaults, loadItems: { [] },
+                                findProject: { $0 == "backend" ? target : nil },
+                                reroute: { calls.calls.append(($0, $1)); return .moved })
+        let reply = try replyObject(subject.handle(message: ["id": 2, "method": "items.reroute", "params": ["id": "a#1", "project": "backend"]]))
+        XCTAssertEqual((reply["result"] as? [String: Any])?["moved"] as? Bool, true)
+        XCTAssertEqual(calls.calls.count, 1)
+        XCTAssertEqual(calls.calls.first?.0, "a#1")
+        XCTAssertEqual(calls.calls.first?.1, target)
+    }
+
+    func testRerouteToAnUnknownProjectIsNotFound() throws {
+        let calls = RerouteCalls()
+        let subject = WebBridge(defaults: defaults, loadItems: { [] }, findProject: { _ in nil },
+                                reroute: { calls.calls.append(($0, $1)); return .moved })
+        let script = subject.handle(message: ["id": 2, "method": "items.reroute", "params": ["id": "a#1", "project": "nowhere"]])
+        XCTAssertEqual(try errorCode(script), "not_found")
+        XCTAssertTrue(calls.calls.isEmpty)
+    }
+
+    func testRerouteMapsTheOtherResults() throws {
+        let target = Project(name: "backend", path: "/work/backend")
+        func code(_ result: Items.RerouteResult) throws -> String? {
+            let subject = WebBridge(defaults: defaults, loadItems: { [] }, findProject: { _ in target }, reroute: { _, _ in result })
+            return try errorCode(subject.handle(message: ["id": 1, "method": "items.reroute", "params": ["id": "a#1", "project": "backend"]]))
+        }
+        XCTAssertEqual(try code(.missing), "not_found")
+        XCTAssertEqual(try code(.done), "refused")
+        XCTAssertEqual(try code(.saveFailed), "not_available")
+        XCTAssertEqual(try errorCode(bridge().handle(message: ["id": 1, "method": "items.reroute", "params": ["id": "a#1"]])), "bad_params")
+    }
+
+    func testQuestionsListIsEmptyWhenNothingIsAsked() throws {
+        try? FileManager.default.removeItem(at: Questions.folder)
+        let result = try XCTUnwrap(replyObject(bridge().handle(message: ["id": 1, "method": "questions.list"]))["result"] as? [String: Any])
+        XCTAssertEqual((result["questions"] as? [Any])?.count, 0)
+    }
+
+    func testQuestionsListShowsAnOpenQuestion() throws {
+        try? FileManager.default.removeItem(at: Questions.folder)
+        let question = Questions.ask(project: "alpha", cwd: "/w/alpha", agent: "claude", text: "Blue or gray?", choices: ["Blue", "Gray"])
+        let result = try XCTUnwrap(replyObject(bridge().handle(message: ["id": 1, "method": "questions.list"]))["result"] as? [String: Any])
+        let questions = try XCTUnwrap(result["questions"] as? [[String: Any]])
+        XCTAssertEqual(questions.count, 1)
+        XCTAssertEqual(questions.first?["id"] as? String, question.id)
+        XCTAssertEqual(questions.first?["project"] as? String, "alpha")
+        XCTAssertEqual(questions.first?["agent"] as? String, "claude")
+        XCTAssertEqual(questions.first?["text"] as? String, "Blue or gray?")
+        XCTAssertEqual(questions.first?["choices"] as? [String], ["Blue", "Gray"])
+        XCTAssertNotNil(questions.first?["asked"] as? Double)
+        XCTAssertNil(questions.first?["cwd"])
+    }
+
+    func testQuestionsAnswerStoresTheAnswerOnceOnly() throws {
+        try? FileManager.default.removeItem(at: Questions.folder)
+        let question = Questions.ask(project: "alpha", cwd: "/w/alpha", agent: "claude", text: "Blue or gray?", choices: [])
+        let subject = bridge()
+        let first = try replyObject(subject.handle(message: ["id": 1, "method": "questions.answer", "params": ["id": question.id, "text": "Blue"]]))
+        XCTAssertEqual((first["result"] as? [String: Any])?["answered"] as? Bool, true)
+        XCTAssertEqual(Questions.get(id: question.id)?.answer, "Blue")
+        let second = subject.handle(message: ["id": 2, "method": "questions.answer", "params": ["id": question.id, "text": "Gray"]])
+        XCTAssertEqual(try errorCode(second), "not_found")
+        XCTAssertEqual(Questions.get(id: question.id)?.answer, "Blue")
+    }
+
+    func testQuestionsAnswerRefusesABadIdAndMissingText() throws {
+        try? FileManager.default.removeItem(at: Questions.folder)
+        let subject = bridge()
+        XCTAssertEqual(try errorCode(subject.handle(message: ["id": 1, "method": "questions.answer", "params": ["id": "../x", "text": "hi"]])), "not_found")
+        XCTAssertEqual(try errorCode(subject.handle(message: ["id": 2, "method": "questions.answer", "params": ["id": UUID().uuidString, "text": "hi"]])), "not_found")
+        XCTAssertEqual(try errorCode(subject.handle(message: ["id": 3, "method": "questions.answer", "params": ["id": 5, "text": "hi"]])), "bad_params")
+        XCTAssertEqual(try errorCode(subject.handle(message: ["id": 4, "method": "questions.answer", "params": ["id": UUID().uuidString, "text": ""]])), "bad_params")
     }
 
     func testReadsAndWritesAllowedSettings() throws {

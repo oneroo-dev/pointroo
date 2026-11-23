@@ -18,8 +18,13 @@ import Foundation
 ///                   result {items: [Item]}
 ///   items.get       params {id: string}
 ///                   result {item: Item}   error not_found when there is no such item
-///   items.reroute   params {id: string, project: string}
-///                   error not_available for now ("not available yet")
+///   items.reroute   params {id: string, project: string}   (project is a project's name or folder path, as in Projects.known())
+///                   result {moved: true}
+///                   error not_found (no such item, or no such project), refused (the item is done), not_available (could not save), bad_params
+///   questions.list  no params
+///                   result {questions: [Question]}   unanswered questions from agents, oldest first
+///   questions.answer params {id: string, text: string}
+///                   result {answered: true}   error not_found when the question is unknown or already answered, bad_params when id or text is missing
 ///   settings.get    params {key?: string}
 ///                   result {key, value} for one key, or {values: {key: value}} for all allowed keys
 ///   settings.set    params {key: string, value: bool | string}
@@ -36,6 +41,9 @@ import Foundation
 ///   said          everything the user said in the recording
 ///   firstElement  the first pointed element, "role|name"
 ///   duration      length of the recording in seconds
+///
+/// Question: {id, project, agent, text, choices: [string], asked: seconds since 1970}
+///   A key with no value is left out (an empty choices list is an empty array).
 ///
 /// Settings keys: sounds, doubleControl, escCancels, redactSecrets, connectAgents, showNoSpeech, holdToTalk, listenAfterDone (all bool);
 /// locale (string, one of the ids in Prefs.languages).
@@ -75,17 +83,35 @@ final class WebBridge {
     static let methods: [String: Handler] = [
         "items.list": { bridge, params in try bridge.itemsList(params) },
         "items.get": { bridge, params in try bridge.itemsGet(params) },
-        "items.reroute": { _, _ in throw Failure(code: "not_available", message: "not available yet") },
+        "items.reroute": { bridge, params in try bridge.itemsReroute(params) },
+        "questions.list": { bridge, params in try bridge.questionsList(params) },
+        "questions.answer": { bridge, params in try bridge.questionsAnswer(params) },
         "settings.get": { bridge, params in try bridge.settingsGet(params) },
         "settings.set": { bridge, params in try bridge.settingsSet(params) },
     ]
 
     private let defaults: UserDefaults
     private let loadItems: () -> [Item]
+    private let findProject: (String) -> Project?
+    private let reroute: (String, Project) -> Items.RerouteResult
 
-    init(defaults: UserDefaults = .standard, loadItems: @escaping () -> [Item] = { Items.all() }) {
+    /// `findProject` turns the page's text (a name or a folder path) into a known project. `reroute` moves the item.
+    /// The defaults use the real project list and Items.reroute (the same call AppState.reroute makes, without its banner).
+    init(defaults: UserDefaults = .standard,
+         loadItems: @escaping () -> [Item] = { Items.all() },
+         findProject: @escaping (String) -> Project? = { WebBridge.knownProject($0) },
+         reroute: @escaping (String, Project) -> Items.RerouteResult = { Items.reroute(id: $0, to: $1) }) {
         self.defaults = defaults
         self.loadItems = loadItems
+        self.findProject = findProject
+        self.reroute = reroute
+    }
+
+    /// A known project whose folder is this path, or whose name is this text (ignoring case).
+    static func knownProject(_ text: String) -> Project? {
+        let projects = Projects.known()
+        return projects.first { Router.samePath($0.path, text) }
+            ?? projects.first { $0.name.caseInsensitiveCompare(text) == .orderedSame }
     }
 
     /// Takes what the page posted (a dictionary or a JSON string) and returns the script to run in the page.
@@ -162,6 +188,29 @@ final class WebBridge {
         return ["item": Self.dictionary(item)]
     }
 
+    private func itemsReroute(_ params: [String: Any]) throws -> Any {
+        guard let id = params["id"] as? String, !id.isEmpty else { throw Failure(code: "bad_params", message: "id is needed.") }
+        guard let name = params["project"] as? String, !name.isEmpty else { throw Failure(code: "bad_params", message: "project is needed.") }
+        guard let project = findProject(name) else { throw Failure(code: "not_found", message: "No project \(name).") }
+        switch reroute(id, project) {
+        case .moved: return ["moved": true]
+        case .missing: throw Failure(code: "not_found", message: "No item \(id).")
+        case .done: throw Failure(code: "refused", message: "A done item cannot be moved.")
+        case .saveFailed: throw Failure(code: "not_available", message: "Could not save the move.")
+        }
+    }
+
+    private func questionsList(_ params: [String: Any]) throws -> Any {
+        ["questions": Questions.pending().map(Self.dictionary)]
+    }
+
+    private func questionsAnswer(_ params: [String: Any]) throws -> Any {
+        guard let id = params["id"] as? String, !id.isEmpty else { throw Failure(code: "bad_params", message: "id is needed.") }
+        guard let text = params["text"] as? String, !text.isEmpty else { throw Failure(code: "bad_params", message: "text is needed.") }
+        guard Questions.answer(id: id, text: text) else { throw Failure(code: "not_found", message: "No open question \(id).") }
+        return ["answered": true]
+    }
+
     private func settingsGet(_ params: [String: Any]) throws -> Any {
         if let key = params["key"] {
             guard let name = key as? String, let kind = Self.kind(of: name) else { throw Failure(code: "refused", message: "That setting cannot be read.") }
@@ -200,6 +249,11 @@ final class WebBridge {
         case .flag(let defaultValue): return defaults.object(forKey: key) as? Bool ?? defaultValue
         case .choice(_, let defaultValue): return defaults.string(forKey: key) ?? defaultValue
         }
+    }
+
+    static func dictionary(_ question: Question) -> [String: Any] {
+        ["id": question.id, "project": question.project, "agent": question.agent, "text": question.text,
+         "choices": question.choices, "asked": question.asked.timeIntervalSince1970]
     }
 
     static func dictionary(_ item: Item) -> [String: Any] {
