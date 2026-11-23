@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { RooIconButton } from '@roo/kit/controls'
 import { RooIcon, RooStateMark } from '@roo/kit'
-import QuestionControls from '../parts/QuestionControls.vue'
+import QuestionControls from '../../src/parts/QuestionControls.vue'
 import FloatingSurface from '../parts/FloatingSurface.vue'
 import Stage from '../parts/Stage.vue'
 import { asks } from '../data/items'

@@ -1,24 +1,36 @@
 <script setup lang="ts">
 // The answer controls of an agent's question. The notice (4.5) and the item detail show the same thing.
+// A choice or the typed text raises `answer` with the words.
+import { ref } from 'vue'
 import { RooButton, RooIconButton, RooInput } from '@roo/kit/controls'
 import { RooKbd } from '@roo/kit'
 
 defineProps<{ question: string; choices: string[]; showLater?: boolean }>()
+const emit = defineEmits<{ answer: [text: string]; later: [] }>()
+
+const typed = ref('')
+
+function sendTyped(): void {
+  const text = typed.value.trim()
+  if (text === '') return
+  emit('answer', text)
+  typed.value = ''
+}
 </script>
 
 <template>
   <div class="question">
     <p class="question-text">{{ question }}</p>
     <div class="question-choices">
-      <RooButton v-for="(choice, index) in choices" :key="choice" :variant="index === 0 ? 'primary' : 'secondary'" size="md" class="question-choice">
+      <RooButton v-for="(choice, index) in choices" :key="choice" :variant="index === 0 ? 'primary' : 'secondary'" size="md" class="question-choice" @click="emit('answer', choice)">
         <span class="question-label"><span>{{ choice }}</span><RooKbd :keys="String(index + 1)" /></span>
       </RooButton>
     </div>
     <div class="question-free">
-      <RooInput class="question-input" aria-label="Type an answer" placeholder="Or type an answer…" />
-      <RooIconButton icon="send" variant="secondary" label="Send" tooltip="Send" shortcut="Enter" />
+      <RooInput v-model="typed" class="question-input" aria-label="Type an answer" placeholder="Or type an answer…" @keydown.enter.prevent="sendTyped" />
+      <RooIconButton icon="send" variant="secondary" label="Send" tooltip="Send" shortcut="Enter" @click="sendTyped" />
     </div>
-    <div v-if="showLater" class="question-later"><RooButton variant="ghost" size="sm" flush>Later</RooButton></div>
+    <div v-if="showLater" class="question-later"><RooButton variant="ghost" size="sm" flush @click="emit('later')">Later</RooButton></div>
   </div>
 </template>
 

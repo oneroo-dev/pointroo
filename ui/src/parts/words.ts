@@ -1,5 +1,5 @@
 import type { RooStateMarkState } from '@roo/kit/states'
-import type { Item, ItemState, RouteHow } from '../data/types'
+import type { Item, ItemState, RouteHow } from './types'
 
 export interface Mark {
   state: RooStateMarkState

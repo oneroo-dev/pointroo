@@ -94,3 +94,14 @@ Settings... (Cmd+,), Hide Pointroo (Cmd+H), Quit Pointroo (Cmd+Q), Copy, Select 
 Main: empty (nothing recorded), loading/processing ("Writing instructions..."), permission missing (each of three), update ready, welcome (first run), agents question, toast, many items, long titles, no-speech rows, item open / in progress / done, not routed.
 Settings: all rows above, MCP running / not started / port busy / error, agents found / none, permission states.
 Panels: done banner (single, queued), question panel (NEW), picker (2 to 9 projects), recording pill (recording; cancel; stop), menu bar (idle, counts, list).
+
+## App (src/)
+
+The real main window, built from the same parts as the approved mockups (2026-11-24, W1).
+- `src/parts/` holds the shared screen parts: MainWindow, ItemList, ItemDetail, ProjectSidebar, ProjectTiles, QuestionControls, StatusBanner, AppGlyph, words.ts, projects.ts, types.ts. They take data as props and raise events (select, send, sendAll, move, done, trash, reopen, copy, reveal, answer, undo and more). The mockups import them from here and pass sample data (`mockups/parts/MainWindow.vue` is only a review frame with a scenario switch).
+- `src/bridge.ts` is `call(method, params)` and `on(event, handler)` over `window.webkit.messageHandlers.pointroo` and `window.pointroo.reply/emit`. A reply with an error rejects with a `BridgeError` (code, message). In a plain browser `src/fakeBridge.ts` answers from the mockup sample data.
+- `src/types.ts` has the shapes of every bridge reply and event (WebBridge.swift). `src/viewModel.ts` turns them into what the parts draw.
+- `src/store.ts` holds items (items.list grouped by project), projects, questions, status and the picks (tab, project filter, selected item, toast). It asks again on items.changed and questions.changed, takes status.changed and recording.changed as they come.
+- `src/App.vue` wires the store to MainWindow and handles the keys: 1 to 5 send to a tile, D done, Delete trash, Enter open the first item, Cmd+1 to 9 project, Esc closes the detail when narrow. A press on the bar's empty background calls `window.startDrag`.
+- Send and move show a 5 s toast with Undo (reroute back, or `items.unroute` for a first send). Done, Open again, Trash and Copy call the W2 methods; a `not_available` answer shows as a toast.
+- Build: `npm run dev` (browser, port 5191, fake bridge), `npm run build` (writes `dist/`, loaded from file://), `npm run typecheck`. `npm run mockups` still builds the mockups.
