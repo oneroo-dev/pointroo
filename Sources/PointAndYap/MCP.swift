@@ -199,6 +199,7 @@ enum MCPServer {
             if let at = i.at, i.status != "open" { l += " since \(f.string(from: at))" }
             l += "]"
             if i.priority == "urgent" { l += " URGENT" }
+            if i.practice { l += " Practice" }
             if let original = i.duplicateOf { l += " (duplicate of \(original), not handed out on its own)" }
             if let project = i.project { l += " (project \(Projects.name(for: project)))" }
             l += " \"\(i.title)…\""
