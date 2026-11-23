@@ -217,7 +217,7 @@ struct PillView: View {
             }
             Button(action: state.cancel) { Text("esc").font(.geist(11)).foregroundStyle(Ink.faint) }
                 .buttonStyle(.plain).help("Cancel and keep nothing")
-            Button(action: state.stop) { Text("Stop  ") + Text("⌃⌃").font(.system(size: 11)).foregroundColor(Color(hex: 0x9A9DA4)) }.buttonStyle(SmallButton(dark: true))
+            Button(action: state.stop) { Text("Stop  \(Text("⌃⌃").font(.system(size: 11)).foregroundColor(Color(hex: 0x9A9DA4)))") }.buttonStyle(SmallButton(dark: true))
         }
         .padding(.leading, 14).padding(.trailing, 6)
         .frame(height: 40)

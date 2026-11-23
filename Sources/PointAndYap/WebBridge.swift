@@ -57,10 +57,24 @@ import Foundation
 ///                   result {copied: true}   error bad_params when text is not a non-empty string
 ///   window.startDrag no params   the page calls this from a mousedown on its own drag area; the window then follows the mouse
 ///                   result {dragging: true}   error not_available when the app gave no way to drag
+///   done.recent     params {limit?: whole number 1...50, default 10}
+///                   result {items: [Item + doneAt]}   items with status done, newest done first (doneAt is the ISO date it was marked done,
+///                   the same value as the item's `at`; an item with no date goes last and has no doneAt). Each Item has project, note,
+///                   by, crops and cropURLs (the before pictures) and afterURL (the after picture of the done banner, when it exists).
+///                   error bad_params when limit is not a whole number from 1 to 50
+///   session.get     params {session: string}   the id of a recording (an item's `session`)
+///                   result {session, started: ISO date, duration: seconds, said: [{text, start, end}] (every spoken word, seconds from the start),
+///                   points: [{at: seconds from the start, x, y, app?, window?, url?, element?}] (element is a short text like AXButton "Save"),
+///                   frames: [pointroo-image:// address] (the full screenshots that exist), items: [item id]}
+///                   error bad_params when session is missing, empty, or has a "/" or ".." in it, not_found when there is no such recording
 ///   questions.list  no params
-///                   result {questions: [Question]}   unanswered questions from agents, oldest first
+///                   result {questions: [Question]}   unanswered questions from agents, oldest first; snoozed ones are left out until their time
 ///   questions.answer params {id: string, text: string}
 ///                   result {answered: true}   error not_found when the question is unknown or already answered, bad_params when id or text is missing
+///   questions.later params {id: string, minutes?: whole number 1...1440, default 30}   snoozes the question: questions.list leaves it out
+///                   until that many minutes from now, then it comes back (and questions.changed is sent both times)
+///                   result {snoozed: true, until: seconds since 1970}
+///                   error not_found when the question is unknown or already answered, bad_params when id is missing or minutes is out of range
 ///   settings.get    params {key?: string}
 ///                   result {key, value} for one key, or {values: {key: value}} for all allowed keys
 ///   settings.set    params {key: string, value: bool | string}
@@ -144,6 +158,9 @@ final class WebBridge {
         "window.startDrag": { bridge, params in try bridge.windowStartDrag(params) },
         "questions.list": { bridge, params in try bridge.questionsList(params) },
         "questions.answer": { bridge, params in try bridge.questionsAnswer(params) },
+        "questions.later": { bridge, params in try bridge.questionsLater(params) },
+        "done.recent": { bridge, params in try bridge.doneRecent(params) },
+        "session.get": { bridge, params in try bridge.sessionGet(params) },
         "settings.get": { bridge, params in try bridge.settingsGet(params) },
         "settings.set": { bridge, params in try bridge.settingsSet(params) },
         "status.get": { bridge, params in try bridge.statusGet(params) },
@@ -162,6 +179,7 @@ final class WebBridge {
     private let unroute: (String) -> Items.UnrouteResult
     private let writeClipboard: (String) -> Void
     private let startDrag: (() -> Void)?
+    private let now: () -> Date
 
     /// What changing one item's status did.
     enum StatusChange: Equatable {
@@ -190,6 +208,7 @@ final class WebBridge {
     /// `changeStatus` (id, new status, note) serves items.done, items.reopen and items.trash. `unroute` serves items.unroute.
     /// `startDrag` serves window.startDrag; when it is nil, that method answers not_available.
     /// `writeClipboard` serves clipboard.copy. The defaults are the real Items.set, Items.unroute and the general pasteboard.
+    /// `now` is the clock for the question snooze (tests set it).
     init(defaults: UserDefaults = .standard,
          loadItems: @escaping () -> [Item] = { Items.all() },
          findProject: @escaping (String) -> Project? = { WebBridge.knownProject($0) },
@@ -201,7 +220,8 @@ final class WebBridge {
          changeStatus: @escaping (String, String, String?) -> StatusChange = { WebBridge.changeItemStatus(id: $0, status: $1, note: $2) },
          unroute: @escaping (String) -> Items.UnrouteResult = { Items.unroute(id: $0) },
          writeClipboard: @escaping (String) -> Void = { WebBridge.copyToClipboard($0) },
-         startDrag: (() -> Void)? = nil) {
+         startDrag: (() -> Void)? = nil,
+         now: @escaping () -> Date = { Date() }) {
         self.defaults = defaults
         self.loadItems = loadItems
         self.findProject = findProject
@@ -214,6 +234,7 @@ final class WebBridge {
         self.unroute = unroute
         self.writeClipboard = writeClipboard
         self.startDrag = startDrag
+        self.now = now
     }
 
     /// A known project whose folder is this path, or whose name is this text (ignoring case).
@@ -290,7 +311,6 @@ final class WebBridge {
         } else {
             items = items.filter { $0.status != "trashed" }
         }
-        var onlyProject: Project?
         if let project = params["project"] {
             guard let text = project as? String, !text.isEmpty else {
                 throw Failure(code: "bad_params", message: "project must be a name, a folder path or none.")
@@ -299,7 +319,6 @@ final class WebBridge {
                 items = items.filter { $0.project == nil }
             } else {
                 guard let found = findProject(text) else { throw Failure(code: "not_found", message: "No project \(text).") }
-                onlyProject = found
                 items = items.filter { item in item.project.map { Router.samePath($0, found.path) } ?? false }
             }
         }
@@ -471,7 +490,71 @@ final class WebBridge {
     }
 
     private func questionsList(_ params: [String: Any]) throws -> Any {
-        ["questions": Questions.pending().map(Self.dictionary)]
+        ["questions": Questions.pending(now: now()).map(Self.dictionary)]
+    }
+
+    private func questionsLater(_ params: [String: Any]) throws -> Any {
+        guard let id = params["id"] as? String, !id.isEmpty else { throw Failure(code: "bad_params", message: "id is needed.") }
+        let minutes = try Self.wholeNumber(params["minutes"], named: "minutes", range: 1...1440, defaultValue: 30)
+        let start = now()
+        guard Questions.snooze(id: id, minutes: minutes, now: start) else { throw Failure(code: "not_found", message: "No open question \(id).") }
+        return ["snoozed": true, "until": start.addingTimeInterval(TimeInterval(minutes) * 60).timeIntervalSince1970]
+    }
+
+    /// A whole number inside `range` from the page, or `defaultValue` when the page left it out.
+    private static func wholeNumber(_ value: Any?, named name: String, range: ClosedRange<Int>, defaultValue: Int) throws -> Int {
+        guard let value else { return defaultValue }
+        guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+              number.doubleValue == number.doubleValue.rounded(), range.contains(number.intValue) else {
+            throw Failure(code: "bad_params", message: "\(name) must be a whole number from \(range.lowerBound) to \(range.upperBound).")
+        }
+        return number.intValue
+    }
+
+    private func doneRecent(_ params: [String: Any]) throws -> Any {
+        let limit = try Self.wholeNumber(params["limit"], named: "limit", range: 1...50, defaultValue: 10)
+        let done = loadItems().filter { $0.status == "done" }
+        let newest = Self.newestFirst(done).prefix(limit)
+        let items = newest.map { item -> [String: Any] in
+            var entry = Self.dictionary(item)
+            if let at = item.at { entry["doneAt"] = ISO8601DateFormatter().string(from: at) }
+            return entry
+        }
+        return ["items": items]
+    }
+
+    private func sessionGet(_ params: [String: Any]) throws -> Any {
+        guard let id = params["session"] as? String, !id.isEmpty, !id.contains("/"), !id.contains("..") else {
+            throw Failure(code: "bad_params", message: "session must be a recording id, with no / or ..")
+        }
+        guard let folder = MCPServer.dir(id),
+              let data = try? Data(contentsOf: folder.appendingPathComponent("events.json")),
+              let events = try? JSONDecoder.iso.decode(SessionEvents.self, from: data) else {
+            throw Failure(code: "not_found", message: "No recording \(id).")
+        }
+        let words = (try? Data(contentsOf: folder.appendingPathComponent("transcript.json")))
+            .flatMap { try? JSONDecoder().decode([Word].self, from: $0) } ?? []
+        let points = events.points.map { point -> [String: Any] in
+            var entry: [String: Any] = ["at": point.t, "x": point.at.x, "y": point.at.y]
+            if let app = point.app { entry["app"] = app }
+            if let window = point.window { entry["window"] = window }
+            if let url = point.url { entry["url"] = url }
+            if point.element != nil { entry["element"] = Builder.describe(point) }
+            return entry
+        }
+        let frames = events.frames
+            .filter { FileManager.default.fileExists(atPath: folder.appendingPathComponent($0.file).path) }
+            .map { WebImages.url(session: id, relative: $0.file) }
+        let itemIds = Items.items(in: folder, state: Items.readState(folder)).items.map(\.id)
+        return [
+            "session": id,
+            "started": ISO8601DateFormatter().string(from: events.started),
+            "duration": events.duration,
+            "said": words.map { ["text": $0.text, "start": $0.start, "end": $0.end] as [String: Any] },
+            "points": points,
+            "frames": frames,
+            "items": itemIds,
+        ] as [String: Any]
     }
 
     private func questionsAnswer(_ params: [String: Any]) throws -> Any {

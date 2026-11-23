@@ -36,6 +36,24 @@ final class QuestionsTests: XCTestCase {
         XCTAssertEqual(Questions.get(id: question.id)?.answer, "Blue")
     }
 
+    func testSnoozedQuestionLeavesPendingUntilItsTime() {
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        let question = Questions.ask(project: "alpha", cwd: "/w/alpha", agent: "a", text: "Blue or gray?", choices: [], now: start)
+        XCTAssertTrue(Questions.snooze(id: question.id, minutes: 5, now: start))
+        XCTAssertEqual(Questions.get(id: question.id)?.snoozedUntil, start.addingTimeInterval(300))
+        XCTAssertTrue(Questions.pending(now: start).isEmpty)
+        XCTAssertTrue(Questions.pending(now: start.addingTimeInterval(299)).isEmpty)
+        XCTAssertEqual(Questions.pending(now: start.addingTimeInterval(300)).map(\.id), [question.id])
+    }
+
+    func testSnoozeFailsForAnAnsweredOrUnknownQuestion() {
+        let question = Questions.ask(project: "alpha", cwd: "/w/alpha", agent: "a", text: "Which?", choices: [])
+        XCTAssertTrue(Questions.answer(id: question.id, text: "Blue"))
+        XCTAssertFalse(Questions.snooze(id: question.id, minutes: 5))
+        XCTAssertFalse(Questions.snooze(id: UUID().uuidString, minutes: 5))
+        XCTAssertFalse(Questions.snooze(id: "../x", minutes: 5))
+    }
+
     func testChoicesAreCappedAtFour() {
         let question = Questions.ask(project: "p", cwd: "/w/p", agent: "a", text: "q", choices: ["1", "2", "3", "4", "5", "6"])
         XCTAssertEqual(question.choices, ["1", "2", "3", "4"])

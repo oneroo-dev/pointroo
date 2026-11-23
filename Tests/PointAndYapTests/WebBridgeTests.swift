@@ -580,4 +580,180 @@ final class WebBridgeTests: XCTestCase {
         XCTAssertEqual(try result(subject, "settings.get", ["key": "kitWindow"])["value"] as? Bool, false)
         XCTAssertEqual(try code(subject, "settings.set", ["key": "kitWindow", "value": "no"]), "bad_params")
     }
+
+    private func doneItem(_ id: String, session: String = "s", at: Date?, by: String? = "claude", note: String? = nil) -> Item {
+        var made = Item(id: id, session: session, n: 1, title: "Fix it", body: "body", crops: [], status: "done", at: at)
+        made.by = by
+        made.note = note
+        return made
+    }
+
+    func testDoneRecentGivesDoneItemsNewestFirstWithDoneAt() throws {
+        let base = Date(timeIntervalSince1970: 1_800_000_000)
+        let items = [
+            doneItem("old#1", at: base),
+            item("open#1"),
+            doneItem("new#1", at: base.addingTimeInterval(600), note: "fixed it"),
+            item("trashed#1", status: "trashed"),
+            doneItem("undated#1", at: nil),
+            doneItem("mid#1", at: base.addingTimeInterval(300)),
+        ]
+        let entries = try XCTUnwrap(result(bridge(items), "done.recent")["items"] as? [[String: Any]])
+        XCTAssertEqual(entries.map { $0["id"] as? String }, ["new#1", "mid#1", "old#1", "undated#1"])
+        XCTAssertEqual(entries.first?["doneAt"] as? String, ISO8601DateFormatter().string(from: base.addingTimeInterval(600)))
+        XCTAssertEqual(entries.first?["note"] as? String, "fixed it")
+        XCTAssertEqual(entries.first?["by"] as? String, "claude")
+        XCTAssertNil(entries.last?["doneAt"])
+    }
+
+    func testDoneRecentLimitDefaultsToTenAndIsChecked() throws {
+        let base = Date(timeIntervalSince1970: 1_800_000_000)
+        let items = (0..<60).map { doneItem("d\($0)#1", at: base.addingTimeInterval(Double($0))) }
+        let subject = bridge(items)
+        XCTAssertEqual((try result(subject, "done.recent")["items"] as? [Any])?.count, 10)
+        let three = try XCTUnwrap(result(subject, "done.recent", ["limit": 3])["items"] as? [[String: Any]])
+        XCTAssertEqual(three.map { $0["id"] as? String }, ["d59#1", "d58#1", "d57#1"])
+        XCTAssertEqual((try result(subject, "done.recent", ["limit": 50])["items"] as? [Any])?.count, 50)
+        for bad: Any in [0, 51, -1, 2.5, "5", true] {
+            XCTAssertEqual(try code(subject, "done.recent", ["limit": bad]), "bad_params", "\(bad)")
+        }
+    }
+
+    func testDoneRecentCarriesTheBeforeAndAfterPictureAddresses() throws {
+        let sessionId = "done-recent-session"
+        let folder = Paths.root.appendingPathComponent(sessionId)
+        try? FileManager.default.removeItem(at: folder)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try FileManager.default.createDirectory(at: folder.appendingPathComponent("crops"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: folder.appendingPathComponent("after"), withIntermediateDirectories: true)
+        try Data("jpg".utf8).write(to: folder.appendingPathComponent("crops/01.jpg"))
+        try Data("jpg".utf8).write(to: folder.appendingPathComponent("after/01.jpg"))
+        var withPictures = doneItem("\(sessionId)#1", session: sessionId, at: Date(timeIntervalSince1970: 1_800_000_000))
+        withPictures.crops = [folder.appendingPathComponent("crops/01.jpg")]
+        withPictures.project = "/work/app"
+        let plain = doneItem("plain#1", session: "no-such-session", at: Date(timeIntervalSince1970: 1_700_000_000))
+        let entries = try XCTUnwrap(result(bridge([withPictures, plain]), "done.recent")["items"] as? [[String: Any]])
+        XCTAssertEqual(entries[0]["cropURLs"] as? [String], [WebImages.url(session: sessionId, relative: "crops/01.jpg")])
+        XCTAssertEqual(entries[0]["afterURL"] as? String, WebImages.url(session: sessionId, relative: "after/01.jpg"))
+        XCTAssertEqual(entries[0]["project"] as? String, "/work/app")
+        XCTAssertNil(entries[1]["afterURL"])
+        XCTAssertEqual(entries[1]["cropURLs"] as? [String], [])
+    }
+
+    private func writeRecording(_ sessionId: String) throws -> URL {
+        let folder = Paths.root.appendingPathComponent(sessionId)
+        try? FileManager.default.removeItem(at: folder)
+        try FileManager.default.createDirectory(at: folder.appendingPathComponent("frames"), withIntermediateDirectories: true)
+        let events = """
+        {"started":"2026-10-17T14:20:00Z","duration":6,"samples":[],
+         "frames":[{"file":"frames/001.jpg","t":0,"display":{"x":0,"y":0,"w":1440,"h":900},"scale":2,"reason":"start"},
+                   {"file":"frames/002.jpg","t":3,"display":{"x":0,"y":0,"w":1440,"h":900},"scale":2,"reason":"point"}],
+         "points":[
+          {"index":0,"t":0.5,"end":1.6,"at":{"x":385,"y":224},"kind":"dwell","app":"Example","window":"Settings","url":"https://example.com/a",
+           "element":{"role":"AXButton","title":"Save","path":["AXApplication 'Example'"]}},
+          {"index":1,"t":2,"end":3,"at":{"x":10,"y":20},"kind":"dwell"}]}
+        """
+        try Data(events.utf8).write(to: folder.appendingPathComponent("events.json"))
+        let words = #"[{"text":"Make","start":0.2,"end":0.4},{"text":"it","start":0.4,"end":0.5},{"text":"blue.","start":0.5,"end":0.9}]"#
+        try Data(words.utf8).write(to: folder.appendingPathComponent("transcript.json"))
+        try Data("jpg".utf8).write(to: folder.appendingPathComponent("frames/001.jpg"))
+        return folder
+    }
+
+    func testSessionGetReadsAWholeRecording() throws {
+        let sessionId = "session-get-session"
+        let folder = try writeRecording(sessionId)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let reply = try result(bridge(), "session.get", ["session": sessionId])
+        XCTAssertEqual(reply["session"] as? String, sessionId)
+        XCTAssertEqual(reply["started"] as? String, "2026-10-17T14:20:00Z")
+        XCTAssertEqual(reply["duration"] as? Double, 6)
+        let said = try XCTUnwrap(reply["said"] as? [[String: Any]])
+        XCTAssertEqual(said.map { $0["text"] as? String }, ["Make", "it", "blue."])
+        XCTAssertEqual(said[2]["start"] as? Double, 0.5)
+        XCTAssertEqual(said[2]["end"] as? Double, 0.9)
+        let points = try XCTUnwrap(reply["points"] as? [[String: Any]])
+        XCTAssertEqual(points.count, 2)
+        XCTAssertEqual(points[0]["at"] as? Double, 0.5)
+        XCTAssertEqual(points[0]["x"] as? Double, 385)
+        XCTAssertEqual(points[0]["y"] as? Double, 224)
+        XCTAssertEqual(points[0]["app"] as? String, "Example")
+        XCTAssertEqual(points[0]["window"] as? String, "Settings")
+        XCTAssertEqual(points[0]["url"] as? String, "https://example.com/a")
+        XCTAssertEqual(points[0]["element"] as? String, "AXButton \"Save\"")
+        XCTAssertNil(points[1]["app"])
+        XCTAssertNil(points[1]["element"])
+        XCTAssertEqual(reply["frames"] as? [String], [WebImages.url(session: sessionId, relative: "frames/001.jpg")], "only frames that exist")
+        XCTAssertEqual(reply["items"] as? [String], ["\(sessionId)#1"])
+    }
+
+    func testSessionGetRefusesBadNamesAndMissingRecordings() throws {
+        let subject = bridge()
+        for bad: Any in ["../etc", "a/b", "..", "x..y", "", 5] {
+            XCTAssertEqual(try code(subject, "session.get", ["session": bad]), "bad_params", "\(bad)")
+        }
+        XCTAssertEqual(try code(subject, "session.get", [:]), "bad_params")
+        XCTAssertEqual(try code(subject, "session.get", ["session": "no-such-recording"]), "not_found")
+    }
+
+    private func snoozeBridge(at clock: TestClock) -> WebBridge {
+        WebBridge(defaults: defaults, loadItems: { [] }, now: { clock.date })
+    }
+
+    private final class TestClock {
+        var date: Date
+        init(_ date: Date) { self.date = date }
+    }
+
+    func testQuestionsLaterHidesTheQuestionUntilTheTimeThenBringsItBack() throws {
+        try? FileManager.default.removeItem(at: Questions.folder)
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        let clock = TestClock(start)
+        let question = Questions.ask(project: "alpha", cwd: "/w/alpha", agent: "claude", text: "Blue or gray?", choices: [], now: start)
+        let subject = snoozeBridge(at: clock)
+        let reply = try result(subject, "questions.later", ["id": question.id, "minutes": 10])
+        XCTAssertEqual(reply["snoozed"] as? Bool, true)
+        XCTAssertEqual(reply["until"] as? Double, start.addingTimeInterval(600).timeIntervalSince1970)
+        XCTAssertEqual((try result(subject, "questions.list")["questions"] as? [Any])?.count, 0)
+        clock.date = start.addingTimeInterval(599)
+        XCTAssertEqual((try result(subject, "questions.list")["questions"] as? [Any])?.count, 0)
+        clock.date = start.addingTimeInterval(600)
+        let back = try XCTUnwrap(result(subject, "questions.list")["questions"] as? [[String: Any]])
+        XCTAssertEqual(back.map { $0["id"] as? String }, [question.id])
+        XCTAssertNil(Questions.get(id: question.id)?.answer)
+    }
+
+    func testQuestionsLaterDefaultsToThirtyMinutes() throws {
+        try? FileManager.default.removeItem(at: Questions.folder)
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        let question = Questions.ask(project: "alpha", cwd: "/w/alpha", agent: "claude", text: "Which?", choices: [], now: start)
+        let reply = try result(snoozeBridge(at: TestClock(start)), "questions.later", ["id": question.id])
+        XCTAssertEqual(reply["until"] as? Double, start.addingTimeInterval(1800).timeIntervalSince1970)
+    }
+
+    func testQuestionsLaterChecksMinutesAndTheQuestion() throws {
+        try? FileManager.default.removeItem(at: Questions.folder)
+        let question = Questions.ask(project: "alpha", cwd: "/w/alpha", agent: "claude", text: "Which?", choices: [])
+        let subject = bridge()
+        for bad: Any in [0, 1441, -5, 1.5, "30", false] {
+            XCTAssertEqual(try code(subject, "questions.later", ["id": question.id, "minutes": bad]), "bad_params", "\(bad)")
+        }
+        XCTAssertEqual(try code(subject, "questions.later", [:]), "bad_params")
+        XCTAssertEqual(try code(subject, "questions.later", ["id": ""]), "bad_params")
+        XCTAssertEqual(try code(subject, "questions.later", ["id": UUID().uuidString]), "not_found")
+        XCTAssertEqual(try code(subject, "questions.later", ["id": "../x"]), "not_found")
+        XCTAssertEqual((try result(subject, "questions.list")["questions"] as? [Any])?.count, 1, "bad calls snooze nothing")
+        _ = Questions.answer(id: question.id, text: "Blue")
+        XCTAssertEqual(try code(subject, "questions.later", ["id": question.id]), "not_found", "an answered question cannot be snoozed")
+        XCTAssertEqual(try code(subject, "questions.later", ["id": question.id, "minutes": 1440]), "not_found")
+    }
+
+    func testQuestionsLaterAcceptsTheLargestAllowedMinutes() throws {
+        try? FileManager.default.removeItem(at: Questions.folder)
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        let question = Questions.ask(project: "alpha", cwd: "/w/alpha", agent: "claude", text: "Which?", choices: [], now: start)
+        let reply = try result(snoozeBridge(at: TestClock(start)), "questions.later", ["id": question.id, "minutes": 1440])
+        XCTAssertEqual(reply["until"] as? Double, start.addingTimeInterval(86400).timeIntervalSince1970)
+        XCTAssertEqual(try result(snoozeBridge(at: TestClock(start)), "questions.later", ["id": question.id, "minutes": 1])["snoozed"] as? Bool, true)
+    }
 }
