@@ -28,13 +28,14 @@ enum MCPServer {
     projects: you get the ones for the folder you run in, plus the ones not routed anywhere (scope "all" shows every project's). \
     To listen for new items without the user pasting anything, call wait_for_next: it waits until an item for this project \
     arrives and returns it like get_open_items; it returns after up to 50 s with nothing new, so call it again in a loop: \
-    do the item, mark_done, then call wait_for_next again. When you need an answer from the user, call ask_user; if it \
+    do the item, mark_done, then call wait_for_next again. Pass commit and branch to mark_done when you made one. \
+    Urgent items come first. When you need an answer from the user, call ask_user; if it \
     says there is no answer yet, carry on and call it again with the question_id it gave you.
     """
 
     static let tools: [[String: Any]] = [
         ["name": "get_open_items",
-         "description": "The open items of the user's Pointroo queue, oldest first, each with its id, what they said, the elements they pointed at and its crop (red ring = cursor, yellow box = element). By default they are marked in progress by you, so no other agent gets them; finish each with mark_done.",
+         "description": "The open items of the user's Pointroo queue, urgent ones first and then oldest first, each with its id, what they said, the elements they pointed at and its crop (red ring = cursor, yellow box = element). By default they are marked in progress by you, so no other agent gets them; finish each with mark_done.",
          "inputSchema": ["type": "object", "properties": [
             "limit": ["type": "integer", "description": "How many, default 5"],
             "take": ["type": "boolean", "description": "Mark them in progress by you, default true; false only looks"],
@@ -56,7 +57,9 @@ enum MCPServer {
          "description": "Mark items done once the change is made, so they are never handed out again.",
          "inputSchema": ["type": "object", "required": ["ids"], "properties": [
             "ids": ["type": "array", "items": ["type": "string"], "description": "Item ids, e.g. 2026-10-17_164301#2"],
-            "note": ["type": "string", "description": "One line: what you changed (file, commit)"]]]],
+            "note": ["type": "string", "description": "One line: what you changed (file, commit)"],
+            "commit": ["type": "string", "description": "The commit you made, 7 to 40 hex characters (optional; pass it when you made one)"],
+            "branch": ["type": "string", "description": "The branch it is on, no spaces, at most 200 characters (optional; pass it when you made one)"]]]],
         ["name": "start_items",
          "description": "Mark specific open items in progress by you (after looking with take false), so no other agent does them. Refuses items done or in progress by another agent.",
          "inputSchema": ["type": "object", "required": ["ids"], "properties": [
@@ -123,6 +126,9 @@ enum MCPServer {
         let tl = try? String(contentsOf: d.appendingPathComponent("session.md"), encoding: .utf8)
         var body = "Recording \(d.lastPathComponent), folder \(d.path)\n\n"
         body += tl ?? "This session has not been processed yet."
+        for item in Items.items(in: d, state: Items.readState(d)).items {
+            if let line = QueueRules.commitLine(item) { body += "\n\nItem \(item.id) was finished with \(line)." }
+        }
         body += "\n\nThe work items of this session come from get_open_items; finish each with mark_done."
         var content: [[String: Any]] = [["type": "text", "text": body]]
         if images {
@@ -166,7 +172,10 @@ enum MCPServer {
         var content: [[String: Any]] = [["type": "text", "text":
             "\(items.count) open item\(items.count == 1 ? "" : "s")\(take ? ", now in progress by you" : ""). Fix each, then call mark_done with its id right away: an item you leave unmarked stays open for the user and comes back to another agent in two hours."]]
         for i in items {
-            var t = "### Item \(i.id)\n\n\(i.body)\n\nWhen this is fixed, call mark_done with id \"\(i.id)\" (the user sees it as done)."
+            var t = "### Item \(i.id)\(i.priority == "urgent" ? " (URGENT, the user said so)" : "")\n\n\(i.body)\n\nWhen this is fixed, call mark_done with id \"\(i.id)\" (the user sees it as done)."
+            for repeated in i.alsoSaid {
+                t += "\n\nAlso said (the same thing again in a later recording, folded into this item; marking this one done closes it too) \(repeated)"
+            }
             if let note = i.note, !note.isEmpty { t += "\n\nNote from \(i.by ?? "an agent") when it gave this back: \(note)" }
             content.append(["type": "text", "text": t])
             if images {
@@ -189,9 +198,12 @@ enum MCPServer {
             if let by = i.by, i.status != "open" { l += " by \(by)" }
             if let at = i.at, i.status != "open" { l += " since \(f.string(from: at))" }
             l += "]"
+            if i.priority == "urgent" { l += " URGENT" }
+            if let original = i.duplicateOf { l += " (duplicate of \(original), not handed out on its own)" }
             if let project = i.project { l += " (project \(Projects.name(for: project)))" }
             l += " \"\(i.title)…\""
             if let n = i.note, !n.isEmpty { l += ", note: \(n)" }
+            if let line = QueueRules.commitLine(i) { l += ", \(line)" }
             return l
         }
         let c = (all.filter { $0.status == "open" }.count, all.filter { $0.status == "in_progress" }.count, all.filter { $0.status == "done" }.count)
@@ -263,7 +275,8 @@ final class MCPConnection {
             let seconds = (a["timeout_seconds"] as? Int) ?? (a["timeout_seconds"] as? Double).map { Int($0) } ?? MCPServer.defaultWait
             return waitForNext(timeout: MCPServer.waitTimeout(seconds), images: a["images"] as? Bool ?? true)
         case "ask_user": return askUser(a)
-        case "mark_done": return setItems(a["ids"], status: "done", note: a["note"] as? String)
+        case "mark_done": return setItems(a["ids"], status: "done", note: a["note"] as? String,
+                                          commit: a["commit"], branch: a["branch"])
         case "start_items": return setItems(a["ids"], status: "in_progress", note: nil)
         case "list_items": return MCPServer.listItems(a["status"] as? String)
         case "release_items": return setItems(a["ids"], status: "open", note: a["note"] as? String)
@@ -301,12 +314,23 @@ final class MCPConnection {
         return MCPServer.handOut(items, take: take, images: images)
     }
 
-    func setItems(_ raw: Any?, status: String, note: String?) -> [String: Any] {
+    func setItems(_ raw: Any?, status: String, note: String?, commit: Any? = nil, branch: Any? = nil) -> [String: Any] {
         let ids = (raw as? [String]) ?? (raw as? String).map { [$0] } ?? []
         guard !ids.isEmpty else { return MCPServer.error("ids missing") }
-        let r = Items.set(ids, status: status, agent: agent, note: note)
+        if let commit {
+            guard let text = commit as? String, QueueRules.isValidCommit(text) else {
+                return MCPServer.error("commit must be 7 to 40 hex characters (the commit id). Nothing was changed.")
+            }
+        }
+        if let branch {
+            guard let text = branch as? String, QueueRules.isValidBranch(text) else {
+                return MCPServer.error("branch must have no spaces or new lines and be at most 200 characters. Nothing was changed.")
+            }
+        }
+        let r = Items.set(ids, status: status, agent: agent, note: note, commit: commit as? String, branch: branch as? String)
         let verb = ["done": "Done", "in_progress": "In progress by you"][status] ?? "Back in the queue"
         var s = r.changed.isEmpty ? "" : "\(verb): \(r.changed.joined(separator: ", "))."
+        if !r.closedRepeats.isEmpty { s += " Also closed (the same thing said again): \(r.closedRepeats.joined(separator: ", "))." }
         if !r.missing.isEmpty { s += (s.isEmpty ? "" : " ") + "Not changed: \(r.missing.joined(separator: ", "))." }
         return r.changed.isEmpty ? MCPServer.error(s) : MCPServer.text(s)
     }
