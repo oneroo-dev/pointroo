@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { RooButton } from '@roo/kit/controls'
-import { RooChip, RooFormSection, RooIcon, RooKbd, RooListRow, RooStateMark, RooTooltip } from '@roo/kit'
+import { RooChip, RooFormSection, RooIcon, RooListRow, RooStateMark, RooTooltip } from '@roo/kit'
 import type { Item } from '../data/types'
 import { projectIdFor, tilesFor } from '../data/projects'
 import { markFor, pointsWord, sentToLine } from './words'
@@ -74,6 +74,7 @@ const sentLine = computed(() => (props.item.state === 'working' && props.item.ag
         <ProjectTiles
           v-if="!isDone"
           :size="notSent ? 'large' : 'small'"
+          layout="list"
           :tiles="choice.tiles"
           :more-rows="choice.rest"
           :selected-id="notSent ? undefined : currentId"
@@ -88,10 +89,10 @@ const sentLine = computed(() => (props.item.state === 'working' && props.item.ag
       <RooButton v-if="isDone" variant="secondary" size="sm">Open again</RooButton>
       <template v-else>
         <RooButton variant="secondary" size="sm">Copy for an agent</RooButton>
-        <RooButton v-if="item.state === 'waiting' || notSent" variant="ghost" size="sm"><span class="detail-action">Mark done<RooKbd keys="D" /></span></RooButton>
+        <RooTooltip v-if="item.state === 'waiting' || notSent" text="Mark done" shortcut="D"><RooButton variant="ghost" size="sm">Mark done</RooButton></RooTooltip>
       </template>
       <span class="detail-spacer" />
-      <RooButton variant="ghost" size="sm"><span class="detail-action">Move to Trash<RooKbd keys="Delete" /></span></RooButton>
+      <RooTooltip text="Move to Trash" shortcut="Delete"><RooButton variant="ghost" size="sm">Move to Trash</RooButton></RooTooltip>
     </footer>
   </article>
 </template>
@@ -152,12 +153,6 @@ const sentLine = computed(() => (props.item.state === 'working' && props.item.ag
   align-items: center;
   gap: var(--roo-space-item);
   margin-top: auto;
-}
-
-.detail-action {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--roo-space-item);
 }
 
 .detail-spacer {

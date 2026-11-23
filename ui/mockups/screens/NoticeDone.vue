@@ -5,6 +5,6 @@ import Stage from '../parts/Stage.vue'
 
 <template>
   <Stage>
-    <RooToast title="Tinkeroo is done" message="Moved Delete left, made it red." tone="ok" undo undo-label="Reply" action-label="Looks good" :count="2" :width="360" />
+    <RooToast title="Tinkeroo is done" message="Moved Delete left." tone="ok" undo undo-label="Reply" action-label="Looks good" :count="2" :width="360" />
   </Stage>
 </template>

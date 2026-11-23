@@ -32,7 +32,7 @@ onBeforeUnmount(() => clearInterval(hold))
     <p v-if="kind === 'picker-auto'" class="picker-note">
       <RooCountdown :ends-at="endsAt" :warn-seconds="0" suffix="until it sends" />
     </p>
-    <ProjectTiles size="large" :tiles="choice.tiles" :more-rows="choice.rest" label="Which project is this for?" show-keys show-more />
+    <ProjectTiles size="large" layout="list" :tiles="choice.tiles" :more-rows="choice.rest" label="Which project is this for?" show-keys show-more />
     <p class="picker-note">
       <RooKbd keys="Esc" />
       <span>Keep it not sent</span>
@@ -59,7 +59,7 @@ onBeforeUnmount(() => clearInterval(hold))
     <template v-else-if="kind === 'sent-undo'">
       <RooStateMark state="ok" label="Sent to Pointroo" />
       <span class="pill-spacer" />
-      <RooButton variant="ghost" size="sm"><span class="pill-action">Undo<RooKbd keys="Mod+Z" /></span></RooButton>
+      <RooTooltip text="Undo" shortcut="Mod+Z"><RooButton variant="ghost" size="sm">Undo</RooButton></RooTooltip>
     </template>
     <template v-else-if="kind === 'kept'">
       <RooStateMark state="muted" label="Kept in the queue. Send it from Pointroo later." />
@@ -128,11 +128,4 @@ onBeforeUnmount(() => clearInterval(hold))
   margin: 0;
   color: var(--roo-muted);
   font-size: var(--roo-p-size-12);
-}
-
-.pill-action {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--roo-space-item);
-}
-</style>
+}</style>
