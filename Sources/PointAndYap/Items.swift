@@ -133,7 +133,7 @@ enum Items {
         var l = "- [\(p.index + 1)] \(p.kind) in \(p.app ?? "?")"
         if let w = p.window { l += ", window \"\(w)\"" }
         if let u = p.url { l += ", \(u)" }
-        l += ": \(Builder.describe(p))"
+        l += ": \(Builder.describe(p))\(Element.webText(p.element))"
         if let path = p.element?.path, !path.isEmpty { l += "; inside \(path.suffix(5).joined(separator: " > "))" }
         let crop = dir.appendingPathComponent(String(format: "crops/%02d.jpg", p.index + 1))
         if FileManager.default.fileExists(atPath: crop.path) { l += "; crop `\(crop.path)`"; crops.append(crop) }
