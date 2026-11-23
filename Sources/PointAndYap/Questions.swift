@@ -13,6 +13,8 @@ struct Question: Codable, Equatable {
     var asked: Date
     var answer: String?
     var answered: Date?
+    /// Set by "later": the question stays out of the pending list until this time. Files written before this existed have none.
+    var snoozedUntil: Date? = nil
 }
 
 /// The questions folder is the only link between the app (which will show them) and whichever process runs the tool.
@@ -53,9 +55,24 @@ enum Questions {
         return read(valid)
     }
 
-    /// Unanswered questions, oldest first.
-    static func pending() -> [Question] {
-        all().filter { $0.answer == nil }.sorted { $0.asked < $1.asked }
+    /// Hides an unanswered question for `minutes` from `now`. False when the question is gone or already answered.
+    @discardableResult
+    static func snooze(id: String, minutes: Int, now: Date = Date()) -> Bool {
+        guard let valid = validID(id) else { return false }
+        return Items.locked {
+            guard var question = read(valid), question.answer == nil else { return false }
+            question.snoozedUntil = now.addingTimeInterval(TimeInterval(minutes) * 60)
+            return writeUnlocked(question)
+        }
+    }
+
+    /// Unanswered questions that are not snoozed at `now`, oldest first.
+    static func pending(now: Date = Date()) -> [Question] {
+        all().filter { question in
+            guard question.answer == nil else { return false }
+            guard let until = question.snoozedUntil else { return true }
+            return until <= now
+        }.sorted { $0.asked < $1.asked }
     }
 
     static func remove(id: String) {

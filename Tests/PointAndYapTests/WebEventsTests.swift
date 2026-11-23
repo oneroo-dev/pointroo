@@ -133,6 +133,24 @@ final class WebEventsTests: XCTestCase {
         XCTAssertEqual(result[0].data["sessions"] as? Int, 2)
     }
 
+    func testASnoozedQuestionEmitsWhenItLeavesAndAgainWhenItComesBack() {
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        var snoozed = question("q1")
+        snoozed.snoozedUntil = start.addingTimeInterval(600)
+        func visible(at now: Date) -> [Question] {
+            [snoozed].filter { $0.snoozedUntil.map { $0 <= now } ?? true }
+        }
+        var events = WebEvents()
+        XCTAssertEqual(events.questions([question("q1")]).count, 1)
+        let hidden = events.questions(visible(at: start))
+        XCTAssertEqual(hidden.map(\.name), ["questions.changed"])
+        XCTAssertEqual(hidden[0].data["count"] as? Int, 0)
+        XCTAssertTrue(events.questions(visible(at: start.addingTimeInterval(599))).isEmpty)
+        let back = events.questions(visible(at: start.addingTimeInterval(600)))
+        XCTAssertEqual(back.map(\.name), ["questions.changed"])
+        XCTAssertEqual(back[0].data["count"] as? Int, 1)
+    }
+
     func testPointCountChangeEmits() {
         var events = WebEvents()
         _ = events.recording(phase: "recording", pointCount: 0)
