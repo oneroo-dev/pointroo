@@ -1,4 +1,5 @@
-import type { Project, ProjectTile } from './types'
+import { orderProjects, projectIdFor as findProjectId, tilesFor as buildTiles } from '../../src/parts/projects'
+import type { Project, ProjectTile } from '../../src/parts/types'
 
 export const projects: Project[] = [
   { id: 'tinkeroo', name: 'Tinkeroo', count: 3, listening: true, folder: '~/Workspace/tinkeroo', recentRank: 1 },
@@ -10,23 +11,13 @@ export const projects: Project[] = [
 ]
 
 /** The sidebar and the filter chips: projects that listen first, then the most recently used. */
-export const orderedProjects: Project[] = [...projects].sort((first, second) => {
-  if (first.listening !== second.listening) return first.listening ? -1 : 1
-  return first.recentRank - second.recentRank
-})
+export const orderedProjects: Project[] = orderProjects(projects)
 
-function toTile(project: Project, suggestedId: string | undefined): ProjectTile {
-  return { id: project.id, name: project.name, suggested: project.id === suggestedId, live: project.listening }
-}
-
-/** Tiles in the order of the design: the app's guess, then projects that listen, then recent ones. Five show, the rest go behind More. */
+/** Tiles in the order of the design, from the sample projects. */
 export function tilesFor(suggestedId?: string, limit = 5): { tiles: ProjectTile[]; rest: ProjectTile[] } {
-  const guess = projects.filter((project) => project.id === suggestedId)
-  const others = orderedProjects.filter((project) => project.id !== suggestedId)
-  const all = [...guess, ...others].map((project) => toTile(project, suggestedId))
-  return { tiles: all.slice(0, limit), rest: all.slice(limit) }
+  return buildTiles(projects, suggestedId, limit)
 }
 
 export function projectIdFor(name: string | null): string | undefined {
-  return projects.find((project) => project.name === name)?.id
+  return findProjectId(projects, name)
 }

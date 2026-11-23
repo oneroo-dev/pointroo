@@ -5,7 +5,7 @@ import { RooCountdown, RooIcon, RooKbd, RooProgressLine, RooStateMark } from '@r
 import { tilesFor } from '../data/projects'
 import { notSent } from '../data/items'
 import FloatingSurface from './FloatingSurface.vue'
-import ProjectTiles from './ProjectTiles.vue'
+import ProjectTiles from '../../src/parts/ProjectTiles.vue'
 
 export type PillKind = 'recording' | 'writing' | 'sent' | 'sent-undo' | 'reply' | 'error' | 'kept' | 'picker' | 'picker-auto'
 

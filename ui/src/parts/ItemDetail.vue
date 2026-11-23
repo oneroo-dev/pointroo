@@ -1,23 +1,40 @@
 <script setup lang="ts">
+// One recording in full. It draws the item it is given and raises an event for every click.
 import { computed } from 'vue'
 import { RooButton } from '@roo/kit/controls'
 import { RooChip, RooFormSection, RooIcon, RooListRow, RooStateMark, RooTooltip } from '@roo/kit'
-import type { Item } from '../data/types'
-import { projectIdFor, tilesFor } from '../data/projects'
+import type { Item, Project } from './types'
+import { projectIdFor, tilesFor } from './projects'
 import { markFor, pointsWord, sentToLine } from './words'
 import ProjectTiles from './ProjectTiles.vue'
 import QuestionControls from './QuestionControls.vue'
 
-const props = defineProps<{ item: Item }>()
+const props = defineProps<{ item: Item; projects: Project[] }>()
+
+const emit = defineEmits<{
+  send: [itemId: string, projectId: string]
+  move: [itemId: string, projectId: string]
+  done: [itemId: string]
+  trash: [itemId: string]
+  reopen: [itemId: string]
+  copy: [itemId: string]
+  answer: [item: Item, text: string]
+}>()
 
 const mark = computed(() => markFor(props.item))
 const isDone = computed(() => props.item.state === 'done' || props.item.state === 'done-by-you')
 const notSent = computed(() => props.item.state === 'not-sent')
 const headline = computed(() => [props.item.project ?? 'Not sent yet', mark.value.label, props.item.agent].filter(Boolean).join(' · '))
 const saidParts = computed(() => props.item.said.split(/(\[\d+\])/).filter((part) => part !== ''))
-const currentId = computed(() => projectIdFor(props.item.project))
-const choice = computed(() => tilesFor(notSent.value ? props.item.suggested : currentId.value))
+const currentId = computed(() => projectIdFor(props.projects, props.item.project))
+const choice = computed(() => tilesFor(props.projects, notSent.value ? props.item.suggested : currentId.value))
 const sentLine = computed(() => (props.item.state === 'working' && props.item.agent ? `${props.item.agent} is on it.` : sentToLine(props.item)))
+const ageTip = computed(() => props.item.atText ?? props.item.age)
+
+function pick(projectId: string): void {
+  if (notSent.value) emit('send', props.item.id, projectId)
+  else emit('move', props.item.id, projectId)
+}
 </script>
 
 <template>
@@ -27,19 +44,22 @@ const sentLine = computed(() => (props.item.state === 'working' && props.item.ag
       <p class="detail-line">
         <RooStateMark :state="mark.state" :label="mark.label" />
         <span>{{ headline.replace(`${mark.label} · `, '').replace(` · ${mark.label}`, '') }}</span>
-        <RooTooltip text="Mon 23 Nov 2026, 14:07 AEDT"><span class="detail-age">{{ item.age }}</span></RooTooltip>
+        <RooTooltip :text="ageTip"><span class="detail-age">{{ item.age }}</span></RooTooltip>
       </p>
     </header>
 
     <RooFormSection v-if="item.question" title="The agent asks">
-      <QuestionControls :question="item.question.text" :choices="item.question.choices" show-later />
+      <QuestionControls :question="item.question.text" :choices="item.question.choices" show-later @answer="(text) => emit('answer', item, text)" />
     </RooFormSection>
 
     <RooFormSection title="What you said">
       <p class="detail-said roo-selectable">
-        <template v-for="(part, index) in saidParts" :key="index">
-          <RooChip v-if="/^\[\d+\]$/.test(part)" size="small" mono :label="part.slice(1, -1)" />
-          <template v-else>{{ part }}</template>
+        <template v-if="item.said === ''">No speech.</template>
+        <template v-else>
+          <template v-for="(part, index) in saidParts" :key="index">
+            <RooChip v-if="/^\[\d+\]$/.test(part)" size="small" mono :label="part.slice(1, -1)" />
+            <template v-else>{{ part }}</template>
+          </template>
         </template>
       </p>
     </RooFormSection>
@@ -48,7 +68,10 @@ const sentLine = computed(() => (props.item.state === 'working' && props.item.ag
       <ul class="detail-crops" aria-label="Crops">
         <li v-for="crop in item.crops" :key="crop.number">
           <RooListRow size="dense" :title="crop.caption" tabindex="0">
-            <template #tile><RooIcon name="image" :size="16" /></template>
+            <template #tile>
+              <img v-if="crop.url" class="thumb" :src="crop.url" alt="" />
+              <RooIcon v-else name="image" :size="16" />
+            </template>
             <template #title-prefix><RooChip size="small" mono :label="String(crop.number)" /></template>
           </RooListRow>
         </li>
@@ -59,8 +82,22 @@ const sentLine = computed(() => (props.item.state === 'working' && props.item.ag
       <div class="detail-sent">
         <p class="detail-said roo-selectable">{{ item.note }}</p>
         <ul class="detail-crops" aria-label="Before and now">
-          <li><RooListRow size="dense" title="Before" subtitle="Cropped when you pointed" tabindex="0"><template #tile><RooIcon name="image" :size="16" /></template></RooListRow></li>
-          <li><RooListRow size="dense" title="Screen now" subtitle="Taken when the agent finished" tabindex="0"><template #tile><RooIcon name="image" :size="16" /></template></RooListRow></li>
+          <li>
+            <RooListRow size="dense" title="Before" subtitle="Cropped when you pointed" tabindex="0">
+              <template #tile>
+                <img v-if="item.crops[0]?.url" class="thumb" :src="item.crops[0]?.url" alt="" />
+                <RooIcon v-else name="image" :size="16" />
+              </template>
+            </RooListRow>
+          </li>
+          <li>
+            <RooListRow size="dense" title="Screen now" subtitle="Taken when the agent finished" tabindex="0">
+              <template #tile>
+                <img v-if="item.afterUrl" class="thumb" :src="item.afterUrl" alt="" />
+                <RooIcon v-else name="image" :size="16" />
+              </template>
+            </RooListRow>
+          </li>
         </ul>
       </div>
     </RooFormSection>
@@ -81,18 +118,19 @@ const sentLine = computed(() => (props.item.state === 'working' && props.item.ag
           :label="notSent ? 'Send to' : 'Move to'"
           show-keys
           show-more
+          @pick="pick"
         />
       </div>
     </RooFormSection>
 
     <footer class="detail-actions">
-      <RooButton v-if="isDone" variant="secondary" size="sm">Open again</RooButton>
+      <RooButton v-if="isDone" variant="secondary" size="sm" @click="emit('reopen', item.id)">Open again</RooButton>
       <template v-else>
-        <RooButton variant="secondary" size="sm">Copy for an agent</RooButton>
-        <RooTooltip v-if="item.state === 'waiting' || notSent" text="Mark done" shortcut="D"><RooButton variant="ghost" size="sm">Mark done</RooButton></RooTooltip>
+        <RooButton variant="secondary" size="sm" @click="emit('copy', item.id)">Copy for an agent</RooButton>
+        <RooTooltip v-if="item.state === 'waiting' || notSent" text="Mark done" shortcut="D"><RooButton variant="ghost" size="sm" @click="emit('done', item.id)">Mark done</RooButton></RooTooltip>
       </template>
       <span class="detail-spacer" />
-      <RooTooltip text="Move to Trash" shortcut="Delete"><RooButton variant="ghost" size="sm">Move to Trash</RooButton></RooTooltip>
+      <RooTooltip text="Move to Trash" shortcut="Delete"><RooButton variant="ghost" size="sm" @click="emit('trash', item.id)">Move to Trash</RooButton></RooTooltip>
     </footer>
   </article>
 </template>
@@ -157,5 +195,13 @@ const sentLine = computed(() => (props.item.state === 'working' && props.item.ag
 
 .detail-spacer {
   flex: 1 1 auto;
+}
+
+.thumb {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
 }
 </style>

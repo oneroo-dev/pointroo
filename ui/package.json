@@ -5,6 +5,8 @@
   "type": "module",
   "description": "Pointroo screens on @roo/kit. Mockups first (mockups/), the approved ones move into src/ as they are.",
   "scripts": {
+    "dev": "vite",
+    "build": "vite build",
     "mockups": "node --import ./scripts/register-resolve.mjs ./scripts/mockups.mjs serve",
     "mockups:build": "node --import ./scripts/register-resolve.mjs ./scripts/mockups.mjs build",
     "kit:strict": "node ${ONEROO_ROOT:-$HOME/Workspace/oneroo}/tools/kit-strict.mjs --app .",
