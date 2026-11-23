@@ -49,7 +49,7 @@ enum Items {
     static func items(in dir: URL, state: ItemState?) -> (source: String, items: [Item]) {
         let id = dir.lastPathComponent
         let source = "session"
-        var out = sessionItem(dir).map { [$0] } ?? []
+        var out = sessionItems(dir)
         for i in out.indices {
             out[i].id = "\(id)#\(out[i].n)"
             out[i].session = id
@@ -85,20 +85,33 @@ enum Items {
             : "Follow-up to \(id). The agent that finished it wrote (quoted): \"\(note)\""
     }
 
-    /// The whole recording as one item: everything said, with [n] where the cursor was, and every click or rest of half
+    /// The recording as items: everything said, with [n] where the cursor was, and every click or rest of half
     /// a second or more (shorter rests are cursor travel; repeats on the same element count once).
-    static func sessionItem(_ dir: URL) -> Item? {
+    /// A spoken "next" splits it into several items (see Split); without one it is a single item.
+    static func sessionItems(_ dir: URL) -> [Item] {
         guard let data = try? Data(contentsOf: dir.appendingPathComponent("events.json")),
-              let events = try? JSONDecoder.iso.decode(SessionEvents.self, from: data) else { return nil }
+              let events = try? JSONDecoder.iso.decode(SessionEvents.self, from: data) else { return [] }
         let words = (try? Data(contentsOf: dir.appendingPathComponent("transcript.json")))
             .flatMap { try? JSONDecoder().decode([Word].self, from: $0) } ?? []
-        guard !words.isEmpty else { return nil }
-        var sents = Builder.sentences(words)
-        _ = Builder.attach(events.points, to: &sents)
-        var lines = ["Said (\(Builder.clock(words[0].start)) to \(Builder.clock(words[words.count - 1].end))): \""
-                     + sents.map { Builder.marked($0, events.points) }.joined(separator: " ") + "\"", "", "Pointed at:"]
+        guard !words.isEmpty else { return [] }
+        let parts = Split.parts(words: words, points: events.points)
+        return parts.enumerated().map { offset, part in item(part, number: offset + 1, events: events, dir: dir) }
+    }
+
+    static func item(_ part: Split.Part, number: Int, events: SessionEvents, dir: URL) -> Item {
+        var sents = Builder.sentences(part.words)
+        _ = Builder.attach(part.points, to: &sents)
+        var lines: [String] = []
+        if let first = part.words.first, let last = part.words.last {
+            lines.append("Said (\(Builder.clock(first.start)) to \(Builder.clock(last.end))): \""
+                         + sents.map { Builder.marked($0, events.points) }.joined(separator: " ") + "\"")
+        } else {
+            lines.append("Said nothing, only pointed.")
+        }
+        lines += ["", "Pointed at:"]
+        let pointed = sents.isEmpty ? part.points.map(\.index) : sents.flatMap(\.points)
         var crops: [URL] = [], last: String?
-        for idx in sents.flatMap(\.points) {
+        for idx in pointed {
             let p = events.points[idx]
             guard p.kind == "click" || p.end - p.t >= 0.5 else { continue }
             let key = [p.element?.role, p.element?.title, p.element?.value, p.element?.identifier].map { $0 ?? "" }.joined(separator: "|")
@@ -107,11 +120,11 @@ enum Items {
             lines.append(pointLine(p, dir, &crops))
         }
         if lines.count == 3 { lines.removeLast(2) }
-        let title = words.prefix(12).map(\.text).joined(separator: " ")
-        var item = Item(id: "", session: "", n: 1, title: title, body: lines.joined(separator: "\n"), crops: crops, status: "open", at: nil)
-        item.said = words.map(\.text).joined(separator: " ")
+        let title = part.words.isEmpty ? "Pointed only" : part.words.prefix(12).map(\.text).joined(separator: " ")
+        var item = Item(id: "", session: "", n: number, title: title, body: lines.joined(separator: "\n"), crops: crops, status: "open", at: nil)
+        item.said = part.words.map(\.text).joined(separator: " ")
         item.priority = QueueRules.isUrgent(item.said) ? "urgent" : nil
-        item.firstElement = QueueRules.elementIdentity(events.points)
+        item.firstElement = QueueRules.elementIdentity(part.points)
         item.duration = events.duration
         return item
     }
