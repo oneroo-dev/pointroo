@@ -1,75 +1,31 @@
-> **Pointroo** is a fork of [Point and Yap](https://github.com/mfmaur/pointandyap) by Marc Maurer (MIT). It adds routing
-> of each recording to the right Claude Code session (by spoken project name, by what is on screen, or a quick picker), a
-> `wait_for_next` listen mode, and a Stop hook, so you do not paste anything. It is its own app (`/Applications/Pointroo.app`,
-> `~/Pointroo`, MCP server `pointroo`) and installs next to Point and Yap without touching it. The rest of this README is
-> still the original text for Point and Yap; where it says `pointandyap` or `PointAndYap`, Pointroo uses `pointroo` and `Pointroo`.
+# Pointroo
 
-<p align="center">
-  <img src="assets/readme-banner.webp" alt="Point and Yap. Show, don't type." width="100%" />
-</p>
-
-<p align="center">
-  <a href="https://pointandyap.com/download?ref=github"><img src="https://img.shields.io/badge/Download_for_Mac-17181B?style=for-the-badge&amp;logo=apple&amp;logoColor=white" alt="Download Point and Yap for Mac" height="44" /></a>
-</p>
-<p align="center"><sub>Free · macOS 26 on Apple silicon · or <code>curl -fsSL https://pointandyap.com/install.sh | sh</code></sub></p>
-
-<p align="center" style="margin-bottom: 8px;">
-  <a href="https://pointandyap.com" title="Visit pointandyap.com"><img src="https://img.shields.io/badge/website-pointandyap.com-24292f?style=flat" alt="Visit pointandyap.com" /></a>
-  &nbsp;
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-24292f?style=flat&amp;logo=github&amp;logoColor=white" alt="MIT License" /></a>
-  &nbsp;
-  <a href="#install"><img src="https://img.shields.io/badge/macOS-26_%C2%B7_Apple_silicon-24292f?style=flat&amp;logo=apple&amp;logoColor=white" alt="macOS 26, Apple silicon" /></a>
-  &nbsp;
-  <a href="#mcp-tools"><img src="https://img.shields.io/badge/MCP-Claude_Code_%2F_Codex_%2F_Cursor-24292f?style=flat" alt="MCP for Claude Code, Codex and Cursor" /></a>
-  &nbsp;
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/changelog-view-24292f?style=flat" alt="Changelog" /></a>
-  &nbsp;
-  <a href="https://github.com/mfmaur/pointandyap/actions/workflows/ci.yml"><img src="https://github.com/mfmaur/pointandyap/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
-</p>
-
-<p align="center">
-  <img src="site/public/media/point-and-yap-loop.gif" alt="Press Control twice, point at a button and say what is wrong; the coding agent fixes it and marks it done" width="100%" />
-</p>
-
-**Point and Yap** is a small Mac app for showing your coding agent what to change. Press Control twice, talk while you
+**Pointroo** is a small Mac menu bar app for showing your coding agent what to change. Press Control twice, talk while you
 point at things on screen, press Control twice again. Each recording becomes an item in a local queue, with what you said,
 the element under the cursor and a cropped screenshot. Claude Code, Codex or Cursor pick it up over MCP, fix it and mark it
 done.
 
-<p align="center"><sub><a href="#install">Install</a> · <a href="#how-it-works">How it works</a> · <a href="#mcp-tools">MCP tools</a> · <a href="#faq">FAQ</a> · <a href="#license">License</a></sub></p>
+Pointroo is a fork of [Point and Yap](https://github.com/mfmaur/pointandyap) by mfmaur (MIT). It is its own app and runs
+next to Point and Yap without touching it. On top of the original it adds:
 
-<table>
-  <tr>
-    <td width="50%"><img src="assets/window.webp" alt="The window: Start recording and the recent recordings with their state" /></td>
-    <td width="50%"><img src="assets/pill.webp" alt="The recording pill: time, esc and Stop" /></td>
-  </tr>
-  <tr>
-    <td width="50%"><img src="assets/settings.webp" alt="Settings: sounds, Control twice, Esc, speech language, coding agents" /></td>
-    <td width="50%"><img src="assets/agent.webp" alt="An agent terminal calling get_open_items and mark_done" /></td>
-  </tr>
-</table>
+- **Routing**: each recording goes to the right project, by the project name you say, by what is on screen, as a follow-up
+  to what an agent just finished, or with a quick picker.
+- **Listen mode**: the `wait_for_next` tool lets a session wait for new items, so you paste nothing.
+- **A Stop hook** that wakes an idle session when items wait for it.
 
 ## Install
 
-Requires macOS 26 or later and a Mac with Apple silicon.
+Requires macOS 26 or later and a Mac with Apple silicon. Pointroo has no download yet, so you build it:
 
 ```bash
-curl -fsSL https://pointandyap.com/install.sh | sh
+bash scripts/build.sh
 ```
 
-or with Homebrew (trust the tap once, then install):
+This builds the app and installs it to `/Applications/Pointroo.app` (bundle id `dev.oneroodev.pointroo`). See
+[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for signing and the dev loop (`bash scripts/dev.sh --watch`).
 
-```bash
-brew trust mfmaur/tap
-brew install --cask mfmaur/tap/point-and-yap
-```
-
-or by hand: download `PointAndYap.dmg` from [pointandyap.com](https://pointandyap.com) or the
-[latest release](https://github.com/mfmaur/pointandyap/releases/latest) and drag Point and Yap into Applications. Every
-build is signed and notarized by Apple; the install script checks the DMG with `spctl` before it copies anything.
-
-Then open it, allow the three permissions it asks for, and answer one question: it lists the coding agents it found and
-asks before connecting them. Connect, or Skip and do it later in Settings.
+Open it, allow the three permissions it asks for, and answer one question: it lists the coding agents it found and asks
+before connecting them. Connect, or Skip and do it later in Settings.
 
 ### Permissions, and why
 
@@ -81,31 +37,47 @@ asks before connecting them. Connect, or Skip and do it later in Settings.
 
 1. Press Control twice (or Start recording). A small pill with the time and Stop stays on top.
 2. Talk and point: rest the cursor on the thing you mean while you say "this", "here", "that one". Clicks count too.
-3. Press Control twice again. A soft sound plays and two lines go on the clipboard for any agent: what is new and how to get it.
-4. The agent calls `get_open_items`, makes the change and calls `mark_done`. The window shows To fix, In progress (by
-   which agent) or Done for each recording.
+3. Press Control twice again. A soft sound plays. If only one project has a live agent session, or you named one, the item
+   goes there. If it is not clear, a picker asks.
+4. The agent calls `get_open_items` (or `wait_for_next`), makes the change and calls `mark_done`. The window shows To fix,
+   In progress (by which agent) or Done for each recording.
 
 Esc while recording cancels it and moves it to the Trash.
+
+### Where an item goes
+
+In this order: the project name you say at the start ("Pointroo, ..."), the project your cursor was on (a page on the
+project's dev host, or a window with the project's name), a follow-up, the only live agent session, then the picker.
+
+A follow-up means: an agent finished an item in a project less than 3 minutes before you started recording, and a session
+is still running in that project. The new item then goes to the same project, and says which item it follows and what the
+agent wrote when it finished.
 
 ### Runs on your Mac
 
 Speech is transcribed by Apple's on-device model. Recordings, screenshots, the queue and the MCP server all live on your
-Mac, in `~/PointAndYap/sessions`. No account, no server, no analytics. The app itself only goes online to check
-pointandyap.com for updates (and macOS fetches Apple's speech model once).
+Mac. No account, no server, no analytics.
 
 Your coding agent is a different matter: when it reads an item, what you said and the crops go to whatever model it uses,
 like anything else you show it.
 
+Data lives in:
+
+- `~/Pointroo/sessions`: the recordings and the queue.
+- `~/Library/Application Support/Pointroo`: projects, live sessions and config backups.
+
 ## MCP tools
 
-`"/Applications/Point and Yap.app/Contents/MacOS/PointAndYap" --mcp` is a local MCP server over stdio, named `pointandyap`. After you say
-Connect, it is added to Claude Code (user scope), Codex (`~/.codex/config.toml`) and Cursor (`~/.cursor/mcp.json`), and a
-skill is linked into `~/.claude/skills` and `~/.agents/skills`. Each config is backed up first to
-`~/Library/Application Support/PointAndYap/backups/`. An existing entry named `pointandyap` that is not ours is left alone.
+`/Applications/Pointroo.app/Contents/MacOS/Pointroo --mcp` is a local MCP server over stdio, named `pointroo`. After you say
+Connect, it is added to Claude Code (user scope), Codex (`~/.codex/config.toml`) and Cursor (`~/.cursor/mcp.json`), and the
+`pointroo` skill is linked into `~/.claude/skills` and `~/.agents/skills`. Each config is backed up first to
+`~/Library/Application Support/Pointroo/backups/`. Pointroo only touches entries named `pointroo`; Point and Yap's entries are
+left alone.
 
 | Tool | What it does |
 | --- | --- |
-| `get_open_items` | The open items, oldest first, with what was said, the elements and the crops. Marks them in progress by the calling agent. |
+| `get_open_items` | The open items for your project, oldest first, with what was said, the elements and the crops. Marks them in progress by the calling agent. |
+| `wait_for_next` | Waits up to 50 s for a new item for your project. Call it again in a loop. |
 | `start_items` | Marks specific open items in progress by you. |
 | `list_items` | Every item with its state: open, in progress (by whom, since when) or done (with the note). |
 | `mark_done` | Marks items done with a one-line note. Done items are never handed out again. |
@@ -120,37 +92,29 @@ the same item.
 For an agent without MCP:
 
 ```bash
-"/Applications/Point and Yap.app/Contents/MacOS/PointAndYap" --items
+/Applications/Pointroo.app/Contents/MacOS/Pointroo --items
 ```
 
 ```bash
-POINTANDYAP_AGENT=my-agent "/Applications/Point and Yap.app/Contents/MacOS/PointAndYap" --done <id> --note "what changed"
+POINTANDYAP_AGENT=my-agent /Applications/Pointroo.app/Contents/MacOS/Pointroo --done <id> --note "what changed"
 ```
 
 ## FAQ
 
-**Does anything leave my Mac?** Point and Yap sends nothing anywhere; it only checks for updates. Your coding agent sends
-what it reads (your words and the crops) to its model, as with anything you give it. See [Runs on your Mac](#runs-on-your-mac).
-
-**Does pointandyap.com track me?** It counts page views, downloads, installer runs and the app's update checks (with
-the app version and country), to know how many people come and use it. No cookies, no tracking script, no IP address
-kept; a visitor is a hash that changes every day.
+**Does anything leave my Mac?** Pointroo sends nothing anywhere. Your coding agent sends what it reads (your words and the
+crops) to its model, as with anything you give it.
 
 **Which agents work?** Claude Code, Codex and Cursor are connected for you. Any MCP client that runs a local stdio server
 works with the command above, and any agent with a shell can use `--items` and `--done`.
 
 **I skipped connecting. How do I connect later?** Settings, Coding agents, Connect now.
 
-**How do I remove it?** Quit it and delete it from Applications. To remove the agent entries: `claude mcp remove pointandyap
---scope user`, the `[mcp_servers.pointandyap]` table in `~/.codex/config.toml`, `pointandyap` in `~/.cursor/mcp.json`, and the `point-and-yap`
-links in `~/.claude/skills` and `~/.agents/skills`. Recordings are in `~/PointAndYap`.
-
-**How do updates work?** From 0.1.2 on, the app checks pointandyap.com every few hours, downloads a new version in the
-background (signed, checked before it is installed) and installs it when you quit; the window shows it with a Restart
-button. Settings has Check for updates.
+**How do I remove it?** Quit it and delete it from Applications. To remove the agent entries: `claude mcp remove pointroo
+--scope user`, the `[mcp_servers.pointroo]` table in `~/.codex/config.toml`, `pointroo` in `~/.cursor/mcp.json`, and the
+`pointroo` links in `~/.claude/skills` and `~/.agents/skills`. Recordings are in `~/Pointroo`.
 
 **Does it work on older Macs or Intel?** Not yet. Only speech-to-text needs macOS 26 (SpeechAnalyzer, Apple's on-device
-model with word timings, which lines up each word with where the cursor was). Wider support is planned.
+model with word timings, which lines up each word with where the cursor was).
 
 **Can I build it myself?** Yes: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md). `swift test` runs the tests over a synthetic
 recording.
@@ -162,6 +126,4 @@ Issues and pull requests are welcome: [CONTRIBUTING.md](CONTRIBUTING.md). Report
 
 ## License
 
-[MIT](LICENSE). Provided as is, without warranty of any kind.
-
-I made Point and Yap because it helps me build. Maybe it helps you too.
+[MIT](LICENSE). Provided as is, without warranty of any kind. Pointroo is a fork of Point and Yap by mfmaur (MIT).

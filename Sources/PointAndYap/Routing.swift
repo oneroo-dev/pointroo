@@ -35,7 +35,8 @@ struct LiveSession: Codable, Equatable {
 struct RouteInfo: Codable, Equatable {
     var project: String
     var path: String
-    var how: String       // said, screen, only, picked
+    var how: String       // said, screen, followup, only, picked
+    var follows: String? = nil   // for "followup": the id of the item the agent finished just before
 }
 
 enum LiveSessions {
@@ -144,16 +145,41 @@ enum Projects {
 }
 
 enum Router {
-    struct Result: Equatable { var path: String; var how: String }
+    struct Result: Equatable { var path: String; var how: String; var follows: String? = nil }
 
-    /// Said name first, then what was on screen, then the only live session.
-    static func route(words: [String], points: [PointEvent], projects: [Project], live: [LiveSession] = []) -> Result? {
+    /// How long after an agent finishes an item a new recording still counts as a follow-up to it.
+    static let followUpWindow: TimeInterval = 180
+
+    /// Said name first, then what was on screen, then a follow-up to what an agent just finished, then the only live session.
+    static func route(words: [String], points: [PointEvent], projects: [Project], live: [LiveSession] = [],
+                      lastDone: (path: String, id: String, at: Date)? = nil, recordingStarted: Date? = nil) -> Result? {
         if let project = saidProject(words, projects) { return Result(path: project.path, how: "said") }
         if let project = screenProject(points, projects) { return Result(path: project.path, how: "screen") }
+        if let recordingStarted, let follow = followUp(lastDone: lastDone, recordingStarted: recordingStarted, live: live) {
+            return Result(path: follow.path, how: "followup", follows: follow.id)
+        }
         var folders: [String] = []
         for session in live where !folders.contains(where: { samePath($0, session.cwd) }) { folders.append(session.cwd) }
         if folders.count == 1 { return Result(path: folders[0], how: "only") }
         return nil
+    }
+
+    /// The last item an agent finished, when it was finished at most 180 s before the recording started and an agent
+    /// session still runs in that project. Otherwise nil, and routing goes on (only live session, then the picker).
+    static func followUp(lastDone: (path: String, id: String, at: Date)?, recordingStarted: Date,
+                         live: [LiveSession]) -> (path: String, id: String)? {
+        guard let lastDone else { return nil }
+        let gap = recordingStarted.timeIntervalSince(lastDone.at)
+        guard gap >= 0, gap <= followUpWindow else { return nil }
+        guard live.contains(where: { related($0.cwd, lastDone.path) }) else { return nil }
+        return (lastDone.path, lastDone.id)
+    }
+
+    /// The newest item an agent marked done (not the user, not an unrouted one), with the project it was routed to.
+    static func lastAgentDone(_ items: [Item]) -> (path: String, id: String, at: Date)? {
+        items.filter { $0.status == "done" && $0.by != nil && $0.by != "you" && $0.project != nil && $0.at != nil }
+            .max { $0.at! < $1.at! }
+            .map { ($0.project!, $0.id, $0.at!) }
     }
 
     /// The project named in the first 1-3 spoken words. Speech often mishears a name ("Pintro", "point roo"), so the words
@@ -296,9 +322,10 @@ enum Router {
         if readRoute(directory)?.how == "picked" { return }
         let live = LiveSessions.all()
         let projects = Projects.known(live: live)
-        guard let result = route(words: words.map(\.text), points: events.points, projects: projects, live: live) else { return }
+        guard let result = route(words: words.map(\.text), points: events.points, projects: projects, live: live,
+                                 lastDone: lastAgentDone(Items.all()), recordingStarted: events.started) else { return }
         let name = projects.first { samePath($0.path, result.path) }?.name ?? URL(fileURLWithPath: result.path).lastPathComponent
-        writeRoute(RouteInfo(project: name, path: result.path, how: result.how), to: directory)
+        writeRoute(RouteInfo(project: name, path: result.path, how: result.how, follows: result.follows), to: directory)
     }
 }
 
