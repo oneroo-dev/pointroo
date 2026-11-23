@@ -183,8 +183,50 @@ final class AppState: ObservableObject {
         Task { try? await Task.sleep(nanoseconds: 2_000_000_000); if toast == s { toast = nil } }
     }
 
-    /// Item status per session folder at the last load, to notice an agent finishing one.
-    private var lastStatus: [String: String] = [:]
+    /// Called once for each item an agent finished: the item and its project name.
+    var onDone: ((Item, String) -> Void)?
+    /// Called after each scan with the counts and the open and working items.
+    var onQueue: ((QueueCounts, [Item]) -> Void)?
+    @Published var counts = QueueCounts(open: 0, working: 0, done: 0)
+
+    /// Item status by id at the last scan; nil until the first scan, which only records.
+    private var lastItemStatus: [String: String]?
+    private var lastSignature: Date?
+    private var lastScan = Date.distantPast
+    private var scanning = false
+
+    /// Reads every item off the main actor and says what changed. Skipped when no session or state file changed
+    /// (but at least once a minute, because an item in progress can expire without any file changing).
+    func pollQueue() {
+        guard !scanning else { return }
+        scanning = true
+        let before = lastItemStatus
+        let previous = lastSignature
+        let stale = Date().timeIntervalSince(lastScan) > 60
+        Task.detached(priority: .utility) { [weak self] in
+            let signature = QueueStatus.signature()
+            if before != nil, !stale, signature == previous {
+                await MainActor.run { self?.scanning = false }
+                return
+            }
+            let items = Items.all()
+            let finished = QueueStatus.newlyDone(before: before ?? [:], items: items)
+                .map { ($0, Router.readRoute(Paths.root.appendingPathComponent($0.session))?.project ?? "Done") }
+            let counts = QueueStatus.counts(items)
+            let active = items.filter { $0.status == "open" || $0.status == "in_progress" }
+            let statuses = QueueStatus.statusByID(items)
+            await MainActor.run {
+                guard let self else { return }
+                self.scanning = false
+                self.lastSignature = signature
+                self.lastScan = Date()
+                self.lastItemStatus = statuses
+                self.counts = counts
+                self.onQueue?(counts, active)
+                for (item, project) in finished { self.onDone?(item, project) }
+            }
+        }
+    }
 
     func loadSessions() {
         let fm = FileManager.default
@@ -210,12 +252,6 @@ final class AppState: ObservableObject {
             rows.append(row)
             if rows.filter({ !$0.noSpeech }).count == 20 { break }
         }
-        for row in rows where row.status == "done" && row.by != "you" {
-            guard let before = lastStatus[row.id], before != "done" else { continue }
-            let name = Router.readRoute(row.dir)?.project ?? "Done"
-            say("\(name): \(row.note ?? row.title)")
-        }
-        lastStatus = Dictionary(rows.map { ($0.id, $0.status) }, uniquingKeysWith: { first, _ in first })
         sessions = rows
     }
 }

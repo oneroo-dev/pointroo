@@ -45,6 +45,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var pill: NSPanel!
     private var previousApp: NSRunningApplication?
     private var doubleControl: DoubleControl?
+    private var statusItem: StatusItem?
+    private var activity: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ note: Notification) {
         NSApp.mainMenu = makeMenu()
@@ -87,10 +89,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if AgentInstall.needsAsking() { state.askAgents = AgentInstall.status().map(\.name) }
             else { DispatchQueue.global(qos: .utility).async { AgentInstall.run() } }
         }
-        // Agents mark items done from their own processes: read the states again while the window shows.
-        Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { if let self, self.window.isVisible, self.state.phase == .idle { self.state.loadSessions() } }
+        // Keep the 5 s timer (and the agents' listener) running while the window is hidden.
+        activity = ProcessInfo.processInfo.beginActivity(options: .userInitiatedAllowingIdleSystemSleep, reason: "Watching the queue for finished items")
+        statusItem = StatusItem(openWindow: { [weak self] in self?.showWindow() }, quit: { [weak self] in self?.quitByUser() })
+        state.onQueue = { [weak self] counts, active in self?.statusItem?.update(counts, active: active) }
+        state.onDone = { [weak self] item, project in
+            DoneBanner.shared.show(project: project, note: item.note ?? item.title) { self?.showWindow() }
         }
+        // Agents mark items done from their own processes: look again, with the window hidden too (the scan is off the main actor).
+        Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.state.pollQueue()
+                if self.window.isVisible, self.state.phase == .idle { self.state.loadSessions() }
+            }
+        }
+        state.pollQueue()
         state.refreshAccess()
         doubleControl = DoubleControl(fire: { [weak self] in if Prefs.doubleControl { self?.state.toggle() } },
                                       escape: { [weak self] in if Prefs.escCancels { self?.state.cancel() } })
@@ -108,7 +122,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return true
     }
 
+    private func showWindow() {
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+    }
+
     private func recording(_ on: Bool) {
+        DoneBanner.shared.paused = on
         if on {
             window.orderOut(nil)
             let screen = NSScreen.main ?? NSScreen.screens[0]
