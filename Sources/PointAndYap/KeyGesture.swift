@@ -67,7 +67,7 @@ struct KeyGesture {
     /// After a hold starts it changes nothing, because the user may type while talking.
     mutating func otherInput(at time: TimeInterval) {
         guard !isHolding else { return }
-        spoiled = true
+        if downAt != nil { spoiled = true }
         downAt = nil
         lastTap = nil
         holdArmed = false
@@ -75,8 +75,9 @@ struct KeyGesture {
 
     /// Esc ends a hold without a holdEnd, because the app already cancelled the recording.
     mutating func escape() {
+        let controlIsDown = downAt != nil || isHolding
         clear()
-        spoiled = true
+        if controlIsDown { spoiled = true }
     }
 
     private mutating func clear() {

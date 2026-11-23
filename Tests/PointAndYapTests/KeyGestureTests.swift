@@ -132,6 +132,39 @@ final class KeyGestureTests: XCTestCase {
         XCTAssertEqual(gesture.controlUp(at: 2), [])
     }
 
+    func testTypingWithControlUpDoesNotBlockTheNextDoubleTap() {
+        for holdToTalk in [false, true] {
+            var gesture = KeyGesture()
+            gesture.otherInput(at: 0)
+            _ = gesture.controlDown(at: 1, holdToTalk: holdToTalk)
+            XCTAssertEqual(gesture.controlUp(at: 1.1), [])
+            _ = gesture.controlDown(at: 1.2, holdToTalk: holdToTalk)
+            XCTAssertEqual(gesture.controlUp(at: 1.3), [.toggle])
+        }
+    }
+
+    func testEscapeWithControlUpDoesNotBlockTheNextDoubleTap() {
+        for holdToTalk in [false, true] {
+            var gesture = KeyGesture()
+            gesture.escape()
+            _ = gesture.controlDown(at: 1, holdToTalk: holdToTalk)
+            XCTAssertEqual(gesture.controlUp(at: 1.1), [])
+            _ = gesture.controlDown(at: 1.2, holdToTalk: holdToTalk)
+            XCTAssertEqual(gesture.controlUp(at: 1.3), [.toggle])
+        }
+    }
+
+    func testControlPlusCNeverTogglesOrHolds() {
+        var gesture = KeyGesture()
+        _ = gesture.controlDown(at: 0, holdToTalk: true)
+        gesture.otherInput(at: 0.1)
+        XCTAssertEqual(gesture.controlUp(at: 0.2), [])
+        _ = gesture.controlDown(at: 0.3, holdToTalk: true)
+        gesture.otherInput(at: 0.35)
+        XCTAssertEqual(gesture.holdElapsed(at: 0.9), [])
+        XCTAssertEqual(gesture.controlUp(at: 1.0), [])
+    }
+
     func testHoldToTalkDefaultsOff() {
         let key = "holdToTalk"
         let saved = UserDefaults.standard.object(forKey: key)
