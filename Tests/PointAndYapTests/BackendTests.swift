@@ -79,6 +79,21 @@ final class BackendTests: XCTestCase {
         XCTAssertEqual(item.project, "/work/backend-other")
     }
 
+    func testRerouteGivesAnItemInProgressBackToTheNewProject() throws {
+        let directory = try makeSession("2026-11-23_100400")
+        let taken = Items.set(["2026-11-23_100400#1"], status: "in_progress", agent: "old-agent", note: nil)
+        XCTAssertEqual(taken.changed, ["2026-11-23_100400#1"])
+        let project = Project(name: "other", path: "/work/backend-other")
+        XCTAssertEqual(Items.reroute(id: "2026-11-23_100400#1", to: project), .moved)
+        let item = try XCTUnwrap(Items.items(in: directory, state: Items.readState(directory)).items.first)
+        XCTAssertEqual(item.status, "open")
+        XCTAssertNil(item.by)
+        XCTAssertEqual(item.note, "Moved to other")
+        XCTAssertEqual(item.project, "/work/backend-other")
+        XCTAssertTrue(Items.belongs(item, to: "/work/backend-other"))
+        XCTAssertFalse(Items.belongs(item, to: "/work/backend-a"))
+    }
+
     func testRefusesToRerouteADoneItem() throws {
         let directory = try makeSession("2026-11-23_100100")
         _ = Items.set(["2026-11-23_100100#1"], status: "done", agent: "agent", note: "fixed")

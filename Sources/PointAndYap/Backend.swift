@@ -102,7 +102,7 @@ extension Items {
     }
 
     /// Moves an item to another project: writes route.json of its session as picked, and teaches the router like a picker pick.
-    /// A done item is refused.
+    /// A done item is refused. An item in progress goes back to open. route.json is per recording, so moving one item moves every item of that recording.
     @discardableResult
     static func reroute(id: String, to project: Project) -> RerouteResult {
         guard DeepLink.isValid(id), let session = id.split(separator: "#").first.map(String.init) else { return .missing }
@@ -111,6 +111,11 @@ extension Items {
             guard FileManager.default.fileExists(atPath: directory.appendingPathComponent("session.md").path),
                   let item = items(in: directory, state: readState(directory)).items.first(where: { $0.id == id }) else { return .missing }
             if item.status == "done" { return .done }
+            if item.status == "in_progress" {
+                var state = readState(directory) ?? ItemState(source: "session")
+                state.items[String(item.n)] = .init(status: "open", by: nil, at: Date(), note: "Moved to \(project.name)")
+                guard writeState(state, directory) else { return .saveFailed }
+            }
             let info = RouteInfo(project: project.name, path: project.path, how: "picked")
             Router.writeRoute(info, to: directory)
             guard Router.readRoute(directory) == info else { return .saveFailed }
