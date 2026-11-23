@@ -144,8 +144,11 @@ extension Items {
             if item.status == "in_progress" || item.status == "done" { return .taken }
             let file = Router.routeURL(directory)
             guard FileManager.default.fileExists(atPath: file.path) else { return .unrouted }
+            let removed = Router.readRoute(directory)
             try? FileManager.default.removeItem(at: file)
-            return FileManager.default.fileExists(atPath: file.path) ? .saveFailed : .unrouted
+            if FileManager.default.fileExists(atPath: file.path) { return .saveFailed }
+            if let removed { Router.writeSuggest(SuggestInfo(path: removed.path, how: "undone"), to: directory) }
+            return .unrouted
         }
     }
 }

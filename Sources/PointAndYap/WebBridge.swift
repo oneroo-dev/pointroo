@@ -33,9 +33,11 @@ import Foundation
 ///                   projects, and the group with no project (project null) last; inside a group the newest item comes first
 ///                   (items with no date last, ties keep the queue order). Groups with no items are left out.
 ///   projects.list   no params
-///                   result {projects: [{name, path, aliases: [string], live: bool, agents: [string], key?: 1...9, open, inProgress}]}
-///                   live projects come first (in picker order), then the others by name ignoring case. `key` is the picker's number key,
-///                   given to the first nine live projects only. `open` and `inProgress` count the items routed to that folder.
+///                   result {projects: [{name, path, aliases: [string], live: bool, agents: [string], key?: 1...9, open, inProgress, lastUsed?}]}
+///                   live projects come first (in picker order), then the others, newest lastUsed first, then by name ignoring case.
+///                   `key` is the picker's number key, given to the first nine live projects only. `open` and `inProgress` count the
+///                   items routed to that folder. `lastUsed` is the ISO date of the newest item routed there (its `at`, else the time
+///                   of its recording); left out when there is none.
 ///   items.get       params {id: string}
 ///                   result {item: Item}   error not_found when there is no such item
 ///   items.reroute   params {id: string, project: string}   (project is a project's name or folder path, as in Projects.known())
@@ -71,7 +73,9 @@ import Foundation
 ///                   result {asked: true}   error bad_params when which is missing or unknown, not_available when the app gave no way to ask
 ///
 /// Item: {id, session, n, title, body, crops: [path], status, alsoSaid: [string], at?: ISO date, by?, note?, project?, routeHow?,
-///        priority?, commit?, branch?, duplicateOf?, said?, firstElement?, duration?}
+///        suggested?, suggestedName?, priority?, commit?, branch?, duplicateOf?, said?, firstElement?, duration?}
+///   suggested     the folder the router guesses for a recording it did not send (only while the item has no project)
+///   suggestedName that project's name
 ///   A key marked ? is left out when it has no value (never null).
 ///   alsoSaid      repeats folded into this item, "id: said text" (empty array when none)
 ///   priority      "urgent" when the user said urgent, asap or right now
@@ -90,7 +94,7 @@ import Foundation
 /// Question: {id, project, agent, text, choices: [string], asked: seconds since 1970}
 ///   A key with no value is left out (an empty choices list is an empty array).
 ///
-/// Settings keys: sounds, doubleControl, escCancels, redactSecrets, connectAgents, showNoSpeech, holdToTalk, listenAfterDone, kitWindow (all bool);
+/// Settings keys: sounds, doubleControl, escCancels, redactSecrets, connectAgents, showNoSpeech, holdToTalk, listenAfterDone, kitWindow, autoSendSingle (all bool; autoSendSingle is on when never set);
 /// locale (string, one of the ids in Prefs.languages).
 final class WebBridge {
     struct Request {
@@ -122,6 +126,7 @@ final class WebBridge {
         ("holdToTalk", .flag(defaultValue: false)),
         ("listenAfterDone", .flag(defaultValue: false)),
         ("kitWindow", .flag(defaultValue: true)),
+        ("autoSendSingle", .flag(defaultValue: true)),
         ("locale", .choice(allowed: Prefs.languages.map(\.id), defaultValue: "")),
     ]
 
@@ -364,14 +369,30 @@ final class WebBridge {
                 agents.append([session.agent])
             }
         }
+        let items = loadItems()
         let others = all.enumerated()
             .filter { entry in !liveOnes.contains { Router.samePath($0.path, entry.element.path) } }
+            .map { entry in (offset: entry.offset, project: entry.element, used: Self.lastUsed(of: entry.element.path, in: items)) }
             .sorted { first, second in
-                let order = first.element.name.caseInsensitiveCompare(second.element.name)
+                if first.used != second.used {
+                    switch (first.used, second.used) {
+                    case let (one?, two?): return one > two
+                    case (_?, nil): return true
+                    default: return false
+                    }
+                }
+                let order = first.project.name.caseInsensitiveCompare(second.project.name)
                 return order != .orderedSame ? order == .orderedAscending : first.offset < second.offset
             }
-            .map(\.element)
+            .map(\.project)
         return (liveOnes + others, liveOnes.count, agents)
+    }
+
+    /// The newest time among the items routed to this folder: the item's date, else the time its recording started.
+    static func lastUsed(of path: String, in items: [Item]) -> Date? {
+        items.filter { item in item.project.map { Router.samePath($0, path) } ?? false }
+            .compactMap { $0.at ?? Items.recordedAt($0.session) }
+            .max()
     }
 
     private func projectsList(_ params: [String: Any]) throws -> Any {
@@ -389,6 +410,7 @@ final class WebBridge {
                 "inProgress": own.filter { $0.status == "in_progress" }.count,
             ]
             if isLive, index < 9 { entry["key"] = index + 1 }
+            if let used = Self.lastUsed(of: project.path, in: items) { entry["lastUsed"] = ISO8601DateFormatter().string(from: used) }
             entries.append(entry)
         }
         return ["projects": entries]
@@ -535,6 +557,10 @@ final class WebBridge {
         if let note = item.note { out["note"] = note }
         if let project = item.project { out["project"] = project }
         if let how = item.routeHow { out["routeHow"] = how }
+        if let suggested = item.suggested {
+            out["suggested"] = suggested
+            out["suggestedName"] = Projects.name(for: suggested)
+        }
         if let priority = item.priority { out["priority"] = priority }
         if let commit = item.commit { out["commit"] = commit }
         if let branch = item.branch { out["branch"] = branch }
