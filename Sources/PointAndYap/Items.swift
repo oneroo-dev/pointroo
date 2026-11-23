@@ -14,7 +14,7 @@ struct Item {
     var by: String?
     var note: String?
     var project: String? = nil   // the project folder it was routed to (route.json)
-    var routeHow: String? = nil  // how: said, screen, only, picked
+    var routeHow: String? = nil  // how: said, screen, followup, only, picked
 }
 
 struct ItemState: Codable {
@@ -44,6 +44,7 @@ enum Items {
             let route = Router.readRoute(dir)
             out[i].project = route?.path
             out[i].routeHow = route?.how
+            if let follows = route?.follows { out[i].body = followUpLine(follows) + "\n\n" + out[i].body }
             if let e = state?.items[String(out[i].n)] {
                 // "taken" is the older name of in_progress.
                 let working = e.status == "taken" || e.status == "in_progress"
@@ -52,6 +53,17 @@ enum Items {
             }
         }
         return (source, out)
+    }
+
+    /// The first line of a follow-up item: which item it follows, with the other agent's note marked as quoted text.
+    static func followUpLine(_ id: String) -> String {
+        let parts = id.split(separator: "#").map(String.init)
+        var note = ""
+        if parts.count == 2, !parts[0].contains("/"), !parts[0].contains("..") {
+            note = readState(Paths.root.appendingPathComponent(parts[0]))?.items[parts[1]]?.note ?? ""
+        }
+        return note.isEmpty ? "Follow-up to \(id)."
+            : "Follow-up to \(id). The agent that finished it wrote (quoted): \"\(note)\""
     }
 
     /// The whole recording as one item: everything said, with [n] where the cursor was, and every click or rest of half
@@ -150,12 +162,12 @@ enum Items {
     }
 
     /// With `since`, an item recorded before that time is only handed out when it was routed to the project on purpose
-    /// (said, screen or picked); a fallback route ("only") or an old recording is not.
+    /// (said, screen, follow-up or picked); a fallback route ("only") or an old recording is not.
     static func belongs(_ item: Item, to project: String?, unrouted: Unrouted = .any, since: Date? = nil) -> Bool {
         guard let project else { return true }
         guard let path = item.project else { return unrouted == .any }
         guard Router.related(path, project) else { return false }
-        guard let since, !["said", "screen", "picked"].contains(item.routeHow ?? "") else { return true }
+        guard let since, !["said", "screen", "picked", "followup"].contains(item.routeHow ?? "") else { return true }
         return recordedAt(item.session).map { $0 > since } ?? false
     }
 

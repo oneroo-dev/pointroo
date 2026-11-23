@@ -237,6 +237,60 @@ final class PointAndYapTests: XCTestCase {
         XCTAssertEqual(ids(started), ["2026-10-17_120040#1", "2026-10-17_120042#1"], "a new recording routed as only is fine")
     }
 
+    func testFollowUpGoesToTheProjectOfTheLastAgentItemWithinThreeMinutes() {
+        let started = Date(timeIntervalSince1970: 1_800_000_000)
+        let live = [LiveSession(pid: 1, cwd: "/work/shop", agent: "claude", started: started, lastSeen: started),
+                    LiveSession(pid: 2, cwd: "/work/cms", agent: "claude", started: started, lastSeen: started)]
+        func done(_ secondsBefore: Double) -> (path: String, id: String, at: Date) {
+            ("/work/shop", "s#1", started.addingTimeInterval(-secondsBefore))
+        }
+        XCTAssertEqual(Router.followUp(lastDone: done(60), recordingStarted: started, live: live)?.path, "/work/shop")
+        XCTAssertEqual(Router.followUp(lastDone: done(60), recordingStarted: started, live: live)?.id, "s#1")
+        XCTAssertNotNil(Router.followUp(lastDone: done(180), recordingStarted: started, live: live), "180 s is still inside")
+        XCTAssertNil(Router.followUp(lastDone: done(181), recordingStarted: started, live: live))
+        XCTAssertNil(Router.followUp(lastDone: nil, recordingStarted: started, live: live))
+        XCTAssertNil(Router.followUp(lastDone: done(60), recordingStarted: started, live: [live[1]]), "no live session in that project")
+        XCTAssertNil(Router.followUp(lastDone: done(-5), recordingStarted: started, live: live), "finished after the recording began")
+    }
+
+    func testRouteOrderIsSaidScreenFollowUpOnlyPicker() {
+        let started = Date(timeIntervalSince1970: 1_800_000_000)
+        let live = [LiveSession(pid: 1, cwd: "/work/shop", agent: "claude", started: started, lastSeen: started),
+                    LiveSession(pid: 2, cwd: "/work/cms", agent: "claude", started: started, lastSeen: started)]
+        let last = (path: "/work/shop", id: "s#1", at: started.addingTimeInterval(-30))
+        let both = live
+        func route(words: [String] = ["fix"], points: [PointEvent] = [], running: [LiveSession]? = nil) -> Router.Result? {
+            Router.route(words: words, points: points, projects: projects, live: running ?? both, lastDone: last, recordingStarted: started)
+        }
+        XCTAssertEqual(route(), Router.Result(path: "/work/shop", how: "followup", follows: "s#1"))
+        XCTAssertEqual(route(words: ["cms", "fix"])?.how, "said", "a said name wins")
+        XCTAssertEqual(route(words: ["cms", "fix"])?.path, "/work/cms")
+        XCTAssertEqual(route(points: [point(window: "Edit post - CMS")])?.how, "screen", "the screen wins")
+        XCTAssertEqual(route(running: [both[1]])?.how, "only", "no live session in the done project: fall through to only")
+        XCTAssertEqual(route(running: [both[1]])?.path, "/work/cms")
+        XCTAssertNil(Router.route(words: ["fix"], points: [], projects: projects, live: live), "nothing done lately: the picker")
+    }
+
+    func testRouteInfoWithoutFollowsStillDecodesAndFollowUpSkipsTheSinceRule() throws {
+        let old = Data(#"{"project":"cms","path":"/work/cms","how":"said"}"#.utf8)
+        let info = try JSONDecoder().decode(RouteInfo.self, from: old)
+        XCTAssertNil(info.follows)
+        let dir = session("2026-10-17_120050")
+        Router.writeRoute(RouteInfo(project: "cms", path: "/work/cms", how: "followup", follows: "x#1"), to: dir)
+        let after = Items.recordedAt("2026-10-17_120050")!.addingTimeInterval(60)
+        let ids = Items.openItems(limit: 10, take: false, agent: "a", project: "/work/cms", unrouted: .never, since: after).map(\.id)
+        XCTAssertEqual(ids, ["2026-10-17_120050#1"], "a follow-up is routed on purpose")
+    }
+
+    func testItemBodyQuotesTheFollowedItemsNote() {
+        let first = session("2026-10-17_120060"), second = session("2026-10-17_120061")
+        _ = Items.set(["2026-10-17_120060#1"], status: "done", agent: "claude", note: "Changed the button to blue")
+        Router.writeRoute(RouteInfo(project: "cms", path: "/work/cms", how: "followup", follows: "2026-10-17_120060#1"), to: second)
+        let body = Items.items(in: second, state: nil).items.first?.body ?? ""
+        XCTAssertTrue(body.contains("Follow-up to 2026-10-17_120060#1. The agent that finished it wrote (quoted): \"Changed the button to blue\""), body)
+        XCTAssertFalse((Items.items(in: first, state: Items.readState(first)).items.first?.body ?? "").contains("Follow-up to"))
+    }
+
     func testSaidNameAcceptsLooseSpeech() {
         let all = projects + [Project(name: "pointroo", path: "/work/pointroo"), Project(name: "oneroo", path: "/work/oneroo")]
         XCTAssertEqual(Router.saidProject(["Pintro,", "this", "is", "a", "test"], all)?.path, "/work/pointroo")
