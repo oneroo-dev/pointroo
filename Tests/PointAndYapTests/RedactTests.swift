@@ -116,7 +116,7 @@ final class RedactTests: XCTestCase {
 
     func brightness(_ url: URL) -> Double {
         let rep = NSBitmapImageRep(data: try! Data(contentsOf: url))!
-        return rep.colorAt(x: rep.pixelsWide / 2, y: rep.pixelsHigh / 2)?.brightnessComponent ?? 1
+        return Double(rep.colorAt(x: rep.pixelsWide / 2, y: rep.pixelsHigh / 2)?.brightnessComponent ?? 1)
     }
 
     func testRedactsFramesBeforeTheCropsAreCut() async throws {
