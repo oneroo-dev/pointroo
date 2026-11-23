@@ -273,7 +273,7 @@ final class BridgeSession {
     }
 
     private func startLocal() {
-        let connection = MCPConnection(cwd: cwd, startedAt: started, manageLiveSession: false)
+        let connection = MCPConnection(cwd: cwd, startedAt: started, manageLiveSession: false, livePid: getpid())
         if let initialize = initializeLine { _ = connection.handle(line: initialize) }
         local = connection
     }

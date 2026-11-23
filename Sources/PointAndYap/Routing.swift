@@ -58,6 +58,13 @@ enum LiveSessions {
 
     static func unregister(pid: Int32 = getpid()) { try? FileManager.default.removeItem(at: file(pid)) }
 
+    /// True when the session of `pid` still has its live file and its process runs. Not based on lastSeen: an agent can work
+    /// for a long time between tool calls without anything refreshing it.
+    static func isAlive(pid: Int32) -> Bool {
+        guard FileManager.default.fileExists(atPath: file(pid).path) else { return false }
+        return kill(pid, 0) == 0 || errno == EPERM
+    }
+
     /// Sessions whose process is still alive; files of dead processes are deleted.
     static func all() -> [LiveSession] {
         let urls = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []

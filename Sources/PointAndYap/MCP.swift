@@ -170,7 +170,7 @@ enum MCPServer {
 
     static func handOut(_ items: [Item], take: Bool, images: Bool) -> [String: Any] {
         var content: [[String: Any]] = [["type": "text", "text":
-            "\(items.count) open item\(items.count == 1 ? "" : "s")\(take ? ", now in progress by you" : ""). Fix each, then call mark_done with its id right away: an item you leave unmarked stays open for the user and comes back to another agent in two hours."]]
+            "\(items.count) open item\(items.count == 1 ? "" : "s")\(take ? ", now in progress by you" : ""). Fix each, then call mark_done with its id right away: an item you leave unmarked stays open for the user and comes back to another agent in two hours, or within minutes if your session closes."]]
         for i in items {
             var t = "### Item \(i.id)\(i.priority == "urgent" ? " (URGENT, the user said so)" : "")\n\n\(i.body)\n\nWhen this is fixed, call mark_done with id \"\(i.id)\" (the user sees it as done)."
             for repeated in i.alsoSaid {
@@ -227,8 +227,12 @@ final class MCPConnection {
     let isOpen: () -> Bool
     /// Only the stdio and in-process path registers a live session; in the app the bridge does it.
     private let manageLiveSession: Bool
+    /// The process id of the session that has a live file (this process when it manages one, else the bridge's pid); stored on the items it takes.
+    let livePid: Int32?
 
-    init(cwd: String, startedAt: Date = Date(), manageLiveSession: Bool = false, isOpen: @escaping () -> Bool = { true }) {
+    init(cwd: String, startedAt: Date = Date(), manageLiveSession: Bool = false, livePid: Int32? = nil,
+         isOpen: @escaping () -> Bool = { true }) {
+        self.livePid = livePid ?? (manageLiveSession ? getpid() : nil)
         self.cwd = cwd
         self.startedAt = startedAt
         self.manageLiveSession = manageLiveSession
@@ -294,7 +298,7 @@ final class MCPConnection {
         var polls = 0
         while true {
             guard isOpen() else { return MCPServer.text("The connection is closed.") }
-            let items = Items.openItems(limit: 5, take: true, agent: agent, project: cwd, unrouted: .never, since: startedAt)
+            let items = Items.openItems(limit: 5, take: true, agent: agent, project: cwd, unrouted: .never, since: startedAt, takerPid: livePid)
             if !items.isEmpty { return MCPServer.handOut(items, take: true, images: images) }
             if Date() >= deadline { break }
             polls += 1
@@ -305,7 +309,7 @@ final class MCPConnection {
     }
 
     func openItems(limit: Int, take: Bool, images: Bool, project: String? = nil) -> [String: Any] {
-        let items = Items.openItems(limit: max(1, min(limit, 20)), take: take, agent: agent, project: project)
+        let items = Items.openItems(limit: max(1, min(limit, 20)), take: take, agent: agent, project: project, takerPid: livePid)
         guard !items.isEmpty else {
             let working = Items.all().filter { $0.status == "in_progress" }
             if working.isEmpty { return MCPServer.text("No open items. Everything the user pointed at is done.") }
@@ -328,7 +332,7 @@ final class MCPConnection {
                 return MCPServer.error("branch must have no spaces or new lines and be at most 200 characters. Nothing was changed.")
             }
         }
-        let r = Items.set(ids, status: status, agent: agent, note: note, commit: commit as? String, branch: branch as? String)
+        let r = Items.set(ids, status: status, agent: agent, note: note, commit: commit as? String, branch: branch as? String, takerPid: livePid)
         let verb = ["done": "Done", "in_progress": "In progress by you"][status] ?? "Back in the queue"
         var s = r.changed.isEmpty ? "" : "\(verb): \(r.changed.joined(separator: ", "))."
         if !r.closedRepeats.isEmpty { s += " Also closed (the same thing said again): \(r.closedRepeats.joined(separator: ", "))." }

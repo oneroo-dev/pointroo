@@ -194,7 +194,7 @@ enum MCPListener {
         var reader = LineReader(descriptor: descriptor)
         guard let first = reader.readLine(timeoutMillis: 2000), let hello = MCPBridge.parseHello(first, token: token) else { return }
         guard SocketIO.writeAll(descriptor, "{\"pointroo_ack\":1}\n") else { return }
-        let connection = MCPConnection(cwd: hello.cwd, startedAt: hello.started, manageLiveSession: false,
+        let connection = MCPConnection(cwd: hello.cwd, startedAt: hello.started, manageLiveSession: false, livePid: hello.pid,
                                        isOpen: { SocketIO.isOpen(descriptor) })
         while let line = reader.readLine() {
             guard let reply = connection.handle(line: line) else { continue }
