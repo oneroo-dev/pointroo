@@ -143,3 +143,17 @@ times out the app shows "Not sent - kept in the queue".
 MCP `get_open_items` uses the server's cwd (`scope: "all"` turns that off); `wait_for_next` polls every second for one, for up to 50 s per call (max 55 s: the Claude desktop app cancels tool calls at about 60 s).
 `PointAndYap --hook-stop` is a Claude Code Stop hook: it reads `cwd` from stdin and, if items are open for it, prints a
 block decision (it never takes items). Setup is in the skill file.
+
+## Shared MCP server
+
+The app serves MCP on `127.0.0.1:6742` (change it with `defaults write dev.oneroodev.pointroo mcpPort <n>`, then restart).
+`Pointroo --mcp` is a thin bridge: it connects, sends a hello line (`cwd`, its pid, its start time, and the token from
+`~/Library/Application Support/Pointroo/mcp-token`, mode 0600), waits up to 1 s for `{"pointroo_ack":1}`, then forwards
+lines both ways. A first line that is not a valid hello, or has the wrong token, is closed at once. Each connection is its
+own `MCPConnection` (agent name, folder, start time) on its own thread (`MCPListener.swift`, BSD sockets).
+`wait_for_next` checks the socket before every take, so a client that left never takes an item.
+
+The bridge, not the app, is the live session (`live/<bridge pid>.json`). If the app is not running or does not answer the
+hello, the bridge serves in its own process, as before. If the app restarts while the bridge runs, a request that was
+already sent gets the error "Pointroo restarted; call the tool again" (it is never sent twice); the next request reconnects
+and replays the cached `initialize`. A busy port shows as a toast and in Settings (`MCPListener.status`).
