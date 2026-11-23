@@ -1,6 +1,6 @@
 // Turns what the app sends (types.ts) into what the screen parts draw (parts/types.ts).
-import type { Crop, Item, ItemState, Project, RouteHow } from './parts/types'
-import type { BridgeItem, BridgeProject, BridgeQuestion } from './types'
+import type { Crop, Item, ItemState, Project, RecordingView, RouteHow } from './parts/types'
+import type { BridgeItem, BridgeProject, BridgeQuestion, BridgeSession, BridgeSessionPoint } from './types'
 
 const routeWords: RouteHow[] = ['said', 'screen', 'followup', 'only', 'picked']
 
@@ -77,6 +77,8 @@ export function toViewItem(item: BridgeItem, question: BridgeQuestion | undefine
   else state = item.project === undefined ? 'not-sent' : 'waiting'
 
   const crops = cropsFor(item)
+  // A done item shows when it was finished; the others show when they were recorded.
+  const when = item.status === 'done' ? (item.doneAt ?? item.at) : item.at
   const how = routeWords.find((word) => word === item.routeHow) ?? 'none'
   const result: Item = {
     id: item.id,
@@ -85,13 +87,14 @@ export function toViewItem(item: BridgeItem, question: BridgeQuestion | undefine
     title: item.title,
     said: item.said ?? '',
     points: Math.max(countPoints(item.body), crops.length),
-    age: ageText(item.at, now),
+    age: ageText(when, now),
     how,
     crops,
   }
   const marked = markedSaid(item)
   if (item.said !== undefined && marked !== '') result.said = marked
-  if (item.at !== undefined) result.atText = new Date(item.at).toLocaleString()
+  if (when !== undefined) result.atText = new Date(when).toLocaleString()
+  if (item.session !== '') result.session = item.session
   if (item.by !== undefined) result.agent = item.by
   if (item.note !== undefined) result.note = item.note
   if (item.afterURL !== undefined) result.afterUrl = item.afterURL
@@ -122,4 +125,28 @@ export function toViewProjects(projects: BridgeProject[]): Project[] {
     folder: project.path,
     recentRank: hasLastUsed ? ranked.findIndex((entry) => entry.index === index) + 1 : index + 1,
   }))
+}
+
+/** One point as a line: "app - window - element". With none of those, the address; with nothing, "A point". */
+function pointText(point: BridgeSessionPoint): string {
+  const parts = [point.app, point.window, point.element].filter((part): part is string => part !== undefined && part !== '')
+  if (parts.length > 0) return parts.join(' - ')
+  return point.url !== undefined && point.url !== '' ? point.url : 'A point'
+}
+
+function durationText(seconds: number): string {
+  return seconds < 60 ? `${Math.max(1, Math.round(seconds))} sec` : `${Math.round(seconds / 60)} min`
+}
+
+/** A whole recording from session.get as the Recording section draws it. */
+export function toRecordingView(recording: BridgeSession): RecordingView {
+  const started = new Date(recording.started)
+  const startedText = Number.isNaN(started.getTime()) ? '' : `, started ${started.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+  return {
+    state: 'ready',
+    said: recording.said.map((word) => word.text.trim()).filter((text) => text !== ''),
+    frames: recording.frames,
+    points: recording.points.map(pointText),
+    summary: `${durationText(recording.duration)}${startedText}`,
+  }
 }

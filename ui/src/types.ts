@@ -34,6 +34,40 @@ export interface BridgeItem {
   suggested?: string
   /** The same guess as a project name. Only there when the app (R24) sends it. */
   suggestedName?: string
+  /** ISO date when the item was marked done. Only on items from done.recent (R25). */
+  doneAt?: string
+}
+
+export interface BridgeSessionWord {
+  text: string
+  /** Seconds from the start of the recording. */
+  start: number
+  end: number
+}
+
+export interface BridgeSessionPoint {
+  at: number
+  x: number
+  y: number
+  app?: string
+  window?: string
+  url?: string
+  element?: string
+}
+
+/** A whole recording (session.get, R25). */
+export interface BridgeSession {
+  session: string
+  /** ISO date. */
+  started: string
+  /** Seconds. */
+  duration: number
+  said: BridgeSessionWord[]
+  points: BridgeSessionPoint[]
+  /** One pointroo-image:// address per frame. */
+  frames: string[]
+  /** The ids of the items this recording made. */
+  items: string[]
 }
 
 export interface BridgeProjectRef {
@@ -125,6 +159,10 @@ export interface BridgeMethods {
   'items.reopen': { params: { id: string }; result: { reopened: true } }
   'items.trash': { params: { id: string }; result: { trashed: true } }
   'items.unroute': { params: { id: string }; result: { unrouted: true } }
+  // Added by R25 (the Swift side).
+  'done.recent': { params: { limit?: number }; result: { items: BridgeItem[] } }
+  'session.get': { params: { session: string }; result: BridgeSession }
+  'questions.later': { params: { id: string; minutes?: number }; result: { snoozed: true; until: number } }
   'clipboard.copy': { params: { text: string }; result: { copied: true } }
   'window.startDrag': { params: Record<string, never>; result: { dragging: true } }
   'server.useAnotherPort': { params: Record<string, never>; result: { asked: true } }

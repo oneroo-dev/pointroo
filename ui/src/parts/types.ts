@@ -29,6 +29,23 @@ export interface Item {
   /** The screen after the agent finished (a pointroo-image:// address). */
   afterUrl?: string | undefined
   question?: { id?: string | undefined; text: string; choices: string[] } | undefined
+  /** The recording this item came from. The Recording section needs it. */
+  session?: string | undefined
+}
+
+/** A whole recording, ready to draw (see viewModel.toRecordingView). */
+export interface RecordingView {
+  state: 'loading' | 'ready' | 'error'
+  /** For the error state: the muted line. */
+  message?: string | undefined
+  /** What was said, one piece per phrase. */
+  said: string[]
+  /** One picture address per frame. */
+  frames: string[]
+  /** One line per point: app - window - element. */
+  points: string[]
+  /** "2 min, started 10:42". */
+  summary?: string | undefined
 }
 
 export interface Project {

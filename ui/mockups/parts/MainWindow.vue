@@ -3,17 +3,19 @@
 import { computed, ref } from 'vue'
 import MainWindow from '../../src/parts/MainWindow.vue'
 import SettingsScreen from '../../src/parts/SettingsScreen.vue'
-import type { Item, MainBanner, MainTab } from '../../src/parts/types'
+import type { Item, MainBanner, MainTab, RecordingView } from '../../src/parts/types'
 import type { SettingKey, SettingValue, SettingsValues } from '../../src/types'
 import SetupView from './SetupView.vue'
 import TrafficLights from './TrafficLights.vue'
 import { projects } from '../data/projects'
-import { asks, doneCount, doneItems, justSent, nowCount, nowItems, notSent, processing, working } from '../data/items'
+import { asks, doneCount, doneItems, doneRecent, justSent, nowCount, nowItems, notSent, processing, recorded, sampleImage, working } from '../data/items'
 
 export type Scenario =
   | 'queue'
   | 'asks'
   | 'done'
+  | 'done-list'
+  | 'recording'
   | 'not-sent'
   | 'just-sent'
   | 'processing'
@@ -38,7 +40,15 @@ const props = withDefaults(defineProps<{ width?: number; height?: number; scenar
   detailOpen: true,
 })
 
-const tab = ref<MainTab>(props.scenario === 'done' || props.scenario === 'now-empty' ? 'done' : 'now')
+const tab = ref<MainTab>(props.scenario === 'done' || props.scenario === 'done-list' || props.scenario === 'now-empty' ? 'done' : 'now')
+
+const recordingView: RecordingView = {
+  state: 'ready',
+  said: ['Okay, this is the settings page.', 'The delete button is right next to save, move it away and make it red.', 'That is all for this one.'],
+  frames: [sampleImage('Frame 1', '#6b7280'), sampleImage('Frame 2', '#3b82f6'), sampleImage('Frame 3', '#10b981')],
+  points: ['Tinkeroo - Settings - Button "Delete"', 'Tinkeroo - Settings - Button "Save"', 'https://example.com/overview'],
+  summary: '1 min, started 10:42',
+}
 const filter = ref('all')
 
 const settingsValues = ref<SettingsValues>({
@@ -65,6 +75,10 @@ const rows = computed<Item[]>(() => {
   switch (props.scenario) {
     case 'done':
       return doneItems
+    case 'done-list':
+      return doneRecent
+    case 'recording':
+      return [recorded, ...nowItems.slice(1)]
     case 'processing':
       return [processing, ...nowItems]
     case 'not-sent':
@@ -86,6 +100,10 @@ const selectedItem = computed<Item | undefined>(() => {
       return asks
     case 'done':
       return doneItems[0]
+    case 'done-list':
+      return doneRecent[0]
+    case 'recording':
+      return recorded
     case 'not-sent':
       return notSent
     case 'just-sent':
@@ -153,6 +171,7 @@ const sessionsText = computed(() => (props.scenario === 'no-session' ? 'None lis
       agents-text="Claude Code, Codex"
       speech-text="English"
       :needs-you="problem"
+      v-bind="scenario === 'recording' ? { recording: recordingView, recordingOpen: true } : {}"
       :toast="scenario === 'just-sent' ? { message: 'Sent to Tinkeroo', tone: 'ok', undo: true } : undefined"
     >
       <template #setup><SetupView :step="setupStep" /></template>

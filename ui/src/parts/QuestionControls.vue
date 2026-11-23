@@ -2,10 +2,10 @@
 // The answer controls of an agent's question. The notice (4.5) and the item detail show the same thing.
 // A choice or the typed text raises `answer` with the words.
 import { ref } from 'vue'
-import { RooButton, RooIconButton, RooInput } from '@roo/kit/controls'
+import { RooButton, RooIconButton, RooInput, RooTooltip } from '@roo/kit/controls'
 import { RooKbd } from '@roo/kit'
 
-defineProps<{ question: string; choices: string[]; showLater?: boolean }>()
+withDefaults(defineProps<{ question: string; choices: string[]; showLater?: boolean; laterMinutes?: number }>(), { showLater: false, laterMinutes: 30 })
 const emit = defineEmits<{ answer: [text: string]; later: [] }>()
 
 const typed = ref('')
@@ -30,7 +30,9 @@ function sendTyped(): void {
       <RooInput v-model="typed" class="question-input" aria-label="Type an answer" placeholder="Or type an answer…" @keydown.enter.prevent="sendTyped" />
       <RooIconButton icon="send" variant="secondary" label="Send" tooltip="Send" shortcut="Enter" @click="sendTyped" />
     </div>
-    <div v-if="showLater" class="question-later"><RooButton variant="ghost" size="sm" flush @click="emit('later')">Later</RooButton></div>
+    <div v-if="showLater" class="question-later">
+      <RooTooltip :text="`Ask me again in ${laterMinutes} minutes`" shortcut="L"><RooButton variant="ghost" size="sm" flush @click="emit('later')">Later</RooButton></RooTooltip>
+    </div>
   </div>
 </template>
 
