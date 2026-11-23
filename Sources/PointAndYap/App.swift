@@ -210,7 +210,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 if outcome == .unrouted { MainActor.assumeIsolated { state.loadSessions() } }
                 return outcome
             },
-            startDrag: { [weak self] in MainActor.assumeIsolated { self?.kitHost?.performWindowDrag() } })
+            startDrag: { [weak self] in MainActor.assumeIsolated { self?.kitHost?.performWindowDrag() } },
+            controlRecording: { action in
+                MainActor.assumeIsolated {
+                    switch action {
+                    case .start:
+                        if state.allowed { state.start() } else { state.showToast("Allow microphone, screen and accessibility first") }
+                    case .stop: state.stop()
+                    case .cancel: state.cancel()
+                    }
+                }
+            },
+            loadRecording: {
+                MainActor.assumeIsolated { WebHost.recordingSnapshot(state: state, pickerOpen: ProjectPicker.snapshot() != nil) }
+            },
+            loadPicker: { MainActor.assumeIsolated { ProjectPicker.snapshot() } },
+            answerPicker: { path in
+                MainActor.assumeIsolated {
+                    guard let path else { return ProjectPicker.answer(nil) }
+                    guard let project = ProjectPicker.snapshotProject(path: path) else { return false }
+                    return ProjectPicker.answer(project)
+                }
+            })
         // One WebHost for the life of the app: a swap back to the kit window moves the same web view into the new window.
         let host: WebHost
         if let existing = kitHost {

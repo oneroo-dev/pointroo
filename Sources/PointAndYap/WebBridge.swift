@@ -15,11 +15,13 @@ import Foundation
 /// Events the app sends once WebHost.startEvents runs (about once a second, only when something changed; the first of each is sent at start):
 ///   items.changed      {count, open, inProgress}   an item came, went, or changed status, note or project
 ///   questions.changed  {count}                     the set of unanswered agent questions changed
-///   recording.changed  {phase, pointCount}         phase is "idle", "recording" or "processing"
+///   recording.changed  {phase, pointCount}         phase is "idle", "recording", "processing" or "picking" (the project picker is open)
+///   picker.changed     {open, session?}            the project picker opened or closed (session is the recording it asks about)
 ///   status.changed     {mcpRunning, mcpPort, mcpText, sessions, agents, microphone, screenRecording, accessibility}
 ///                      the same object status.get returns inside `status`; sent when any part of it changed
 ///
-/// Error codes: bad_request (not valid JSON, or no method), unknown_method, bad_params, not_found, not_available, refused.
+/// Error codes: bad_request (not valid JSON, or no method), unknown_method, bad_params, not_found, not_available, refused,
+/// busy (a recording call that does not fit the phase now).
 ///
 /// Methods
 ///   items.list      params {status?: "open" | "in_progress" | "done" | "trashed", project?: string, maxAgeHours?: number, groupBy?: "project"}
@@ -75,6 +77,21 @@ import Foundation
 ///                   until that many minutes from now, then it comes back (and questions.changed is sent both times)
 ///                   result {snoozed: true, until: seconds since 1970}
 ///                   error not_found when the question is unknown or already answered, bad_params when id is missing or minutes is out of range
+///   recording.start no params   the same as double Control while idle (AppState.start)
+///                   result {started: true}   error busy (recording, or the last one is processing), not_available
+///   recording.stop  no params   result {stopped: true}   error busy (not recording), not_available
+///   recording.cancel no params  stops and keeps nothing; result {cancelled: true}   error busy (not recording), not_available
+///                   (start can still fail inside the app, for example when a permission is missing; the page sees that in recording.get)
+///   recording.get   no params
+///                   result {phase: "idle" | "recording" | "processing" | "picking", startedAt?: ISO date (only while recording),
+///                   points: number, words?: [string] (the last few spoken words, when the app has them)}   error not_available
+///   picker.get      no params
+///                   result {open: false} or {open: true, session?: string, choices: [{name, path, key, suggested}] (in number-key order,
+///                   key is 1...9, suggested is true for the folder the router guessed), countdown?: whole seconds before it skips by itself}
+///   picker.pick     params {path: string}   answers the open picker like a click on that project; the recording is sent there and the router learns it
+///                   result {picked: true}   error bad_params (no path, or not one of the choices), not_found (no picker open, or it was answered already), not_available
+///   picker.skip     no params   answers the open picker like Esc: the recording stays in the queue
+///                   result {skipped: true}   error not_found (no picker open, or it was answered already), not_available
 ///   settings.get    params {key?: string}
 ///                   result {key, value} for one key, or {values: {key: value}} for all allowed keys
 ///   settings.set    params {key: string, value: bool | string}
@@ -161,6 +178,13 @@ final class WebBridge {
         "questions.later": { bridge, params in try bridge.questionsLater(params) },
         "done.recent": { bridge, params in try bridge.doneRecent(params) },
         "session.get": { bridge, params in try bridge.sessionGet(params) },
+        "recording.start": { bridge, params in try bridge.recordingControl(.start) },
+        "recording.stop": { bridge, params in try bridge.recordingControl(.stop) },
+        "recording.cancel": { bridge, params in try bridge.recordingControl(.cancel) },
+        "recording.get": { bridge, params in try bridge.recordingGet(params) },
+        "picker.get": { bridge, params in try bridge.pickerGet(params) },
+        "picker.pick": { bridge, params in try bridge.pickerPick(params) },
+        "picker.skip": { bridge, params in try bridge.pickerSkip(params) },
         "settings.get": { bridge, params in try bridge.settingsGet(params) },
         "settings.set": { bridge, params in try bridge.settingsSet(params) },
         "status.get": { bridge, params in try bridge.statusGet(params) },
@@ -179,7 +203,18 @@ final class WebBridge {
     private let unroute: (String) -> Items.UnrouteResult
     private let writeClipboard: (String) -> Void
     private let startDrag: (() -> Void)?
+    private let controlRecording: ((RecordingAction) -> Void)?
+    private let loadRecording: (() -> RecordingSnapshot)?
+    private let loadPicker: (() -> PickerSnapshot?)?
+    private let answerPicker: ((String?) -> Bool)?
     private let now: () -> Date
+
+    /// What recording.start, recording.stop and recording.cancel ask the app to do.
+    enum RecordingAction {
+        case start
+        case stop
+        case cancel
+    }
 
     /// What changing one item's status did.
     enum StatusChange: Equatable {
@@ -208,6 +243,10 @@ final class WebBridge {
     /// `changeStatus` (id, new status, note) serves items.done, items.reopen and items.trash. `unroute` serves items.unroute.
     /// `startDrag` serves window.startDrag; when it is nil, that method answers not_available.
     /// `writeClipboard` serves clipboard.copy. The defaults are the real Items.set, Items.unroute and the general pasteboard.
+    /// `controlRecording` runs the start, stop or cancel (AppState.start, stop, cancel); `loadRecording` gives the recording snapshot
+    /// (the same one recording.changed uses); both nil means recording.* answers not_available (recording.get needs `loadRecording`).
+    /// `loadPicker` gives the open project picker or nil; `answerPicker` answers it with a folder path (nil = skip) the way a click or
+    /// Esc does, and returns false when no picker was open any more. Either one nil means picker.* answers not_available.
     /// `now` is the clock for the question snooze (tests set it).
     init(defaults: UserDefaults = .standard,
          loadItems: @escaping () -> [Item] = { Items.all() },
@@ -221,6 +260,10 @@ final class WebBridge {
          unroute: @escaping (String) -> Items.UnrouteResult = { Items.unroute(id: $0) },
          writeClipboard: @escaping (String) -> Void = { WebBridge.copyToClipboard($0) },
          startDrag: (() -> Void)? = nil,
+         controlRecording: ((RecordingAction) -> Void)? = nil,
+         loadRecording: (() -> RecordingSnapshot)? = nil,
+         loadPicker: (() -> PickerSnapshot?)? = nil,
+         answerPicker: ((String?) -> Bool)? = nil,
          now: @escaping () -> Date = { Date() }) {
         self.defaults = defaults
         self.loadItems = loadItems
@@ -234,6 +277,10 @@ final class WebBridge {
         self.unroute = unroute
         self.writeClipboard = writeClipboard
         self.startDrag = startDrag
+        self.controlRecording = controlRecording
+        self.loadRecording = loadRecording
+        self.loadPicker = loadPicker
+        self.answerPicker = answerPicker
         self.now = now
     }
 
@@ -481,6 +528,68 @@ final class WebBridge {
         guard let startDrag else { throw Failure(code: "not_available", message: "Dragging the window is not available.") }
         startDrag()
         return ["dragging": true]
+    }
+
+    private func recordingControl(_ action: RecordingAction) throws -> Any {
+        guard let controlRecording, let loadRecording else {
+            throw Failure(code: "not_available", message: "Recording is not available.")
+        }
+        let phase = loadRecording().phase
+        switch action {
+        case .start:
+            if phase == "recording" { throw Failure(code: "busy", message: "Already recording.") }
+            if phase == "processing" { throw Failure(code: "busy", message: "The last recording is still being processed.") }
+            controlRecording(.start)
+            return ["started": true]
+        case .stop:
+            guard phase == "recording" else { throw Failure(code: "busy", message: "Not recording.") }
+            controlRecording(.stop)
+            return ["stopped": true]
+        case .cancel:
+            guard phase == "recording" else { throw Failure(code: "busy", message: "Not recording.") }
+            controlRecording(.cancel)
+            return ["cancelled": true]
+        }
+    }
+
+    private func recordingGet(_ params: [String: Any]) throws -> Any {
+        guard let loadRecording else { throw Failure(code: "not_available", message: "Recording is not available.") }
+        let snapshot = loadRecording()
+        var out: [String: Any] = ["phase": snapshot.phase, "points": snapshot.points]
+        if let startedAt = snapshot.startedAt { out["startedAt"] = ISO8601DateFormatter().string(from: startedAt) }
+        if !snapshot.words.isEmpty { out["words"] = snapshot.words }
+        return out
+    }
+
+    private func pickerGet(_ params: [String: Any]) throws -> Any {
+        guard let loadPicker else { throw Failure(code: "not_available", message: "The project picker is not available.") }
+        guard let snapshot = loadPicker() else { return ["open": false] }
+        var out: [String: Any] = [
+            "open": true,
+            "choices": snapshot.choices.map { choice -> [String: Any] in
+                ["name": choice.name, "path": choice.path, "key": choice.key, "suggested": choice.suggested]
+            },
+        ]
+        if let session = snapshot.session { out["session"] = session }
+        if let countdown = snapshot.countdown { out["countdown"] = countdown }
+        return out
+    }
+
+    private func pickerPick(_ params: [String: Any]) throws -> Any {
+        guard let path = params["path"] as? String, !path.isEmpty else { throw Failure(code: "bad_params", message: "path is needed.") }
+        guard let loadPicker, let answerPicker else { throw Failure(code: "not_available", message: "The project picker is not available.") }
+        guard let snapshot = loadPicker() else { throw Failure(code: "not_found", message: "No project picker is open.") }
+        guard let choice = snapshot.choices.first(where: { Router.samePath($0.path, path) }) else {
+            throw Failure(code: "bad_params", message: "That folder is not one of the choices.")
+        }
+        guard answerPicker(choice.path) else { throw Failure(code: "not_found", message: "No project picker is open.") }
+        return ["picked": true]
+    }
+
+    private func pickerSkip(_ params: [String: Any]) throws -> Any {
+        guard let loadPicker, let answerPicker else { throw Failure(code: "not_available", message: "The project picker is not available.") }
+        guard loadPicker() != nil, answerPicker(nil) else { throw Failure(code: "not_found", message: "No project picker is open.") }
+        return ["skipped": true]
     }
 
     private func clipboardCopy(_ params: [String: Any]) throws -> Any {

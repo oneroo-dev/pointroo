@@ -50,7 +50,6 @@ final class AppState: ObservableObject {
     var ownUI: (() -> CGRect?)?
 
     var allowed: Bool { mic && screen && ax }
-
     func refreshAccess() {
         mic = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
         screen = CGPreflightScreenCaptureAccess()
@@ -217,7 +216,8 @@ final class AppState: ObservableObject {
         guard Router.readRoute(dir) == nil, !Items.items(in: dir, state: nil).items.isEmpty else { return }
         let live = Projects.liveProjects()
         guard live.count >= 2 else { return }
-        guard let project = await ProjectPicker.ask(live) else {
+        let suggested = Items.items(in: dir, state: nil).items.first?.suggested
+        guard let project = await ProjectPicker.ask(live, session: dir.lastPathComponent, suggested: suggested) else {
             say("Not sent - kept in the queue")
             return
         }
