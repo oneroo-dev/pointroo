@@ -12,6 +12,9 @@ final class WebHost {
     let webView: WKWebView
     let bridge: WebBridge
     private let policy: NavigationPolicy
+    private var webEvents = WebEvents()
+    private var eventTimer: Timer?
+    private var isReadingEvents = false
 
     /// The folder inside the app that holds the built screens (Contents/Resources/ui).
     static var bundleFolder: URL? { Bundle.main.resourceURL?.appendingPathComponent("ui", isDirectory: true) }
@@ -42,6 +45,59 @@ final class WebHost {
     /// Tells the page about something (runs window.pointroo.emit).
     func emit(_ name: String, _ data: Any) {
         webView.evaluateJavaScript(WebBridge.emitScript(name: name, data: data), completionHandler: nil)
+    }
+
+    /// Starts telling the page about changes, once a second. The disk is read on a background queue; the events go out on the main actor.
+    /// Nothing calls this yet: the redesign calls it when it shows the web view.
+    func startEvents(state: AppState) {
+        stopEvents()
+        webEvents = WebEvents()
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self, weak state] _ in
+            Task { @MainActor [weak self, weak state] in
+                guard let self, let state else { return }
+                self.tick(state: state)
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        eventTimer = timer
+        tick(state: state)
+    }
+
+    func stopEvents() {
+        eventTimer?.invalidate()
+        eventTimer = nil
+        isReadingEvents = false
+    }
+
+    private func tick(state: AppState) {
+        for event in webEvents.recording(phase: Self.phaseName(state.phase), pointCount: state.pointCount) {
+            emit(event.name, event.data)
+        }
+        guard !isReadingEvents else { return }
+        isReadingEvents = true
+        Task.detached(priority: .utility) { [weak self] in
+            let items = Items.all()
+            let questions = Questions.pending()
+            await self?.finishRead(items: items, questions: questions)
+        }
+    }
+
+    private func finishRead(items: [Item], questions: [Question]) {
+        guard isReadingEvents else { return }   // stopEvents ran while the read was going
+        isReadingEvents = false
+        guard eventTimer != nil else { return }
+        for event in webEvents.items(items) + webEvents.questions(questions) {
+            emit(event.name, event.data)
+        }
+    }
+
+    /// recording.changed phase: idle, recording, or processing (every case of AppState.Phase).
+    nonisolated static func phaseName(_ phase: AppState.Phase) -> String {
+        switch phase {
+        case .idle: return "idle"
+        case .recording: return "recording"
+        case .processing: return "processing"
+        }
     }
 
     fileprivate func receive(_ body: Any) {

@@ -11,6 +11,11 @@ import Foundation
 ///   `{"result": ...}` when it worked, or `{"error": {"code": "...", "message": "..."}}` when it did not.
 /// The app can also tell the page about something with `window.pointroo.emit(<name>, <json data>)`.
 ///
+/// Events the app sends once WebHost.startEvents runs (about once a second, only when something changed; the first of each is sent at start):
+///   items.changed      {count, open, inProgress}   an item came, went, or changed status, note or project
+///   questions.changed  {count}                     the set of unanswered agent questions changed
+///   recording.changed  {phase, pointCount}         phase is "idle", "recording" or "processing"
+///
 /// Error codes: bad_request (not valid JSON, or no method), unknown_method, bad_params, not_found, not_available, refused.
 ///
 /// Methods
