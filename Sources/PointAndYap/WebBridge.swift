@@ -37,7 +37,7 @@ import Foundation
 ///   firstElement  the first pointed element, "role|name"
 ///   duration      length of the recording in seconds
 ///
-/// Settings keys: sounds, doubleControl, escCancels, redactSecrets, connectAgents, showNoSpeech (all bool);
+/// Settings keys: sounds, doubleControl, escCancels, redactSecrets, connectAgents, showNoSpeech, holdToTalk, listenAfterDone (all bool);
 /// locale (string, one of the ids in Prefs.languages).
 final class WebBridge {
     struct Request {
@@ -66,6 +66,8 @@ final class WebBridge {
         ("redactSecrets", .flag(defaultValue: true)),
         ("connectAgents", .flag(defaultValue: false)),
         ("showNoSpeech", .flag(defaultValue: false)),
+        ("holdToTalk", .flag(defaultValue: false)),
+        ("listenAfterDone", .flag(defaultValue: false)),
         ("locale", .choice(allowed: Prefs.languages.map(\.id), defaultValue: "")),
     ]
 
