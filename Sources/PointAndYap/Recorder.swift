@@ -28,6 +28,8 @@ final class Recorder {
     var ignore: (() -> CGRect?)?
     /// Called with the number of points so far each time one is added (the pill shows it live).
     var onPointCount: ((Int) -> Void)?
+    /// The microphone level (RMS, 0 to 1) about 20 times a second, on the main actor.
+    var onLevel: ((Float) -> Void)?
 
     init() { dir = Paths.newSession() }
 
@@ -41,6 +43,9 @@ final class Recorder {
     }
 
     func start() throws {
+        audio.onLevel = { [weak self] level in
+            DispatchQueue.main.async { MainActor.assumeIsolated { self?.onLevel?(level) } }
+        }
         try audio.start(to: dir.appendingPathComponent("audio.caf"))
         anchor = Self.cursor()
         takeFrame(reason: "start", at: anchor)

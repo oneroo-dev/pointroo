@@ -94,6 +94,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         activity = ProcessInfo.processInfo.beginActivity(options: .userInitiatedAllowingIdleSystemSleep, reason: "Watching the queue for finished items")
         statusItem = StatusItem(openWindow: { [weak self] in self?.showWindow() }, quit: { [weak self] in self?.quitByUser() })
         state.onQueue = { [weak self] counts, active in self?.statusItem?.update(counts, active: active) }
+        state.wireListenWindow()
         state.onDone = { [weak self] item, project in
             Task {
                 let notice = await AfterShot.notice(item: item, project: project)
@@ -114,6 +115,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         doubleControl = DoubleControl(fire: { [weak self] in if Prefs.doubleControl { self?.state.toggle() } },
                                       escape: { [weak self] in if Prefs.escCancels { self?.state.cancel() } },
                                       holdStart: { [weak self] in
+                                          // Holding Control during a listen window takes it over: the release then stops it.
+                                          if self?.state.takeOverListening() == true { return true }
                                           guard let state = self?.state, state.phase == .idle, state.allowed else { return false }
                                           state.start()
                                           if case .recording = state.phase { return true }
