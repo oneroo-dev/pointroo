@@ -3,7 +3,7 @@
 import { computed, reactive, ref } from 'vue'
 import type { Bridge } from './bridge'
 import { errorText } from './bridge'
-import type { Item, MainBanner, MainTab, MainToast, Project, RecordingView } from './parts/types'
+import type { Item, MainBanner, MainTab, MainToast, Project, RecordingView, SearchHit } from './parts/types'
 import type {
   BridgeAppStatus,
   BridgeItem,
@@ -13,6 +13,7 @@ import type {
   OpenPicker,
   PermissionName,
   RecordingPhase,
+  SearchFilter,
   SearchResult,
   SettingKey,
   SettingValue,
@@ -51,12 +52,15 @@ export function createStore(bridge: Bridge, options: StoreOptions = {}) {
   /** The open project picker, or null while it is closed. */
   const picker = ref<OpenPicker | null>(null)
   const notices = ref<Notice[]>([])
-  const searchState = reactive<{ query: string; results: SearchResult[]; loading: boolean; error: string | undefined }>({
+  const searchState = reactive<{ query: string; status: SearchFilter; results: SearchResult[]; loading: boolean; error: string | undefined }>({
     query: '',
+    status: 'all',
     results: [],
     loading: false,
     error: undefined,
   })
+  /** The search box in the bar is open: the results replace the queue. */
+  const searchOpen = ref(false)
   const loading = ref(true)
   const tab = ref<MainTab>('now')
   const filter = ref('all')
@@ -102,7 +106,16 @@ export function createStore(bridge: Bridge, options: StoreOptions = {}) {
     if (filter.value === 'all') return list
     return list.filter((item) => item.project === filterName.value)
   })
-  const selectedItem = computed(() => allItems.value.find((item) => item.id === selectedId.value))
+  /** What the screen draws for each search result: the item the way a queue row has it, and where the words were found. */
+  const searchHits = computed<SearchHit[]>(() =>
+    searchState.results.map((result) => ({
+      item: toViewItem(result, matched.value.get(result.id), now.value, projects.value),
+      match: result.match,
+    })),
+  )
+  // A result the user opened that the queue does not hold (an old done item): it still opens in the detail.
+  const searchOpened = ref<SearchHit | undefined>(undefined)
+  const selectedItem = computed(() => allItems.value.find((item) => item.id === selectedId.value) ?? (searchOpened.value?.item.id === selectedId.value ? searchOpened.value?.item : undefined))
   const emptyKind = computed<'nothing' | 'all-done'>(() => (allItems.value.length === 0 ? 'nothing' : 'all-done'))
 
   const banner = computed<MainBanner | undefined>(() => {
@@ -317,9 +330,9 @@ export function createStore(bridge: Bridge, options: StoreOptions = {}) {
     finishPendingSearch = undefined
   }
 
-  async function runSearch(number: number, text: string): Promise<void> {
+  async function runSearch(number: number, text: string, status: SearchFilter): Promise<void> {
     try {
-      const reply = await bridge.call('items.search', { text })
+      const reply = await bridge.call('items.search', status === 'all' ? { text } : { text, status })
       if (number !== searchNumber) return
       searchState.results = reply.items
       searchState.error = undefined
@@ -335,11 +348,12 @@ export function createStore(bridge: Bridge, options: StoreOptions = {}) {
    * Searches the items for what the user typed. It waits for searchDelayMilliseconds after the last call, and a slower
    * old reply never replaces a newer one. The returned promise is done when this search is answered or replaced.
    */
-  function search(query: string): Promise<void> {
+  function search(query: string, status: SearchFilter = searchState.status): Promise<void> {
     cancelPendingSearch()
     searchNumber += 1
     const number = searchNumber
     searchState.query = query
+    searchState.status = status
     const text = query.trim().slice(0, searchTextLimit)
     if (text === '') {
       searchState.results = []
@@ -353,9 +367,37 @@ export function createStore(bridge: Bridge, options: StoreOptions = {}) {
       searchTimer = setTimeout(() => {
         searchTimer = undefined
         finishPendingSearch = undefined
-        void runSearch(number, text).then(resolve)
+        void runSearch(number, text, status).then(resolve)
       }, searchDelayMilliseconds)
     })
+  }
+
+  /** A status chip: the same words searched again with the new status. */
+  function setSearchStatus(status: SearchFilter): Promise<void> {
+    return search(searchState.query, status)
+  }
+
+  /** Mod+K or the search button: the box opens in the bar. */
+  function openSearch(): void {
+    searchOpen.value = true
+  }
+
+  /** Esc, the clear button and Clear search: the words and the status go back to nothing, the box closes and the queue comes back. */
+  function closeSearch(): void {
+    searchOpen.value = false
+    void search('', 'all')
+  }
+
+  /** Opens the result like a queue row: the item is selected, and the tab follows where the item lives. */
+  function openSearchResult(itemId: string): void {
+    const hit = searchHits.value.find((entry) => entry.item.id === itemId)
+    const found = allItems.value.find((item) => item.id === itemId) ?? hit?.item
+    if (found !== undefined) tab.value = found.state === 'done' || found.state === 'done-by-you' ? 'done' : 'now'
+    searchOpened.value = hit
+    filter.value = 'all'
+    selectedId.value = itemId
+    searchOpen.value = false
+    void search('', 'all')
   }
 
   function projectById(projectId: string): Project | undefined {
@@ -601,6 +643,12 @@ export function createStore(bridge: Bridge, options: StoreOptions = {}) {
     notices,
     noticeCount: computed(() => notices.value.length),
     searchState,
+    searchOpen,
+    searchHits,
+    setSearchStatus,
+    openSearch,
+    closeSearch,
+    openSearchResult,
     startRecording,
     stopRecording,
     cancelRecording,

@@ -32,8 +32,12 @@ function onRecord(): void {
 
 // The gear and Cmd+, open Settings; pressed again they close it.
 function onSettings(): void {
-  if (store.view === 'settings') store.closeSettings()
-  else void store.openSettings()
+  if (store.view === 'settings') {
+    store.closeSettings()
+    return
+  }
+  store.closeSearch()
+  void store.openSettings()
 }
 
 function onReveal(): void {
@@ -76,8 +80,27 @@ function typingInField(target: EventTarget | null): boolean {
   return target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)
 }
 
+// Mod+K opens the search box in the bar (or puts the cursor back in it). Esc closes it, also while the cursor is in it.
+function onSearchKey(event: KeyboardEvent): boolean {
+  if (event.metaKey && !event.ctrlKey && !event.altKey && event.key.toLowerCase() === 'k') {
+    event.preventDefault()
+    if (store.view === 'settings') store.closeSettings()
+    if (store.searchOpen) document.querySelector<HTMLInputElement>('input[type="search"]')?.focus()
+    else store.openSearch()
+    return true
+  }
+  if (store.searchOpen && store.view === 'queue' && event.key === 'Escape' && !event.metaKey && !event.ctrlKey && !event.altKey) {
+    event.preventDefault()
+    store.closeSearch()
+    return true
+  }
+  return false
+}
+
 function onKey(event: KeyboardEvent): void {
-  if (event.defaultPrevented || event.isComposing || typingInField(event.target)) return
+  if (event.defaultPrevented || event.isComposing) return
+  if (onSearchKey(event)) return
+  if (typingInField(event.target)) return
   if (event.metaKey && !event.ctrlKey && !event.altKey && /^[1-9]$/.test(event.key)) {
     event.preventDefault()
     store.selectProjectNumber(Number(event.key))
@@ -157,6 +180,12 @@ onBeforeUnmount(() => {
     <MainWindow
       v-model:tab="store.tab"
       v-model:filter="store.filter"
+      :search-query="store.searchState.query"
+      :search-status="store.searchState.status"
+      :search-open="store.searchOpen"
+      :search-hits="store.searchHits"
+      :search-loading="store.searchState.loading"
+      :search-error="store.searchState.error"
       :width="width"
       :projects="store.projects"
       :items="store.rows"
@@ -175,6 +204,11 @@ onBeforeUnmount(() => {
       :settings-open="store.view === 'settings'"
       :toast="store.toast"
       :recording="selectedRecording"
+      @update:search-query="(text) => void store.search(text)"
+      @update:search-status="(status) => void store.setSearchStatus(status)"
+      @open-search="store.openSearch"
+      @close-search="store.closeSearch"
+      @open-result="store.openSearchResult"
       @drag="startDrag"
       @record="onRecord"
       @settings="onSettings"

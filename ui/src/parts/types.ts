@@ -1,4 +1,6 @@
 // The shapes the screen parts draw. The mockups fill them with sample data; the app fills them from the bridge (see ../viewModel.ts).
+import type { SearchField } from '../types'
+
 export type ItemState = 'waiting' | 'working' | 'asks' | 'done' | 'done-by-you' | 'not-sent' | 'processing'
 export type RouteHow = 'said' | 'screen' | 'followup' | 'only' | 'picked' | 'none'
 
@@ -46,6 +48,12 @@ export interface RecordingView {
   points: string[]
   /** "2 min, started 10:42". */
   summary?: string | undefined
+}
+
+/** One search result: the item as a queue row has it, and the field where the words were found with a line around the first hit. */
+export interface SearchHit {
+  item: Item
+  match: { field: SearchField; snippet: string }
 }
 
 export interface Project {

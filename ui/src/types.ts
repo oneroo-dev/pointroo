@@ -249,6 +249,9 @@ export type SearchField = 'title' | 'body' | 'said' | 'alsoSaid' | 'note' | 'pro
 
 export type SearchStatus = BridgeStatus | 'trashed' | 'any'
 
+/** The status chips of the search screen. "all" leaves the status param out (every item except the trashed ones). */
+export type SearchFilter = 'open' | 'in_progress' | 'done' | 'all'
+
 export interface ItemsSearchParams {
   /** 1 to 200 characters. */
   text: string

@@ -1,8 +1,8 @@
 <script setup lang="ts">
 // The main window, drawn from the data it is given. The mockups pass sample data; the app passes the store. It fills its
 // parent. macOS draws the real window buttons, so the bar only leaves the inset for them.
-import { computed, ref } from 'vue'
-import { RooButton, RooChipGroup, RooIconButton, RooTooltip } from '@roo/kit/controls'
+import { computed, nextTick, ref, watch } from 'vue'
+import { RooButton, RooChipGroup, RooIconButton, RooInput, RooTooltip } from '@roo/kit/controls'
 import {
   RooAppMark,
   RooBar,
@@ -23,9 +23,11 @@ import AppGlyph from './AppGlyph.vue'
 import ItemDetail from './ItemDetail.vue'
 import ItemList from './ItemList.vue'
 import ProjectSidebar from './ProjectSidebar.vue'
+import SearchView from './SearchView.vue'
 import StatusBanner from './StatusBanner.vue'
 import { orderProjects } from './projects'
-import type { Item, MainBanner, MainTab, MainToast, Project, RecordingView } from './types'
+import type { SearchFilter } from '../types'
+import type { Item, MainBanner, MainTab, MainToast, Project, RecordingView, SearchHit } from './types'
 
 const props = withDefaults(
   defineProps<{
@@ -58,6 +60,11 @@ const props = withDefaults(
     recording?: RecordingView | undefined
     /** The detail starts with its Recording section open (the mockups). */
     recordingOpen?: boolean
+    /** The search box is open in the bar. With words in it, the results replace the queue. */
+    searchOpen?: boolean
+    searchHits?: SearchHit[]
+    searchLoading?: boolean
+    searchError?: string | undefined
   }>(),
   {
     selectedItem: undefined,
@@ -78,6 +85,10 @@ const props = withDefaults(
     toast: undefined,
     recording: undefined,
     recordingOpen: false,
+    searchOpen: false,
+    searchHits: () => [],
+    searchLoading: false,
+    searchError: undefined,
   },
 )
 
@@ -106,18 +117,43 @@ const emit = defineEmits<{
   copyHint: []
   undo: []
   dismissToast: []
+  openSearch: []
+  closeSearch: []
+  openResult: [itemId: string]
 }>()
 
 const tab = defineModel<MainTab>('tab', { default: 'now' })
 const filter = defineModel<string>('filter', { default: 'all' })
+const searchQuery = defineModel<string>('searchQuery', { default: '' })
+const searchStatus = defineModel<SearchFilter>('searchStatus', { default: 'all' })
+
+const searchField = ref<InstanceType<typeof RooInput> | null>(null)
+const showSearch = computed(() => props.searchOpen && searchQuery.value.trim() !== '' && !props.setup && !props.settingsOpen)
+
+// The box takes the keyboard as soon as it opens (Mod+K or the search button).
+watch(
+  () => props.searchOpen,
+  async (open) => {
+    if (!open) return
+    await nextTick()
+    searchField.value?.focus()
+  },
+  { immediate: true, flush: 'post' },
+)
+
+function onSearchEnter(): void {
+  const first = props.searchHits[0]
+  if (showSearch.value && first !== undefined) emit('openResult', first.item.id)
+}
 
 const sidebarWidth = ref(220)
 const paneWidth = ref(380)
 
 const isWide = computed(() => props.width >= 900)
 const hasSidebar = computed(() => props.width >= 720)
-const showSidebar = computed(() => hasSidebar.value && !props.setup && !props.settingsOpen)
-const showPane = computed(() => isWide.value && !props.setup && !props.settingsOpen)
+// The results use the whole window, as in the search mockups: no sidebar and no detail pane while they show.
+const showSidebar = computed(() => hasSidebar.value && !props.setup && !props.settingsOpen && !showSearch.value)
+const showPane = computed(() => isWide.value && !props.setup && !props.settingsOpen && !showSearch.value)
 const isEmptyList = computed(() => props.items.length === 0)
 const listeningProjects = computed(() => props.projects.filter((project) => project.listening))
 const filterChips = computed(() => [
@@ -149,6 +185,22 @@ function onSheetChange(open: boolean): void {
       <template #bar>
         <RooBar platform="mac" data-drag-region @mousedown="onBarPress">
           <template #leading><RooAppMark><AppGlyph /></RooAppMark></template>
+          <template v-if="searchOpen" #jump>
+            <RooInput
+              ref="searchField"
+              v-model="searchQuery"
+              class="search-field"
+              type="search"
+              size="md"
+              aria-label="Search recordings"
+              placeholder="Search recordings"
+              @keydown.enter="onSearchEnter"
+            >
+              <template #trailing>
+                <RooIconButton icon="x" variant="ghost" size="xxs" label="Clear search" tooltip="Clear search" shortcut="Escape" @click="emit('closeSearch')" />
+              </template>
+            </RooInput>
+          </template>
           <template #tools>
             <RooTooltip v-if="update === 'ready'" text="Pointroo has an update. Restarts in a second.">
               <RooBarChip interactive label="Restart to update" @click="emit('restart')">
@@ -161,7 +213,7 @@ function onSheetChange(open: boolean): void {
             <RooTooltip :text="recordTip">
               <RooButton variant="primary" size="sm" :disabled="recordDisabled" :busy="recordState !== 'idle'" disabled-reason="Allow the microphone first" @click="emit('record')">Record</RooButton>
             </RooTooltip>
-            <RooJumpField form="trigger" label="Search" keys="Mod+K" />
+            <RooJumpField v-if="!searchOpen" form="trigger" label="Search" keys="Mod+K" @open="emit('openSearch')" />
             <RooIconButton icon="settings" variant="ghost" label="Settings" tooltip="Settings" shortcut="Mod+," :pressed="settingsOpen" @click="emit('settings')" />
           </template>
         </RooBar>
@@ -185,6 +237,18 @@ function onSheetChange(open: boolean): void {
             @copy="emit('copyHint')"
           />
 
+          <SearchView
+            v-if="showSearch"
+            v-model:status="searchStatus"
+            :query="searchQuery"
+            :hits="searchHits"
+            :loading="searchLoading"
+            :error="searchError"
+            @open="(itemId) => emit('openResult', itemId)"
+            @clear="emit('closeSearch')"
+          />
+
+          <template v-else>
           <div v-if="!hasSidebar" class="main-filter">
             <RooChipGroup :chips="filterChips" />
           </div>
@@ -255,6 +319,7 @@ function onSheetChange(open: boolean): void {
             @copy="(itemId) => emit('copy', itemId)"
             @reveal="(itemId) => emit('reveal', itemId)"
           />
+          </template>
         </div>
       </template>
 
@@ -326,6 +391,10 @@ function onSheetChange(open: boolean): void {
   min-height: 0;
   flex-direction: column;
   gap: var(--roo-space-item);
+}
+
+.search-field {
+  width: 260px;
 }
 
 .main-filter {

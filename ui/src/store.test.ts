@@ -371,6 +371,92 @@ describe('search', () => {
   })
 })
 
+describe('search screen', () => {
+  it('it_passes_the_status_chip_as_the_status_param_and_leaves_it_out_for_all', async () => {
+    const stub = createStubBridge({ 'items.search': () => ({ items: [] }) })
+    const store = createStore(stub.bridge)
+    const first = store.search('delete', 'open')
+    await vi.advanceTimersByTimeAsync(searchDelay)
+    await first
+    const second = store.setSearchStatus('in_progress')
+    await vi.advanceTimersByTimeAsync(searchDelay)
+    await second
+    const third = store.setSearchStatus('all')
+    await vi.advanceTimersByTimeAsync(searchDelay)
+    await third
+    expect(stub.callsTo('items.search').map((call) => call.params)).toEqual([
+      { text: 'delete', status: 'open' },
+      { text: 'delete', status: 'in_progress' },
+      { text: 'delete' },
+    ])
+    expect(store.searchState.status).toBe('all')
+    expect(store.searchState.query).toBe('delete')
+  })
+
+  it('it_keeps_the_chosen_status_for_the_next_words', async () => {
+    const stub = createStubBridge({ 'items.search': () => ({ items: [] }) })
+    const store = createStore(stub.bridge)
+    void store.setSearchStatus('done')
+    const typed = store.search('trash')
+    await vi.advanceTimersByTimeAsync(searchDelay)
+    await typed
+    expect(stub.callsTo('items.search').map((call) => call.params)).toEqual([{ text: 'trash', status: 'done' }])
+  })
+
+  it('it_resets_the_words_the_status_and_the_results_when_the_search_closes', async () => {
+    const stub = createStubBridge({ 'items.search': () => ({ items: [searchResult('s1', 'Move delete away')] }) })
+    const store = createStore(stub.bridge)
+    store.openSearch()
+    expect(store.searchOpen).toBe(true)
+    const found = store.search('delete', 'open')
+    await vi.advanceTimersByTimeAsync(searchDelay)
+    await found
+    expect(store.searchHits).toHaveLength(1)
+    store.closeSearch()
+    expect(store.searchOpen).toBe(false)
+    expect(store.searchState.query).toBe('')
+    expect(store.searchState.status).toBe('all')
+    expect(store.searchState.results).toEqual([])
+    expect(store.searchHits).toEqual([])
+    expect(store.searchState.loading).toBe(false)
+  })
+
+  it('it_has_no_hits_and_no_error_when_nothing_matches', async () => {
+    const stub = createStubBridge({ 'items.search': () => ({ items: [] }) })
+    const store = createStore(stub.bridge)
+    const found = store.search('fuzzy banner')
+    await vi.advanceTimersByTimeAsync(searchDelay)
+    await found
+    expect(store.searchHits).toEqual([])
+    expect(store.searchState.error).toBeUndefined()
+    expect(store.searchState.loading).toBe(false)
+  })
+
+  it('it_gives_each_hit_the_item_and_where_the_words_were_found', async () => {
+    const stub = createStubBridge({ 'items.search': () => ({ items: [searchResult('s1', 'Move delete away')] }) })
+    const store = createStore(stub.bridge)
+    const found = store.search('delete')
+    await vi.advanceTimersByTimeAsync(searchDelay)
+    await found
+    expect(store.searchHits[0]?.item.title).toBe('Move delete away')
+    expect(store.searchHits[0]?.match).toEqual({ field: 'title', snippet: 'Move delete away' })
+  })
+
+  it('it_opens_a_result_in_the_detail_and_closes_the_search', async () => {
+    const stub = createStubBridge({ 'items.search': () => ({ items: [searchResult('s1', 'Move delete away')] }) })
+    const store = createStore(stub.bridge)
+    store.openSearch()
+    const found = store.search('delete')
+    await vi.advanceTimersByTimeAsync(searchDelay)
+    await found
+    store.openSearchResult('s1')
+    expect(store.selectedId).toBe('s1')
+    expect(store.selectedItem?.title).toBe('Move delete away')
+    expect(store.searchOpen).toBe(false)
+    expect(store.searchState.query).toBe('')
+  })
+})
+
 describe('with the fake bridge', () => {
   it('it_goes_from_recording_to_the_picker_to_idle', async () => {
     const store = createStore(createFakeBridge())
