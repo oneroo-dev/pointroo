@@ -25,7 +25,7 @@ import ItemList from './ItemList.vue'
 import ProjectSidebar from './ProjectSidebar.vue'
 import StatusBanner from './StatusBanner.vue'
 import { orderProjects } from './projects'
-import type { Item, MainBanner, MainTab, MainToast, Project } from './types'
+import type { Item, MainBanner, MainTab, MainToast, Project, RecordingView } from './types'
 
 const props = withDefaults(
   defineProps<{
@@ -54,6 +54,10 @@ const props = withDefaults(
     speechText?: string | undefined
     needsYou?: boolean
     toast?: MainToast | undefined
+    /** The whole recording of the selected item, once loaded (see store.loadRecording). */
+    recording?: RecordingView | undefined
+    /** The detail starts with its Recording section open (the mockups). */
+    recordingOpen?: boolean
   }>(),
   {
     selectedItem: undefined,
@@ -72,6 +76,8 @@ const props = withDefaults(
     speechText: undefined,
     needsYou: false,
     toast: undefined,
+    recording: undefined,
+    recordingOpen: false,
   },
 )
 
@@ -91,6 +97,8 @@ const emit = defineEmits<{
   copy: [itemId: string]
   reveal: [itemId: string]
   answer: [item: Item, text: string]
+  later: [item: Item]
+  loadRecording: [session: string]
   allow: [which: NonNullable<MainBanner['which']>]
   useOtherPort: []
   details: []
@@ -220,7 +228,11 @@ function onSheetChange(open: boolean): void {
                 @trash="(itemId) => emit('trash', itemId)"
                 @reopen="(itemId) => emit('reopen', itemId)"
                 @copy="(itemId) => emit('copy', itemId)"
+                :recording="recording"
+                :recording-open="recordingOpen"
                 @answer="(item, text) => emit('answer', item, text)"
+                @later="(item) => emit('later', item)"
+                @load-recording="(session) => emit('loadRecording', session)"
               />
             </template>
           </RooSplit>
@@ -257,7 +269,11 @@ function onSheetChange(open: boolean): void {
           @trash="(itemId) => emit('trash', itemId)"
           @reopen="(itemId) => emit('reopen', itemId)"
           @copy="(itemId) => emit('copy', itemId)"
+          :recording="recording"
+          :recording-open="recordingOpen"
           @answer="(item, text) => emit('answer', item, text)"
+          @later="(item) => emit('later', item)"
+          @load-recording="(session) => emit('loadRecording', session)"
         />
         <RooEmpty v-else title="Pick a recording" description="See what you said and pointed at." icon="mouse-pointer-click" />
       </template>

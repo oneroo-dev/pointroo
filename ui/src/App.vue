@@ -55,6 +55,15 @@ function onAnswer(item: Item, text: string): void {
   void store.answer(item.question, text)
 }
 
+function onLater(item: Item): void {
+  void store.later(item.question)
+}
+
+const selectedRecording = computed(() => {
+  const session = store.selectedItem?.session
+  return session === undefined ? undefined : store.recordings[session]
+})
+
 // The tiles a number key picks: the same order the detail shows them in.
 function tilesForSelected(item: Item) {
   const guess = item.state === 'not-sent' ? item.suggested : projectIdFor(store.projects, item.project)
@@ -115,6 +124,9 @@ function onKey(event: KeyboardEvent): void {
     if (tile === undefined) return
     event.preventDefault()
     void store.send([item.id], tile.id)
+  } else if (event.key.toLowerCase() === 'l' && item.state === 'asks') {
+    event.preventDefault()
+    onLater(item)
   } else if (event.key.toLowerCase() === 'd' && !finished) {
     event.preventDefault()
     void store.done(item.id)
@@ -161,6 +173,7 @@ onBeforeUnmount(() => {
       :needs-you="store.banner !== undefined && store.banner.kind !== 'no-session'"
       :settings-open="store.view === 'settings'"
       :toast="store.toast"
+      :recording="selectedRecording"
       @drag="startDrag"
       @record="onRecord"
       @settings="onSettings"
@@ -175,6 +188,8 @@ onBeforeUnmount(() => {
       @copy="store.copyFor"
       @reveal="onReveal"
       @answer="onAnswer"
+      @later="onLater"
+      @load-recording="store.loadRecording"
       @allow="store.allow"
       @use-other-port="onUseOtherPort"
       @details="store.refresh"

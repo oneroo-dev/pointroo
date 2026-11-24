@@ -1,6 +1,6 @@
 // The bridge for a plain browser (npm run dev): answers from the mockups' sample data and keeps changes in memory.
 // It also answers the methods W2 adds, so every button can be tried without the app.
-import { asks, done, doneByYou, doneOlder, notSent, pointrooWaiting, waiting, working } from '../mockups/data/items'
+import { asks, done, doneByYou, doneOlder, notSent, pointrooWaiting, sampleImage, waiting, working } from '../mockups/data/items'
 import { projects } from '../mockups/data/projects'
 import type { Item } from './parts/types'
 import type { Bridge } from './bridge'
@@ -43,12 +43,14 @@ function toBridgeItem(item: Item): BridgeItem {
     title: item.title,
     body,
     crops: item.crops.map((crop) => `/sample/crops/0${crop.number}.jpg`),
-    cropURLs: [],
+    cropURLs: item.crops.flatMap((crop) => (crop.url === undefined ? [] : [crop.url])),
     status,
     alsoSaid: [],
     at: new Date(Date.now() - minutesAgo(item.age) * 60000).toISOString(),
     said: item.said,
   }
+  if (status === 'done') result.doneAt = result.at ?? new Date().toISOString()
+  if (item.afterUrl !== undefined) result.afterURL = item.afterUrl
   if (item.project !== null) result.project = item.project
   if (item.agent !== undefined && status !== 'open') result.by = item.agent
   if (item.note !== undefined) result.note = item.note
@@ -176,11 +178,14 @@ export function createFakeBridge(): Bridge {
     'items.done': (params) => {
       const item = find(params.id)
       item.status = 'done'
+      item.doneAt = new Date().toISOString()
       changed()
       return { done: true }
     },
     'items.reopen': (params) => {
-      find(params.id).status = 'open'
+      const item = find(params.id)
+      item.status = 'open'
+      delete item.doneAt
       changed()
       return { reopened: true }
     },
@@ -189,6 +194,36 @@ export function createFakeBridge(): Bridge {
       items = items.filter((item) => item.id !== params.id)
       changed()
       return { trashed: true }
+    },
+    'done.recent': (params) => {
+      const limit = Math.min(50, Math.max(1, params.limit ?? 10))
+      const finished = items.filter((item) => item.status === 'done').sort((first, second) => Date.parse(second.doneAt ?? second.at ?? '') - Date.parse(first.doneAt ?? first.at ?? ''))
+      return { items: finished.slice(0, limit) }
+    },
+    'session.get': (params) => {
+      if (typeof params.session !== 'string' || params.session === '') throw new BridgeError('bad_params', 'session is needed.')
+      if (params.session !== 'sample') throw new BridgeError('not_found', 'No such recording.')
+      const mine = items.filter((item) => item.said !== undefined && item.said !== '')
+      return {
+        session: 'sample',
+        started: new Date(Date.now() - 10 * 60000).toISOString(),
+        duration: 95,
+        said: mine.map((item, index) => ({ text: item.said ?? '', start: index * 8, end: index * 8 + 6 })),
+        points: [
+          { at: 2, x: 120, y: 80, app: 'Tinkeroo', window: 'Settings', element: 'Button "Delete"' },
+          { at: 5, x: 220, y: 80, app: 'Tinkeroo', window: 'Settings', element: 'Button "Save"' },
+          { at: 21, x: 400, y: 300, app: 'Safari', url: 'https://example.com/overview' },
+        ],
+        frames: [sampleImage('Frame 1', '#6b7280'), sampleImage('Frame 2', '#3b82f6'), sampleImage('Frame 3', '#10b981')],
+        items: mine.map((item) => item.id),
+      }
+    },
+    'questions.later': (params) => {
+      if (!questions.some((question) => question.id === params.id)) throw new BridgeError('not_found', 'No such question.')
+      const minutes = Math.min(1440, Math.max(1, params.minutes ?? 30))
+      questions = questions.filter((question) => question.id !== params.id)
+      emit('questions.changed', { count: questions.length })
+      return { snoozed: true, until: Date.now() / 1000 + minutes * 60 }
     },
     'questions.list': () => ({ questions }),
     'questions.answer': (params) => {

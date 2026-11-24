@@ -1,5 +1,11 @@
 import type { Item } from './types'
 
+/** A plain picture for the samples, drawn as an SVG so no file is needed. */
+export function sampleImage(label: string, fill: string): string {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="200"><rect width="320" height="200" fill="${fill}"/><text x="16" y="108" font-size="20" font-family="sans-serif" fill="#ffffff">${label}</text></svg>`
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`
+}
+
 export const working: Item = {
   id: 'a1',
   project: 'Tinkeroo',
@@ -106,7 +112,40 @@ export const done: Item = {
   agent: 'Claude Code',
   note: 'Set the sidebar to 200 wide and kept the labels on one line.',
   how: 'said',
-  crops: [{ number: 1, caption: 'Group "Sidebar" · Overview · Tinkeroo' }],
+  crops: [{ number: 1, caption: 'Group "Sidebar" · Overview · Tinkeroo', url: sampleImage('Before', '#6b7280') }],
+  afterUrl: sampleImage('Now', '#3b82f6'),
+}
+
+export const doneToday: Item = {
+  id: 'd4',
+  project: 'Pointroo',
+  state: 'done',
+  title: 'The pill hides behind the menu bar',
+  said: 'The pill hides behind the menu bar, move it down a little.',
+  points: 1,
+  age: '5 hours ago',
+  agent: 'Claude Code',
+  note: 'Moved the pill 8 points down so it clears the menu bar on every screen.',
+  how: 'screen',
+  crops: [{ number: 1, caption: 'Group "Pill" · Pointroo' }],
+}
+
+/** A recording with the Recording section: the detail shows it open in the RecordingOpen frame. */
+export const recorded: Item = {
+  id: 'r1',
+  project: 'Tinkeroo',
+  state: 'working',
+  title: 'Move delete away from save',
+  said: 'The delete button is right next to save, move it away and make it red.',
+  points: 2,
+  age: '4 min ago',
+  agent: 'Claude Code',
+  how: 'said',
+  session: 'sample',
+  crops: [
+    { number: 1, caption: 'Button "Delete" · Settings · Tinkeroo' },
+    { number: 2, caption: 'Button "Save" · Settings · Tinkeroo' },
+  ],
 }
 
 export const doneByYou: Item = {
@@ -137,5 +176,6 @@ export const doneOlder: Item = {
 
 export const nowItems: Item[] = [working, asks, waiting, pointrooWaiting]
 export const doneItems: Item[] = [done, doneByYou, doneOlder]
+export const doneRecent: Item[] = [done, doneToday, doneByYou, doneOlder]
 export const nowCount = 4
 export const doneCount = 18

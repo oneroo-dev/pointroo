@@ -3,12 +3,14 @@
 import { computed, reactive, ref } from 'vue'
 import type { Bridge } from './bridge'
 import { errorText } from './bridge'
-import type { Item, MainBanner, MainTab, MainToast, Project } from './parts/types'
+import type { Item, MainBanner, MainTab, MainToast, Project, RecordingView } from './parts/types'
 import type { BridgeAppStatus, BridgeItem, BridgeProject, BridgeQuestion, PermissionName, RecordingPhase, SettingKey, SettingValue, SettingsValues } from './types'
-import { matchQuestions, toViewItem, toViewProjects } from './viewModel'
+import { matchQuestions, toRecordingView, toViewItem, toViewProjects } from './viewModel'
 
 const undoSeconds = 5
 const plainToastSeconds = 3
+const recentDoneLimit = 50
+const laterMinutes = 30
 
 interface UndoStep {
   itemId: string
@@ -18,6 +20,9 @@ interface UndoStep {
 
 export function createStore(bridge: Bridge) {
   const bridgeItems = ref<BridgeItem[]>([])
+  /** The newest done items from done.recent. Stays undefined while the app does not answer that method. */
+  const recentDone = ref<BridgeItem[] | undefined>(undefined)
+  const recordings = ref<Record<string, RecordingView>>({})
   const bridgeProjects = ref<BridgeProject[]>([])
   const questions = ref<BridgeQuestion[]>([])
   const status = ref<BridgeAppStatus | undefined>(undefined)
@@ -40,9 +45,23 @@ export function createStore(bridge: Bridge) {
 
   const projects = computed<Project[]>(() => toViewProjects(bridgeProjects.value))
   const matched = computed(() => matchQuestions(bridgeItems.value, questions.value))
-  const allItems = computed<Item[]>(() => bridgeItems.value.map((item) => toViewItem(item, matched.value.get(item.id), now.value, projects.value)))
+  // A done item from done.recent wins over the same item from items.list (it knows when it was finished). Done items that
+  // only done.recent has are added, so a row of the Done tab can always be opened.
+  const combinedItems = computed<BridgeItem[]>(() => {
+    const recent = recentDone.value ?? []
+    const recentById = new Map<string, BridgeItem>(recent.map((item): [string, BridgeItem] => [item.id, item]))
+    const known = new Set(bridgeItems.value.map((item) => item.id))
+    return [...bridgeItems.value.map((item) => recentById.get(item.id) ?? item), ...recent.filter((item) => !known.has(item.id))]
+  })
+  const allItems = computed<Item[]>(() => combinedItems.value.map((item) => toViewItem(item, matched.value.get(item.id), now.value, projects.value)))
   const nowItems = computed(() => allItems.value.filter((item) => item.state !== 'done' && item.state !== 'done-by-you'))
-  const doneItems = computed(() => allItems.value.filter((item) => item.state === 'done' || item.state === 'done-by-you'))
+  const doneItems = computed<Item[]>(() => {
+    const finished = allItems.value.filter((item) => item.state === 'done' || item.state === 'done-by-you')
+    const recent = recentDone.value
+    if (recent === undefined) return finished
+    // Newest first, as done.recent sends them.
+    return recent.flatMap((bridgeItem) => finished.filter((item) => item.id === bridgeItem.id))
+  })
   const filterName = computed(() => projects.value.find((project) => project.id === filter.value)?.name)
   const rows = computed<Item[]>(() => {
     const list = tab.value === 'now' ? nowItems.value : doneItems.value
@@ -106,6 +125,15 @@ export function createStore(bridge: Bridge) {
     now.value = new Date()
   }
 
+  /** An app without done.recent is fine: the Done tab then shows the done items of items.list. */
+  async function loadRecentDone(): Promise<void> {
+    try {
+      recentDone.value = (await bridge.call('done.recent', { limit: recentDoneLimit })).items
+    } catch {
+      recentDone.value = undefined
+    }
+  }
+
   async function loadProjects(): Promise<void> {
     bridgeProjects.value = (await bridge.call('projects.list', {})).projects
   }
@@ -120,7 +148,7 @@ export function createStore(bridge: Bridge) {
 
   async function runRefresh(): Promise<void> {
     try {
-      await Promise.all([loadItems(), loadProjects(), loadQuestions(), loadStatus()])
+      await Promise.all([loadItems(), loadRecentDone(), loadProjects(), loadQuestions(), loadStatus()])
     } catch (error) {
       fail(error)
     } finally {
@@ -280,6 +308,30 @@ export function createStore(bridge: Bridge) {
     await refresh()
   }
 
+  /** Puts a question off. It comes back after laterMinutes. There is no undo in the app, so the toast has none either. */
+  async function later(question: Item['question']): Promise<void> {
+    if (question?.id === undefined) return
+    try {
+      await bridge.call('questions.later', { id: question.id, minutes: laterMinutes })
+      showToast(`Back in ${laterMinutes} minutes.`, 'ok', false)
+    } catch (error) {
+      fail(error)
+    }
+    await refresh()
+  }
+
+  /** Loads a whole recording once the user opens the Recording section. A loaded one is kept; a failed one is tried again. */
+  async function loadRecording(session: string): Promise<void> {
+    const existing = recordings.value[session]
+    if (existing !== undefined && existing.state !== 'error') return
+    recordings.value = { ...recordings.value, [session]: { state: 'loading', said: [], frames: [], points: [] } }
+    try {
+      recordings.value = { ...recordings.value, [session]: toRecordingView(await bridge.call('session.get', { session })) }
+    } catch (error) {
+      recordings.value = { ...recordings.value, [session]: { state: 'error', message: errorText(error), said: [], frames: [], points: [] } }
+    }
+  }
+
   async function allow(which: PermissionName): Promise<void> {
     try {
       await bridge.call('permissions.ask', { which })
@@ -401,6 +453,9 @@ export function createStore(bridge: Bridge) {
     copyFor,
     copyText,
     answer,
+    later,
+    recordings,
+    loadRecording,
     allow,
     useAnotherPort,
     checkUpdates,

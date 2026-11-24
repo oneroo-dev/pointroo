@@ -25,10 +25,29 @@ export function pointsWord(count: number): string {
 }
 
 export function subtitleFor(item: Item, doneTab = false): string {
-  if (doneTab && item.note) return item.note
+  if (doneTab && item.note) return `${item.project ?? 'Not sent'} · ${item.age} · ${item.note.replace(/\s+/g, ' ').trim()}`
   if (item.state === 'not-sent') return `Not sent yet · ${pointsWord(item.points)} · ${item.age}`
   const agent = item.state === 'working' && item.agent ? ` · ${item.agent}` : ''
   return `${item.project}${agent} · ${pointsWord(item.points)} · ${item.age}`
+}
+
+function squash(text: string): string {
+  return text.replace(/\[\d+\]/g, ' ').replace(/\s+/g, ' ').trim()
+}
+
+export interface SaidPiece {
+  text: string
+  /** True when the item's own words include this piece. */
+  own: boolean
+}
+
+/** The phrases of a whole recording, each flagged when the item's own words (with their [n] marks) contain it. */
+export function markOwnWords(phrases: string[], ownWords: string): SaidPiece[] {
+  const own = squash(ownWords)
+  return phrases.map((text) => {
+    const plain = squash(text)
+    return { text, own: own !== '' && plain !== '' && own.includes(plain) }
+  })
 }
 
 export function sentToWords(how: RouteHow, followsTitle?: string): string {
