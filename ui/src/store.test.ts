@@ -66,8 +66,8 @@ function createStubBridge(overrides: Record<string, Handler> = {}) {
   return { bridge, calls, callsTo, emit }
 }
 
-function flush(): Promise<void> {
-  return vi.advanceTimersByTimeAsync(0)
+async function flush(): Promise<void> {
+  await vi.advanceTimersByTimeAsync(0)
 }
 
 /** The fake bridge answers after a (fake) timer, so time must run while the call is awaited. */
