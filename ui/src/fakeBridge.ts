@@ -127,6 +127,8 @@ export function createFakeBridge(): Bridge {
 
   // Sample permissions: screen recording starts off so Settings shows an Allow button; asking turns it on.
   const permissions: Record<PermissionName, boolean> = { microphone: true, screenRecording: false, accessibility: true }
+  // The sample auto-start run goes away when autoRuns.stop is called; changing the Auto-start setting brings it back.
+  let sampleRunStopped = false
   const settingValues: Record<SettingKey, SettingValue> = {
     sounds: true,
     doubleControl: true,
@@ -169,12 +171,13 @@ export function createFakeBridge(): Bridge {
       throw new BridgeError('bad_params', `${key} is on or off (true or false).`)
     }
     settingValues[key] = value
+    if (key === 'autoStartAgent') sampleRunStopped = false
     return { key, value }
   }
 
   function statusNow(): BridgeAppStatus {
     // One sample run, only while Auto-start is on, so the Settings frame can show "1 run going".
-    const autoRuns = settingValues.autoStartAgent === 'off' ? [] : [{ project: '/Users/sample/Workspace/tinkeroo', startedAt: new Date(Date.now() - 90000).toISOString() }]
+    const autoRuns = settingValues.autoStartAgent === 'off' || sampleRunStopped ? [] : [{ project: '/Users/sample/Workspace/tinkeroo', startedAt: new Date(Date.now() - 90000).toISOString() }]
     const lastAutoRun = settingValues.autoStartAgent === 'claude' ? { project: '/Users/sample/Workspace/tinkeroo', endedAt: new Date(Date.now() - 600000).toISOString(), exitCode: 0, cost: 0.42 } : undefined
     return { mcpRunning: true, mcpPort: 6742, mcpText: 'Shared MCP server: running on 127.0.0.1:6742', sessions: 2, agents: ['Claude Code', 'Codex'], autoRuns, ...(lastAutoRun === undefined ? {} : { lastAutoRun }), ...permissions }
   }
@@ -435,6 +438,13 @@ export function createFakeBridge(): Bridge {
     'window.startDrag': () => ({ dragging: true }),
     'server.useAnotherPort': () => ({ asked: true }),
     'app.checkUpdates': () => ({ asked: true }),
+    'autoRuns.stop': (params) => {
+      if (params.project === '') throw new BridgeError('bad_params', 'project is needed.')
+      const wasGoing = settingValues.autoStartAgent !== 'off' && !sampleRunStopped
+      sampleRunStopped = true
+      if (wasGoing) emit('status.changed', statusNow())
+      return { stopped: wasGoing }
+    },
   }
 
   window.pointrooDev = {

@@ -234,6 +234,9 @@ final class AutoStartTests: XCTestCase {
         var scheduled: [(seconds: TimeInterval, work: @Sendable () -> Void)] = []
         var logs: [String] = []
         var changeCount = 0
+        /// One entry per started run, in order: how many times its stopper was asked to terminate and to kill.
+        var terminateCounts: [Int] = []
+        var killCounts: [Int] = []
 
         lazy var runner = AutoStartRunner(
             options: { self.options },
@@ -244,6 +247,11 @@ final class AutoStartTests: XCTestCase {
                 if let error = self.startError { throw error }
                 self.started.append(request)
                 self.finishers.append(finish)
+                let index = self.terminateCounts.count
+                self.terminateCounts.append(0)
+                self.killCounts.append(0)
+                return AutoStartRunner.Stopper(terminate: { self.terminateCounts[index] += 1 },
+                                               kill: { self.killCounts[index] += 1 })
             },
             schedule: { seconds, work in self.scheduled.append((seconds, work)) },
             now: { self.clock },
@@ -436,5 +444,85 @@ final class AutoStartTests: XCTestCase {
         harness.runner.routed(folder: "/work/shop")
         harness.letTimePass()
         XCTAssertEqual(harness.logs.first, "start /work/shop: model opus, effort high, budget 4, permission auto")
+    }
+
+    func testStopOnAGoingRunTerminatesItAndLogsIt() {
+        let harness = Harness()
+        harness.runner.routed(folder: "/work/shop")
+        harness.letTimePass()
+        XCTAssertTrue(harness.runner.stop(project: "/work/shop/"))
+        XCTAssertEqual(harness.terminateCounts, [1])
+        XCTAssertEqual(harness.killCounts, [0], "the hard kill waits for the scheduler")
+        XCTAssertTrue(harness.logs.contains("stopped by user /work/shop/"), "\(harness.logs)")
+        XCTAssertEqual(harness.scheduled.last?.seconds, 5)
+        XCTAssertEqual(harness.runner.runs.count, 1, "the folder is freed by the normal finish, not by stop")
+        harness.finishers[0](AutoStartRunner.Outcome(exitCode: 15, output: ""))
+        XCTAssertTrue(harness.runner.runs.isEmpty)
+        XCTAssertEqual(harness.runner.lastRun?.exitCode, 15)
+    }
+
+    func testStopWithNoRunGoingReturnsFalseAndTerminatesNothing() {
+        let harness = Harness()
+        XCTAssertFalse(harness.runner.stop(project: "/work/shop"))
+        harness.runner.routed(folder: "/work/shop")
+        XCTAssertFalse(harness.runner.stop(project: "/work/shop"), "waiting is not going")
+        harness.letTimePass()
+        XCTAssertFalse(harness.runner.stop(project: "/work/blog"), "another folder")
+        XCTAssertEqual(harness.terminateCounts, [0])
+        XCTAssertFalse(harness.logs.contains { $0.hasPrefix("stopped") })
+    }
+
+    func testTheKillComesAfterFiveSecondsOnlyWhileTheSameRunIsGoing() {
+        let harness = Harness()
+        harness.runner.routed(folder: "/work/shop")
+        harness.letTimePass()
+        XCTAssertTrue(harness.runner.stop(project: "/work/shop"))
+        harness.letTimePass(5)
+        XCTAssertEqual(harness.killCounts, [1], "still running after 5 seconds, so it is killed")
+
+        harness.finishers[0](AutoStartRunner.Outcome(exitCode: 15, output: ""))
+        harness.runner.routed(folder: "/work/shop")
+        harness.letTimePass()
+        XCTAssertTrue(harness.runner.stop(project: "/work/shop"))
+        harness.finishers[1](AutoStartRunner.Outcome(exitCode: 15, output: ""))
+        harness.runner.routed(folder: "/work/shop")
+        harness.scheduled.reverse()
+        harness.letTimePass()
+        XCTAssertEqual(harness.started.count, 3, "a new run is going in the same folder")
+        XCTAssertEqual(harness.killCounts, [1, 0, 0], "the late kill for run two came after run three started and must not touch it")
+    }
+
+    func testStopAllStopsEveryRunAndLogsEach() {
+        let harness = Harness()
+        harness.runner.routed(folder: "/work/shop")
+        harness.runner.routed(folder: "/work/blog")
+        harness.letTimePass()
+        harness.runner.stopAll()
+        XCTAssertEqual(harness.terminateCounts, [1, 1])
+        XCTAssertEqual(harness.killCounts, [1, 1], "at quit there is no 5 second wait")
+        XCTAssertTrue(harness.logs.contains("stopped at quit \(AutoStart.key(for: "/work/shop"))"), "\(harness.logs)")
+        XCTAssertTrue(harness.logs.contains("stopped at quit \(AutoStart.key(for: "/work/blog"))"), "\(harness.logs)")
+    }
+
+    func testStopAllWithNoRunsDoesNothing() {
+        let harness = Harness()
+        harness.runner.stopAll()
+        XCTAssertTrue(harness.logs.isEmpty)
+    }
+
+    func testTheBridgeStopsARunThroughTheGivenClosure() throws {
+        var asked: [String] = []
+        let subject = WebBridge(defaults: defaults, stopAutoRun: { asked.append($0); return $0 == "/work/shop" })
+        func stopped(_ params: [String: Any]) throws -> Bool? {
+            let reply = try T1Support.replyObject(subject.handle(message: ["id": 1, "method": "autoRuns.stop", "params": params]))
+            return (reply["result"] as? [String: Any])?["stopped"] as? Bool
+        }
+        XCTAssertEqual(try stopped(["project": "/work/shop"]), true)
+        XCTAssertEqual(try stopped(["project": "/work/unknown"]), false)
+        XCTAssertEqual(asked, ["/work/shop", "/work/unknown"])
+        for bad in [[:], ["project": ""], ["project": 5], ["project": NSNull()]] as [[String: Any]] {
+            XCTAssertEqual(try T1Support.errorCode(subject.handle(message: ["id": 1, "method": "autoRuns.stop", "params": bad])), "bad_params", "\(bad)")
+        }
+        XCTAssertEqual(asked.count, 2, "bad params never reach the closure")
     }
 }

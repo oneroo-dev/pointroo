@@ -200,6 +200,8 @@ export interface BridgeMethods {
   'picker.skip': { params: Record<string, never>; result: { skipped: true } }
   'notices.list': { params: { limit?: number }; result: { notices: Notice[] } }
   'notices.seen': { params: { ids: string[] }; result: { seen: number } }
+  // Added by R34 (the Swift side).
+  'autoRuns.stop': { params: { project: string }; result: { stopped: boolean } }
 }
 
 export type BridgeMethod = keyof BridgeMethods
