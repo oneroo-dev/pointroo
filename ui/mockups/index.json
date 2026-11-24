@@ -54,6 +54,11 @@
     "SearchLiveEmpty",
     "SearchLiveLoading",
     "SearchLiveError",
+    "FloatPillLive",
+    "FloatPillLiveProcessing",
+    "FloatPickerLive",
+    "FloatNoticeDoneLive",
+    "FloatNoticeQuestionLive",
     "MenuBarMenu",
     "HowItWorks"
   ],
@@ -110,6 +115,11 @@
     "SearchLiveEmpty": "Real window: search, no results",
     "SearchLiveLoading": "Real window: search, loading",
     "SearchLiveError": "Real window: search, error",
+    "FloatPillLive": "Real panel: pill, recording",
+    "FloatPillLiveProcessing": "Real panel: pill, making items",
+    "FloatPickerLive": "Real panel: picker",
+    "FloatNoticeDoneLive": "Real panel: notice, done",
+    "FloatNoticeQuestionLive": "Real panel: notice, question",
     "MenuBarMenu": "Menu bar menu",
     "HowItWorks": "How it works"
   }

@@ -222,6 +222,7 @@ final class WebBridgeGapTests: XCTestCase {
         XCTAssertEqual(Set(values.keys), Set(WebBridge.allowedSettings.map(\.key)))
         XCTAssertEqual(values["sounds"] as? Bool, true)
         XCTAssertEqual(values["kitWindow"] as? Bool, true)
+        XCTAssertEqual(values["kitFloating"] as? Bool, false)
         XCTAssertEqual(values["autoSendSingle"] as? Bool, true)
         XCTAssertEqual(values["connectAgents"] as? Bool, false)
         XCTAssertEqual(values["holdToTalk"] as? Bool, false)

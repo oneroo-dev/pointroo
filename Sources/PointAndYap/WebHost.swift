@@ -19,7 +19,19 @@ final class WebHost {
     /// The folder inside the app that holds the built screens (Contents/Resources/ui).
     static var bundleFolder: URL? { Bundle.main.resourceURL?.appendingPathComponent("ui", isDirectory: true) }
 
-    init(bridge: WebBridge = WebBridge()) {
+    /// True when the built screens are in the app (Contents/Resources/ui/index.html), or a dev address is set.
+    static var uiAvailable: Bool {
+        if devURL(from: Prefs.webDevURL) != nil { return true }
+        guard let folder = bundleFolder else { return false }
+        return FileManager.default.fileExists(atPath: folder.appendingPathComponent("index.html").path)
+    }
+
+    /// What a floating page posts besides bridge calls (its size, "open this item"). Set by the panel that holds this host.
+    var onFloatMessage: (([String: Any]) -> Void)?
+
+    /// `route` makes this a floating panel's page: it is "pill", "picker" or "notice", put into window.pointrooRoute before the page
+    /// loads (the page then shows that one small screen), and the page may post to the second handler, pointrooFloat. Nil = the main window.
+    init(bridge: WebBridge = WebBridge(), route: String? = nil) {
         self.bridge = bridge
         let configuration = WKWebViewConfiguration()
         configuration.setURLSchemeHandler(WebImageHandler(), forURLScheme: WebImages.scheme)   // must come before the web view is made
@@ -31,6 +43,12 @@ final class WebHost {
         webView.underPageBackgroundColor = .clear
         webView.navigationDelegate = policy
         configuration.userContentController.add(WeakScriptHandler(host: self), name: "pointroo")
+        if let route {
+            // The route names are fixed words (see FloatingRoute), so putting one inside quotes is safe.
+            let script = WKUserScript(source: "window.pointrooRoute = \"\(route)\";", injectionTime: .atDocumentStart, forMainFrameOnly: true)
+            configuration.userContentController.addUserScript(script)
+            configuration.userContentController.add(WeakFloatHandler(host: self), name: "pointrooFloat")
+        }
     }
 
     /// Loads the dev address when one is set, else ui/index.html from the app, with read access to that folder only.
@@ -133,6 +151,11 @@ final class WebHost {
         webView.evaluateJavaScript(bridge.handle(message: body), completionHandler: nil)
     }
 
+    fileprivate func receiveFloat(_ body: Any) {
+        guard let message = body as? [String: Any] else { return }
+        onFloatMessage?(message)
+    }
+
     /// Only a plain http address on this Mac is allowed as the dev address.
     nonisolated static func devURL(from text: String?) -> URL? {
         guard let text, !text.isEmpty, let url = URL(string: text), url.scheme == "http",
@@ -183,6 +206,18 @@ private final class NavigationPolicy: NSObject, WKNavigationDelegate {
             return
         }
         decisionHandler(.allow)
+    }
+}
+
+/// The same for the second handler, pointrooFloat (a floating page's size and open requests).
+private final class WeakFloatHandler: NSObject, WKScriptMessageHandler {
+    weak var host: WebHost?
+
+    init(host: WebHost) { self.host = host }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        let body = message.body
+        Task { @MainActor [weak host] in host?.receiveFloat(body) }
     }
 }
 

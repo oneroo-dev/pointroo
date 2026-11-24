@@ -69,8 +69,19 @@ final class DoneBanner {
     /// Tests set this to false so no window opens.
     var opensPanel = true
 
+    /// Set by the app. When the kitFloating setting is on it puts the kit notice panel on screen and returns true, so the SwiftUI banner
+    /// is skipped; otherwise it returns false and the banner shows as before. The kit card marks its item seen itself (a click on it
+    /// does), or this class does when the card times out, so the notices list still has the item while the card is up.
+    var presentsOutside: ((BannerNotice) -> Bool)?
+    /// Called when a banner that `presentsOutside` showed has run its time.
+    var hidesOutside: (() -> Void)?
+    /// How long the kit card stays up before it hides by itself. The SwiftUI banner stays 4 seconds.
+    static let outsideSeconds: UInt64 = 10
+
     private var queue = BannerQueue()
     private var panel: NSPanel?
+    private var shownOutside = false
+    private var outsideItemId: String?
 
     func show(project: String, note: String, before: URL? = nil, after: URL? = nil, session: URL? = nil, itemId: String? = nil,
               onClick: @escaping () -> Void) {
@@ -81,13 +92,23 @@ final class DoneBanner {
 
     private func showNext() {
         guard let notice = queue.next(paused: paused) else { return }
-        if opensPanel { present(notice) }
-        if let itemId = notice.itemId { markSeen(itemId) }
+        var outside = false
+        if opensPanel {
+            outside = presentsOutside?(notice) ?? false
+            if !outside { present(notice) }
+        }
+        if outside {
+            shownOutside = true
+            outsideItemId = notice.itemId
+        } else if let itemId = notice.itemId {
+            markSeen(itemId)
+        }
         onShown?()
         generation += 1
         let mine = generation
+        let seconds: UInt64 = outside ? Self.outsideSeconds : 4
         Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            try? await Task.sleep(nanoseconds: seconds * 1_000_000_000)
             if let self, self.generation == mine { self.finish() }
         }
     }
@@ -109,6 +130,13 @@ final class DoneBanner {
     private func finish() {
         generation += 1
         panel?.orderOut(nil)
+        if shownOutside {
+            shownOutside = false
+            // Seen first, then the card hides and reads the list again, so it does not find the item.
+            if let itemId = outsideItemId { markSeen(itemId) }
+            outsideItemId = nil
+            hidesOutside?()
+        }
         queue.finished()
         showNext()
     }

@@ -124,6 +124,7 @@ export type SettingKey =
   | 'listenAfterDone'
   | 'autoSendSingle'
   | 'kitWindow'
+  | 'kitFloating'
   | 'locale'
 
 export type SettingValue = boolean | string

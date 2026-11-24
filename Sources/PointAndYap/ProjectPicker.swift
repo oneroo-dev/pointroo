@@ -13,6 +13,10 @@ enum ProjectPicker {
     /// Opens the window for the choices and calls the closure with the answer (a click or a key). Tests replace it so no window opens.
     static var makePanel: ([Project], @escaping @MainActor (Project?) -> Void) -> PickerHandle = ProjectPicker.makeRealPanel
 
+    /// Set by the app: when the kitFloating setting is on it shows the kit picker panel and returns its handle; otherwise it returns nil
+    /// and the SwiftUI picker opens as before. The page answers through the bridge (picker.pick, picker.skip); the keys go to answerKey.
+    static var makeKitPanel: (([Project]) -> PickerHandle?)?
+
     /// Sleeps this many seconds before the picker skips by itself. Tests replace it so they do not wait.
     static var pause: (Int) async -> Void = { seconds in
         try? await Task.sleep(nanoseconds: UInt64(seconds) * 1_000_000_000)
@@ -57,6 +61,16 @@ enum ProjectPicker {
         return true
     }
 
+    /// What a key press does to the open picker: Esc (key code 53) skips, a digit 1 to 9 picks the project in that place.
+    /// True when the key was used (so the panel does not pass it on). False when no picker is open or the key means nothing here.
+    @discardableResult
+    static func answerKey(keyCode: UInt16, characters: String?) -> Bool {
+        guard waiting != nil, let open else { return false }
+        if keyCode == 53 { return answer(nil) }
+        guard let digit = Int(characters ?? ""), digit >= 1, digit <= open.choices.count else { return false }
+        return answer(open.choices[digit - 1])
+    }
+
     private static func finish(_ project: Project?) {
         panel?.close()
         panel = nil
@@ -78,6 +92,7 @@ enum ProjectPicker {
     }
 
     private static func makeRealPanel(_ choices: [Project], _ done: @escaping @MainActor (Project?) -> Void) -> PickerHandle {
+        if let kitHandle = makeKitPanel?(choices) { return kitHandle }
         let host = NSHostingView(rootView: PickerView(projects: choices, pick: { done($0) }))
         let height = CGFloat(choices.count) * 34 + 78
         host.frame = NSRect(x: 0, y: 0, width: 340, height: height)

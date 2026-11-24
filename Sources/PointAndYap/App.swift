@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 @main
@@ -45,6 +46,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var kitHost: WebHost?
     private var windowSwapper: MainWindowSwapper?
     private var pill: NSPanel!
+    /// The kit pill, picker and notice panels; used only while the kitFloating setting is on (FloatingChoice).
+    private var floatingSurfaces: FloatingSurfaces?
+    private var phaseSubscription: AnyCancellable?
     private var previousApp: NSRunningApplication?
     private var doubleControl: DoubleControl?
     private var statusItem: StatusItem?
@@ -85,6 +89,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         MCPListener.startAtLaunch { [weak self] in self?.state.toast = $0 }
         state.ownUI = { [weak self] in self?.pillRect() }
         state.onRecordingChanged = { [weak self] on in self?.recording(on) }
+        setUpFloatingSurfaces()
         // Agent configs are only touched after a yes: the first launch asks, later launches follow the switch.
         if AgentInstall.installed {
             if AgentInstall.needsAsking() { state.askAgents = AgentInstall.status().map(\.name) }
@@ -137,11 +142,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                                 uiAvailable: uiAvailable)
     }
 
-    private static var uiAvailable: Bool {
-        if WebHost.devURL(from: Prefs.webDevURL) != nil { return true }
-        guard let folder = WebHost.bundleFolder else { return false }
-        return FileManager.default.fileExists(atPath: folder.appendingPathComponent("index.html").path)
-    }
+    private static var uiAvailable: Bool { WebHost.uiAvailable }
 
     private func buildWindow(_ choice: MainWindowChoice) {
         switch choice {
@@ -183,12 +184,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.setFrameAutosaveName("PointMain")
     }
 
-    /// The main window made of the kit screens (a web view). The traffic lights stay native over the page.
+    /// A bridge for one web view: the kit main window, or one of the floating kit panels (each web view has its own).
     /// The bridge runs on the main actor (WebHost hands each page message to it there), so its closures use MainActor.assumeIsolated
     /// to reach AppState. After a change they call loadSessions, so the SwiftUI side and the status item see it too.
-    private func makeKitWindow() {
+    private func makeWebBridge() -> WebBridge {
         let state = self.state
-        let bridge = WebBridge(
+        return WebBridge(
             reroute: { id, project in MainActor.assumeIsolated { state.reroute(id, to: project) } },
             askPermission: { which in
                 MainActor.assumeIsolated {
@@ -234,12 +235,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             },
             useAnotherPort: { MainActor.assumeIsolated { state.useAnotherPort() } },
             checkUpdates: { MainActor.assumeIsolated { Updater.shared.checkNow() } })
+    }
+
+    /// The main window made of the kit screens (a web view). The traffic lights stay native over the page.
+    private func makeKitWindow() {
         // One WebHost for the life of the app: a swap back to the kit window moves the same web view into the new window.
         let host: WebHost
         if let existing = kitHost {
             host = existing
         } else {
-            host = WebHost(bridge: bridge)
+            host = WebHost(bridge: makeWebBridge())
             host.load()
             kitHost = host
         }
@@ -297,10 +302,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if on {
             window.orderOut(nil)
             kitHost?.stopEvents()
-            let screen = NSScreen.main ?? NSScreen.screens[0]
-            let f = screen.visibleFrame
-            pill.setFrameOrigin(NSPoint(x: f.midX - 100, y: f.maxY - 52))
-            pill.orderFrontRegardless()
+            if FloatingChoice.useKitNow, let surfaces = floatingSurfaces {
+                surfaces.showPill()
+            } else {
+                let screen = NSScreen.main ?? NSScreen.screens[0]
+                let f = screen.visibleFrame
+                pill.setFrameOrigin(NSPoint(x: f.midX - 100, y: f.maxY - 52))
+                pill.orderFrontRegardless()
+            }
             // Hand the screen back to the app that was in front before Pointroo.
             previousApp?.activate()
         } else {
@@ -311,10 +320,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     /// The pill in global top-left coordinates, with a margin.
     private func pillRect() -> CGRect? {
-        guard pill.isVisible else { return nil }
+        let shown: NSRect
+        if let kitFrame = floatingSurfaces?.pillFrame {
+            shown = kitFrame
+        } else if pill.isVisible {
+            shown = pill.frame
+        } else {
+            return nil
+        }
         let h = NSScreen.screens.first?.frame.height ?? 0
-        let f = pill.frame.insetBy(dx: -12, dy: -12)
+        let f = shown.insetBy(dx: -12, dy: -12)
         return CGRect(x: f.minX, y: h - f.maxY, width: f.width, height: f.height)
+    }
+
+    /// Makes the kit floating panels and hooks them into the three places that may use them: the project picker, the done banner and
+    /// the recording pill. Each place asks FloatingChoice when it shows, so with the kitFloating setting off none of this runs and the
+    /// SwiftUI pill, picker and banner work as before.
+    private func setUpFloatingSurfaces() {
+        let surfaces = FloatingSurfaces(state: state, makeBridge: { [unowned self] in self.makeWebBridge() },
+                                        openItem: { [weak self] id in self?.openItemFromFloating(id) })
+        floatingSurfaces = surfaces
+        ProjectPicker.makeKitPanel = { _ in FloatingChoice.useKitNow ? surfaces.showPicker() : nil }
+        DoneBanner.shared.presentsOutside = { _ in
+            guard FloatingChoice.useKitNow else { return false }
+            surfaces.showNotice()
+            return true
+        }
+        DoneBanner.shared.hidesOutside = { surfaces.hideNotice() }
+        // The kit pill stays up while the recording is made into items, and goes when the phase is idle again (also after Cancel).
+        phaseSubscription = state.$phase.sink { phase in
+            if phase == .idle { MainActor.assumeIsolated { surfaces.hidePill() } }
+        }
+    }
+
+    /// "Open" on a kit notice: show the main window on that item.
+    private func openItemFromFloating(_ id: String) {
+        state.selectedItem = id
+        showWindow()
     }
 
     /// ⌘Q and the menu's Quit: the user's choice, so no reopen.
