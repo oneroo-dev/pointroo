@@ -48,7 +48,7 @@ export const autoStartChoices: Record<AutoStartChoiceKey, { label: string; fallb
 }
 
 export const budgetFallback = 2
-const budgetSteps = [0.5, 1, 2, 5, 10, 20]
+export const budgetSteps = [0.5, 1, 2, 5, 10, 20]
 
 /** The saved choice, or the app's default when the app has not sent one (or sent something that is not a choice here). */
 export function choiceValue(values: SettingsValues, key: AutoStartChoiceKey): string {
