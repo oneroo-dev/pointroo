@@ -1,6 +1,6 @@
 // What the app (Swift) sends over the bridge. Matches Sources/PointAndYap/WebBridge.swift. A key marked ? is left out when it has no value.
 
-export type BridgeErrorCode = 'bad_request' | 'unknown_method' | 'bad_params' | 'not_found' | 'not_available' | 'refused'
+export type BridgeErrorCode = 'bad_request' | 'unknown_method' | 'bad_params' | 'not_found' | 'not_available' | 'refused' | 'busy'
 
 export type BridgeStatus = 'open' | 'in_progress' | 'done'
 
@@ -167,18 +167,107 @@ export interface BridgeMethods {
   'window.startDrag': { params: Record<string, never>; result: { dragging: true } }
   'server.useAnotherPort': { params: Record<string, never>; result: { asked: true } }
   'app.checkUpdates': { params: Record<string, never>; result: { asked: true } }
+  // Added for W5 (the Swift side is on main).
+  'items.search': { params: ItemsSearchParams; result: { items: SearchResult[] } }
+  'recording.start': { params: { followUp?: string }; result: { started: true; followUp?: string } }
+  'recording.stop': { params: Record<string, never>; result: { stopped: true } }
+  'recording.cancel': { params: Record<string, never>; result: { cancelled: true } }
+  'recording.get': { params: Record<string, never>; result: RecordingSnapshot }
+  'picker.get': { params: Record<string, never>; result: PickerSnapshot }
+  'picker.pick': { params: { path: string }; result: { picked: true } }
+  'picker.skip': { params: Record<string, never>; result: { skipped: true } }
+  'notices.list': { params: { limit?: number }; result: { notices: Notice[] } }
+  'notices.seen': { params: { ids: string[] }; result: { seen: number } }
 }
 
 export type BridgeMethod = keyof BridgeMethods
 
-export type RecordingPhase = 'idle' | 'recording' | 'processing'
+/** "picking" is the time the project picker is open. */
+export type RecordingPhase = 'idle' | 'recording' | 'processing' | 'picking'
+
+/** The answer of recording.get. */
+export interface RecordingSnapshot {
+  phase: RecordingPhase
+  /** ISO date, only while recording. */
+  startedAt?: string
+  points: number
+  /** The last few spoken words, when the app has them. */
+  words?: string[]
+}
+
+export interface PickerChoice {
+  name: string
+  path: string
+  /** The number key, 1 to 9. */
+  key: number
+  /** True for the folder the router guessed. */
+  suggested: boolean
+}
+
+/** The answer of picker.get: closed, or open with the choices in number-key order. */
+export type PickerSnapshot =
+  | { open: false }
+  | {
+      open: true
+      /** The recording the picker asks about. */
+      session?: string
+      choices: PickerChoice[]
+      /** Whole seconds before it skips by itself. */
+      countdown?: number
+    }
+
+/** A done item an agent finished that the user has not seen yet. */
+export interface DoneNotice {
+  kind: 'done'
+  /** The item id. */
+  id: string
+  agent: string
+  project?: string
+  projectName?: string
+  note?: string
+  /** The first crop. */
+  cropURL?: string
+  afterURL?: string
+  /** ISO date. */
+  at?: string
+}
+
+/** A pending question: the Question keys plus kind "question". */
+export interface QuestionNotice extends BridgeQuestion {
+  kind: 'question'
+}
+
+export type Notice = DoneNotice | QuestionNotice
+
+/** An item from items.search plus where the text was found. */
+export interface SearchResult extends BridgeItem {
+  match: { field: SearchField; snippet: string }
+}
+
+/** The fields items.search can hit. */
+export type SearchField = 'title' | 'body' | 'said' | 'alsoSaid' | 'note' | 'project' | 'firstElement'
+
+export type SearchStatus = BridgeStatus | 'trashed' | 'any'
+
+export interface ItemsSearchParams {
+  /** 1 to 200 characters. */
+  text: string
+  status?: SearchStatus
+  /** Whole number 1 to 100, default 30. */
+  limit?: number
+}
 
 /** Every event the app can send, with its data. */
 export interface BridgeEvents {
   'items.changed': { count: number; open: number; inProgress: number }
   'questions.changed': { count: number }
   'recording.changed': { phase: RecordingPhase; pointCount: number }
+  'picker.changed': { open: boolean; session?: string }
+  'notices.changed': { count: number }
   'status.changed': BridgeAppStatus
 }
 
 export type BridgeEventName = keyof BridgeEvents
+
+/** The picker while it is open (the open case of PickerSnapshot). */
+export type OpenPicker = Extract<PickerSnapshot, { open: true }>
