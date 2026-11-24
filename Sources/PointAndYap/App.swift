@@ -99,7 +99,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             Task {
                 let notice = await AfterShot.notice(item: item, project: project)
                 DoneBanner.shared.show(project: notice.project, note: notice.note, before: notice.before, after: notice.after,
-                                       session: notice.session) { self?.showWindow() }
+                                       session: notice.session, itemId: notice.itemId) { self?.showWindow() }
             }
         }
         // Agents mark items done from their own processes: look again, with the window hidden too (the scan is off the main actor).
