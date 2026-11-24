@@ -123,7 +123,7 @@ final class ProjectPickerTests: XCTestCase {
     func testTimeoutSkipsAndALatePickIsFalse() async {
         let task = await openPicker([backend, web])
         XCTAssertEqual(sleepers.count, 1)
-        sleepers[0].resume()
+        sleepers.removeFirst().resume()
         let picked = await task.value
         XCTAssertNil(picked)
         XCTAssertEqual(closedWindows, 1)
@@ -138,7 +138,7 @@ final class ProjectPickerTests: XCTestCase {
         XCTAssertEqual(firstPicked, backend)
         let second = await openPicker([web])
         XCTAssertEqual(sleepers.count, 2)
-        sleepers[0].resume()
+        sleepers.removeFirst().resume()
         for _ in 0..<20 { await Task.yield() }
         XCTAssertNotNil(ProjectPicker.snapshot())
         XCTAssertTrue(ProjectPicker.answer(web))
