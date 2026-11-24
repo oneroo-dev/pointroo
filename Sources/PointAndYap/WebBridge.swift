@@ -25,7 +25,7 @@ import Foundation
 ///   item.focus         {id}                        the app was asked to open this item (Open on a notice card, the done banner, a pointroo://item/<id>
 ///                      link); the main window page selects it. Sent to the kit main window's page by the app (WebHost.focusItem), not by
 ///                      the timer; if the page has not loaded yet it is sent right after the load.
-///   status.changed     {mcpRunning, mcpPort, mcpText, sessions, agents, microphone, screenRecording, accessibility}
+///   status.changed     {mcpRunning, mcpPort, mcpText, sessions, agents, microphone, screenRecording, accessibility, autoRuns}
 ///                      the same object status.get returns inside `status`; sent when any part of it changed
 ///
 /// Error codes: bad_request (not valid JSON, or no method), unknown_method, bad_params, not_found, not_available, refused,
@@ -124,12 +124,14 @@ import Foundation
 ///                   result {skipped: true}   error not_found (no picker open, or it was answered already), not_available
 ///   settings.get    params {key?: string}
 ///                   result {key, value} for one key, or {values: {key: value}} for all allowed keys
-///   settings.set    params {key: string, value: bool | string}
+///   settings.set    params {key: string, value: bool | string | number}
 ///                   result {key, value}   error refused when the key is not in the allowed list, bad_params when the value has the wrong kind
+///                   (a flag takes a real boolean, a choice one of its known strings, a number a finite number inside its range)
 ///   status.get      no params
 ///                   result {status: {mcpRunning: bool (the listener has a port), mcpPort: number (the bound port, else the configured one),
 ///                   mcpText: string (the listener's status line), sessions: number (running agent sessions), agents: [string] (distinct, sorted),
-///                   microphone: bool, screenRecording: bool, accessibility: bool}}
+///                   microphone: bool, screenRecording: bool, accessibility: bool,
+///                   autoRuns: [{project: string (the folder), startedAt: ISO date}] (headless agent runs auto-start has going now)}}
 ///   permissions.ask params {which: "microphone" | "screenRecording" | "accessibility"}
 ///                   result {asked: true}   error bad_params when which is missing or unknown, not_available when the app gave no way to ask
 ///
@@ -157,6 +159,9 @@ import Foundation
 ///
 /// Settings keys: sounds, doubleControl, escCancels, redactSecrets, connectAgents, showNoSpeech, holdToTalk, listenAfterDone, kitWindow, kitFloating, autoSendSingle (all bool; autoSendSingle is on when never set, kitFloating is off);
 /// locale (string, one of the ids in Prefs.languages).
+/// Auto-start (A1; see AutoStart): autoStartAgent (string "off" | "claude", default "off"), autoStartModel ("sonnet" | "opus" | "fable", default "sonnet"),
+/// autoStartEffort ("low" | "medium" | "high" | "xhigh" | "max", default "medium"), autoStartBudget (number of dollars per run, 0.5 to 20, default 2),
+/// autoStartPermission ("acceptEdits" | "dontAsk" | "auto", default "acceptEdits"; bypassPermissions is not allowed).
 final class WebBridge {
     struct Request {
         var id: Any
@@ -175,6 +180,7 @@ final class WebBridge {
     enum SettingKind {
         case flag(defaultValue: Bool)
         case choice(allowed: [String], defaultValue: String)
+        case number(range: ClosedRange<Double>, defaultValue: Double)
     }
 
     static let allowedSettings: [(key: String, kind: SettingKind)] = [
@@ -190,6 +196,11 @@ final class WebBridge {
         ("kitFloating", .flag(defaultValue: false)),
         ("autoSendSingle", .flag(defaultValue: true)),
         ("locale", .choice(allowed: Prefs.languages.map(\.id), defaultValue: "")),
+        ("autoStartAgent", .choice(allowed: AutoStart.agents, defaultValue: AutoStart.defaultAgent)),
+        ("autoStartModel", .choice(allowed: AutoStart.models, defaultValue: AutoStart.defaultModel)),
+        ("autoStartEffort", .choice(allowed: AutoStart.efforts, defaultValue: AutoStart.defaultEffort)),
+        ("autoStartBudget", .number(range: AutoStart.budgetRange, defaultValue: AutoStart.defaultBudget)),
+        ("autoStartPermission", .choice(allowed: AutoStart.permissions, defaultValue: AutoStart.defaultPermission)),
     ]
 
     /// The whitelist. A method that is not here is an error.
@@ -851,6 +862,12 @@ final class WebBridge {
                 throw Failure(code: "bad_params", message: "\(name) must be one of the known values.")
             }
             defaults.set(text, forKey: name)
+        case .number(let range, _):
+            guard let number = params["value"] as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+                  number.doubleValue.isFinite, range.contains(number.doubleValue) else {
+                throw Failure(code: "bad_params", message: "\(name) must be a number from \(range.lowerBound) to \(range.upperBound).")
+            }
+            defaults.set(number.doubleValue, forKey: name)
         }
         return ["key": name, "value": value(name, kind)]
     }
@@ -876,6 +893,7 @@ final class WebBridge {
         switch kind {
         case .flag(let defaultValue): return defaults.object(forKey: key) as? Bool ?? defaultValue
         case .choice(_, let defaultValue): return defaults.string(forKey: key) ?? defaultValue
+        case .number(_, let defaultValue): return defaults.object(forKey: key) as? Double ?? defaultValue
         }
     }
 

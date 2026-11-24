@@ -3,9 +3,11 @@
 import { asks, done, doneByYou, doneOlder, notSent, pointrooWaiting, sampleImage, waiting, working } from '../mockups/data/items'
 import { projects } from '../mockups/data/projects'
 import type { Item } from './parts/types'
+import { autoStartChoices } from './parts/autoStart'
 import type { Bridge } from './bridge'
 import { BridgeError } from './bridgeError'
 import type {
+  AutoStartChoiceKey,
   BridgeAppStatus,
   BridgeEventName,
   BridgeEvents,
@@ -138,6 +140,11 @@ export function createFakeBridge(): Bridge {
     kitWindow: true,
     kitFloating: false,
     locale: '',
+    autoStartAgent: 'off',
+    autoStartModel: 'sonnet',
+    autoStartEffort: 'medium',
+    autoStartBudget: 2,
+    autoStartPermission: 'acceptEdits',
   }
   const languageIds = ['', 'en-US', 'de-DE', 'fr-FR', 'es-ES', 'it-IT', 'pt-BR', 'nl-NL', 'ja-JP', 'zh-CN']
 
@@ -149,6 +156,15 @@ export function createFakeBridge(): Bridge {
     if (!isSettingKey(key)) throw new BridgeError('refused', 'That setting cannot be changed.')
     if (key === 'locale') {
       if (typeof value !== 'string' || !languageIds.includes(value)) throw new BridgeError('bad_params', 'locale must be one of the known values.')
+    } else if (key === 'autoStartBudget') {
+      if (typeof value !== 'number' || !Number.isFinite(value) || value < 0.5 || value > 20) {
+        throw new BridgeError('bad_params', 'autoStartBudget must be a number from 0.5 to 20.')
+      }
+    } else if (key in autoStartChoices) {
+      const options = autoStartChoices[key as AutoStartChoiceKey].options
+      if (typeof value !== 'string' || !options.some((option) => option.value === value)) {
+        throw new BridgeError('bad_params', `${key} must be one of the known values.`)
+      }
     } else if (typeof value !== 'boolean') {
       throw new BridgeError('bad_params', `${key} is on or off (true or false).`)
     }
@@ -157,7 +173,9 @@ export function createFakeBridge(): Bridge {
   }
 
   function statusNow(): BridgeAppStatus {
-    return { mcpRunning: true, mcpPort: 6742, mcpText: 'Shared MCP server: running on 127.0.0.1:6742', sessions: 2, agents: ['Claude Code', 'Codex'], ...permissions }
+    // One sample run, only while Auto-start is on, so the Settings frame can show "1 run going".
+    const autoRuns = settingValues.autoStartAgent === 'off' ? [] : [{ project: '/Users/sample/Workspace/tinkeroo', startedAt: new Date(Date.now() - 90000).toISOString() }]
+    return { mcpRunning: true, mcpPort: 6742, mcpText: 'Shared MCP server: running on 127.0.0.1:6742', sessions: 2, agents: ['Claude Code', 'Codex'], autoRuns, ...permissions }
   }
 
   function listItems(params: ItemsListParams): { items: BridgeItem[] } | { groups: ItemGroup[] } {

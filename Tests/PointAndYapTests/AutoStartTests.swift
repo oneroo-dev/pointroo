@@ -1,0 +1,374 @@
+import XCTest
+@testable import PointAndYap
+
+/// A1: auto-start of a headless Claude run. The decision, the command line, the settings, the log and the one-run-per-folder
+/// rule are tested without starting a real process or waiting a real second.
+final class AutoStartTests: XCTestCase {
+    private var suiteName = ""
+    private var defaults: UserDefaults!
+
+    override class func setUp() { _ = PointAndYapTests.root }
+
+    override func setUp() {
+        suiteName = "AutoStartTests-\(UUID().uuidString)"
+        defaults = UserDefaults(suiteName: suiteName)
+    }
+
+    override func tearDown() {
+        defaults.removePersistentDomain(forName: suiteName)
+    }
+
+    private let on = AutoStart.Options(agent: "claude")
+
+    func testDecideSkipsWhenTheSettingIsOff() {
+        let decision = AutoStart.decide(options: AutoStart.Options(), liveSessionExists: false, runGoing: false, secondsSinceRouted: 60)
+        XCTAssertEqual(decision, .skip("auto-start is off"))
+    }
+
+    func testDecideSkipsWhenASessionIsListening() {
+        let decision = AutoStart.decide(options: on, liveSessionExists: true, runGoing: false, secondsSinceRouted: 60)
+        XCTAssertEqual(decision, .skip("a session is listening"))
+    }
+
+    func testDecideSkipsWhenARunIsAlreadyGoing() {
+        let decision = AutoStart.decide(options: on, liveSessionExists: false, runGoing: true, secondsSinceRouted: 60)
+        XCTAssertEqual(decision, .skip("a run is already going"))
+    }
+
+    func testDecideWaitsUnderTwentySeconds() {
+        XCTAssertEqual(AutoStart.decide(options: on, liveSessionExists: false, runGoing: false, secondsSinceRouted: 0), .wait)
+        XCTAssertEqual(AutoStart.decide(options: on, liveSessionExists: false, runGoing: false, secondsSinceRouted: 19.9), .wait)
+    }
+
+    func testDecideStartsAtTwentySecondsAndLater() {
+        XCTAssertEqual(AutoStart.decide(options: on, liveSessionExists: false, runGoing: false, secondsSinceRouted: 20), .start)
+        XCTAssertEqual(AutoStart.decide(options: on, liveSessionExists: false, runGoing: false, secondsSinceRouted: 300), .start)
+    }
+
+    func testALiveSessionInsideOrAboveTheFolderCountsAsListening() {
+        func session(_ cwd: String) -> LiveSession {
+            LiveSession(pid: 1, cwd: cwd, agent: "claude", started: Date(), lastSeen: Date())
+        }
+        XCTAssertTrue(AutoStart.hasLiveSession(in: "/work/shop", sessions: [session("/work/shop")]))
+        XCTAssertTrue(AutoStart.hasLiveSession(in: "/work/shop", sessions: [session("/work/shop/api")]))
+        XCTAssertTrue(AutoStart.hasLiveSession(in: "/work/shop/api", sessions: [session("/work/shop")]))
+        XCTAssertFalse(AutoStart.hasLiveSession(in: "/work/shop", sessions: [session("/work/shop-app")]))
+        XCTAssertFalse(AutoStart.hasLiveSession(in: "/work/shop", sessions: []))
+    }
+
+    func testTheDefaultArgumentsAreSonnetMediumTwoDollarsAcceptEdits() {
+        XCTAssertEqual(AutoStart.arguments(options: AutoStart.Options(agent: "claude")),
+                       ["-p", AutoStart.prompt, "--model", "sonnet", "--effort", "medium", "--max-budget-usd", "2",
+                        "--permission-mode", "acceptEdits", "--output-format", "json"])
+    }
+
+    func testEachSettingGoesIntoItsOwnArgument() {
+        let options = AutoStart.Options(agent: "claude", model: "opus", effort: "xhigh", budget: 7.5, permission: "dontAsk")
+        XCTAssertEqual(AutoStart.arguments(options: options, prompt: "go"),
+                       ["-p", "go", "--model", "opus", "--effort", "xhigh", "--max-budget-usd", "7.5",
+                        "--permission-mode", "dontAsk", "--output-format", "json"])
+        for model in AutoStart.models {
+            let arguments = AutoStart.arguments(options: AutoStart.Options(agent: "claude", model: model))
+            XCTAssertEqual(arguments[arguments.firstIndex(of: "--model")! + 1], model)
+        }
+        for effort in AutoStart.efforts {
+            let arguments = AutoStart.arguments(options: AutoStart.Options(agent: "claude", effort: effort))
+            XCTAssertEqual(arguments[arguments.firstIndex(of: "--effort")! + 1], effort)
+        }
+        for permission in AutoStart.permissions {
+            let arguments = AutoStart.arguments(options: AutoStart.Options(agent: "claude", permission: permission))
+            XCTAssertEqual(arguments[arguments.firstIndex(of: "--permission-mode")! + 1], permission)
+        }
+    }
+
+    func testTheBudgetIsAlwaysThereEvenForBadValues() throws {
+        for budget in [0, -3, 500, Double.nan, Double.infinity, 0.5, 20] {
+            let arguments = AutoStart.arguments(options: AutoStart.Options(agent: "claude", budget: budget))
+            let index = try XCTUnwrap(arguments.firstIndex(of: "--max-budget-usd"))
+            let value = try XCTUnwrap(Double(arguments[index + 1]))
+            XCTAssertTrue(AutoStart.budgetRange.contains(value), "\(budget) gave \(value)")
+        }
+    }
+
+    func testBypassPermissionsNeverReachesTheCommandLine() {
+        for bad in ["bypassPermissions", "manual", "plan", "", "ACCEPTEDITS"] {
+            let options = AutoStart.Options(agent: "claude", permission: bad)
+            XCTAssertEqual(options.permission, "acceptEdits", bad)
+            XCTAssertFalse(AutoStart.arguments(options: options).contains("bypassPermissions"))
+        }
+        XCTAssertFalse(AutoStart.permissions.contains("bypassPermissions"))
+    }
+
+    func testBadSettingsBecomeTheDefaults() {
+        let options = AutoStart.Options(agent: "codex", model: "gpt", effort: "ultra", budget: .nan, permission: "x")
+        XCTAssertEqual(options, AutoStart.Options())
+        XCTAssertFalse(options.enabled)
+    }
+
+    func testOptionsAreReadFromTheSavedSettings() {
+        XCTAssertEqual(AutoStart.Options.current(defaults: defaults), AutoStart.Options())
+        defaults.set("claude", forKey: "autoStartAgent")
+        defaults.set("fable", forKey: "autoStartModel")
+        defaults.set("max", forKey: "autoStartEffort")
+        defaults.set(12.0, forKey: "autoStartBudget")
+        defaults.set("auto", forKey: "autoStartPermission")
+        XCTAssertEqual(AutoStart.Options.current(defaults: defaults),
+                       AutoStart.Options(agent: "claude", model: "fable", effort: "max", budget: 12, permission: "auto"))
+    }
+
+    func testBudgetTextHasADotAndNoNeedlessZeros() {
+        XCTAssertEqual(AutoStart.budgetText(2), "2")
+        XCTAssertEqual(AutoStart.budgetText(0.5), "0.5")
+        XCTAssertEqual(AutoStart.budgetText(2.25), "2.25")
+        XCTAssertEqual(AutoStart.budgetText(20), "20")
+    }
+
+    func testTheCostIsReadFromTheJsonResult() {
+        XCTAssertEqual(AutoStart.cost(fromOutput: #"{"type":"result","total_cost_usd":0.1234,"result":"ok"}"#), 0.1234)
+        XCTAssertEqual(AutoStart.cost(fromOutput: #"[{"type":"system"},{"type":"result","total_cost_usd":1.5}]"#), 1.5)
+        XCTAssertNil(AutoStart.cost(fromOutput: #"{"type":"result"}"#))
+        XCTAssertNil(AutoStart.cost(fromOutput: "not json"))
+        XCTAssertNil(AutoStart.cost(fromOutput: ""))
+    }
+
+    func testTheLogKeepsTheNewestThousandLines() {
+        let text = (1...1500).map { "line \($0)" }.joined(separator: "\n") + "\n"
+        let trimmed = AutoStart.trimmed(text)
+        let lines = trimmed.components(separatedBy: "\n").dropLast()
+        XCTAssertEqual(lines.count, 1000)
+        XCTAssertEqual(lines.first, "line 501")
+        XCTAssertEqual(lines.last, "line 1500")
+        XCTAssertTrue(trimmed.hasSuffix("\n"))
+    }
+
+    func testAShortLogIsLeftAsItIs() {
+        XCTAssertEqual(AutoStart.trimmed("a\nb\n"), "a\nb\n")
+        XCTAssertEqual(AutoStart.trimmed(""), "")
+        let exact = (1...1000).map { "l\($0)" }.joined(separator: "\n") + "\n"
+        XCTAssertEqual(AutoStart.trimmed(exact), exact)
+    }
+
+    func testAppendLogWritesALineWithTheTimeAndKeepsTheFileShort() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("autostart-log-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appendingPathComponent("autostart.log")
+        for number in 1...1005 { AutoStart.appendLog("message \(number)", to: file, now: Date(timeIntervalSince1970: 0)) }
+        let lines = try String(contentsOf: file, encoding: .utf8).components(separatedBy: "\n").dropLast()
+        XCTAssertEqual(lines.count, 1000)
+        XCTAssertEqual(lines.first, "1970-01-01T00:00:00Z message 6")
+        XCTAssertEqual(lines.last, "1970-01-01T00:00:00Z message 1005")
+    }
+
+    private func bridge() -> WebBridge {
+        WebBridge(defaults: defaults, loadStatus: {
+            AppStatus(mcpRunning: false, mcpPort: 1, mcpText: "", sessions: 0, agents: [],
+                      microphone: false, screenRecording: false, accessibility: false)
+        })
+    }
+
+    private func code(_ subject: WebBridge, _ params: [String: Any]) throws -> String? {
+        try T1Support.errorCode(subject.handle(message: ["id": 1, "method": "settings.set", "params": params]))
+    }
+
+    private func set(_ subject: WebBridge, _ key: String, _ value: Any) throws -> [String: Any] {
+        let reply = try T1Support.replyObject(subject.handle(message: ["id": 1, "method": "settings.set", "params": ["key": key, "value": value]]))
+        return try XCTUnwrap(reply["result"] as? [String: Any], "\(reply)")
+    }
+
+    func testTheFiveSettingsAreAllowedWithTheirDefaults() throws {
+        let reply = try T1Support.replyObject(bridge().handle(message: ["id": 1, "method": "settings.get", "params": [:] as [String: Any]]))
+        let values = try XCTUnwrap((reply["result"] as? [String: Any])?["values"] as? [String: Any])
+        XCTAssertEqual(values["autoStartAgent"] as? String, "off")
+        XCTAssertEqual(values["autoStartModel"] as? String, "sonnet")
+        XCTAssertEqual(values["autoStartEffort"] as? String, "medium")
+        XCTAssertEqual(values["autoStartBudget"] as? Double, 2)
+        XCTAssertEqual(values["autoStartPermission"] as? String, "acceptEdits")
+    }
+
+    func testTheChoiceSettingsTakeOnlyTheirKnownValues() throws {
+        let subject = bridge()
+        let good: [String: [String]] = ["autoStartAgent": AutoStart.agents, "autoStartModel": AutoStart.models,
+                                        "autoStartEffort": AutoStart.efforts, "autoStartPermission": AutoStart.permissions]
+        for (key, values) in good {
+            for value in values { XCTAssertEqual(try set(subject, key, value)["value"] as? String, value) }
+            for bad in ["bypassPermissions", "", "Claude", " claude", "codex", 5, true, NSNull(), ["claude"]] as [Any] {
+                XCTAssertEqual(try code(subject, ["key": key, "value": bad]), "bad_params", "\(key) \(bad)")
+            }
+            XCTAssertEqual(try code(subject, ["key": key]), "bad_params", "\(key) with no value")
+        }
+        XCTAssertEqual(defaults.string(forKey: "autoStartPermission"), "auto", "the last good value stays")
+    }
+
+    func testTheBudgetTakesOnlyANumberFromHalfADollarToTwenty() throws {
+        let subject = bridge()
+        XCTAssertEqual(try set(subject, "autoStartBudget", 5)["value"] as? Double, 5)
+        XCTAssertEqual(try set(subject, "autoStartBudget", 0.5)["value"] as? Double, 0.5)
+        XCTAssertEqual(try set(subject, "autoStartBudget", 20)["value"] as? Double, 20)
+        for bad in [0.49, 0, -1, 20.01, 1000, Double.nan, Double.infinity, "5", true, false, NSNull(), [5]] as [Any] {
+            XCTAssertEqual(try code(subject, ["key": "autoStartBudget", "value": bad]), "bad_params", "\(bad)")
+        }
+        XCTAssertEqual(defaults.double(forKey: "autoStartBudget"), 20, "the last good value stays")
+    }
+
+    func testStatusDictionaryHasTheAutoRuns() {
+        let started = Date(timeIntervalSince1970: 0)
+        var status = AppStatus(mcpRunning: false, mcpPort: 1, mcpText: "", sessions: 0, agents: [],
+                               microphone: false, screenRecording: false, accessibility: false)
+        XCTAssertEqual((status.dictionary["autoRuns"] as? [[String: Any]])?.count, 0)
+        status.autoRuns = [AutoStart.Run(project: "/work/shop", startedAt: started)]
+        let runs = status.dictionary["autoRuns"] as? [[String: Any]]
+        XCTAssertEqual(runs?.count, 1)
+        XCTAssertEqual(runs?.first?["project"] as? String, "/work/shop")
+        XCTAssertEqual(runs?.first?["startedAt"] as? String, "1970-01-01T00:00:00Z")
+    }
+
+    private final class Harness: @unchecked Sendable {
+        var options = AutoStart.Options(agent: "claude")
+        var cli: URL? = URL(fileURLWithPath: "/fake/bin/claude")
+        var liveSession = false
+        var openItems = true
+        var startError: Error?
+        var clock = Date(timeIntervalSince1970: 1000)
+        var started: [AutoStartRunner.Request] = []
+        var finishers: [@Sendable (AutoStartRunner.Outcome) -> Void] = []
+        var scheduled: [(seconds: TimeInterval, work: @Sendable () -> Void)] = []
+        var logs: [String] = []
+
+        lazy var runner = AutoStartRunner(
+            options: { self.options },
+            findCLI: { self.cli },
+            liveSessionExists: { _ in self.liveSession },
+            hasOpenItems: { _ in self.openItems },
+            start: { request, finish in
+                if let error = self.startError { throw error }
+                self.started.append(request)
+                self.finishers.append(finish)
+            },
+            schedule: { seconds, work in self.scheduled.append((seconds, work)) },
+            now: { self.clock },
+            log: { self.logs.append($0) })
+
+        /// Lets the waiting time pass and runs what was scheduled.
+        func letTimePass(_ seconds: TimeInterval = 20) {
+            clock = clock.addingTimeInterval(seconds)
+            let due = scheduled
+            scheduled = []
+            for entry in due { entry.work() }
+        }
+    }
+
+    func testNothingIsScheduledOrStartedWhileTheSettingIsOff() {
+        let harness = Harness()
+        harness.options = AutoStart.Options()
+        harness.runner.routed(folder: "/work/shop")
+        XCTAssertTrue(harness.scheduled.isEmpty)
+        harness.letTimePass()
+        XCTAssertTrue(harness.started.isEmpty)
+        XCTAssertTrue(harness.runner.runs.isEmpty)
+    }
+
+    func testARouteWaitsTwentySecondsThenStartsOneRunInTheFolder() throws {
+        let harness = Harness()
+        harness.runner.routed(folder: "/work/shop")
+        XCTAssertEqual(harness.scheduled.count, 1)
+        XCTAssertEqual(harness.scheduled.first?.seconds, 20)
+        XCTAssertTrue(harness.started.isEmpty, "nothing starts before the wait is over")
+        harness.letTimePass()
+        let request = try XCTUnwrap(harness.started.first)
+        XCTAssertEqual(harness.started.count, 1)
+        XCTAssertEqual(request.executable.path, "/fake/bin/claude")
+        XCTAssertEqual(request.folder, "/work/shop")
+        XCTAssertEqual(request.arguments, AutoStart.arguments(options: harness.options))
+        XCTAssertEqual(harness.runner.runs.map(\.project), [AutoStart.key(for: "/work/shop")])
+    }
+
+    func testASecondRouteToTheSameFolderStartsNoSecondRun() {
+        let harness = Harness()
+        harness.runner.routed(folder: "/work/shop")
+        harness.runner.routed(folder: "/work/shop/")
+        XCTAssertEqual(harness.scheduled.count, 1, "already waiting")
+        harness.letTimePass()
+        harness.runner.routed(folder: "/work/shop")
+        harness.letTimePass()
+        XCTAssertEqual(harness.started.count, 1, "a run is going")
+        XCTAssertEqual(harness.runner.runs.count, 1)
+    }
+
+    func testTwoFoldersRunAtTheSameTime() {
+        let harness = Harness()
+        harness.runner.routed(folder: "/work/shop")
+        harness.runner.routed(folder: "/work/blog")
+        harness.letTimePass()
+        XCTAssertEqual(harness.started.map(\.folder).sorted(), ["/work/blog", "/work/shop"])
+        XCTAssertEqual(harness.runner.runs.count, 2)
+    }
+
+    func testAFinishedRunFreesTheFolderAndIsLogged() {
+        let harness = Harness()
+        harness.runner.routed(folder: "/work/shop")
+        harness.letTimePass()
+        harness.finishers[0](AutoStartRunner.Outcome(exitCode: 0, output: #"{"total_cost_usd":0.25}"#))
+        XCTAssertTrue(harness.runner.runs.isEmpty)
+        XCTAssertTrue(harness.logs.contains { $0.hasPrefix("end /work/shop: exit 0") && $0.contains("$0.2500") }, "\(harness.logs)")
+        harness.runner.routed(folder: "/work/shop")
+        harness.letTimePass()
+        XCTAssertEqual(harness.started.count, 2)
+    }
+
+    func testASessionThatShowsUpDuringTheWaitStopsTheRun() {
+        let harness = Harness()
+        harness.runner.routed(folder: "/work/shop")
+        harness.liveSession = true
+        harness.letTimePass()
+        XCTAssertTrue(harness.started.isEmpty)
+        XCTAssertTrue(harness.logs.contains { $0.contains("a session is listening") })
+        harness.liveSession = false
+        harness.runner.routed(folder: "/work/shop")
+        XCTAssertEqual(harness.scheduled.count, 1, "the folder is free to wait again")
+    }
+
+    func testTheSettingTurnedOffDuringTheWaitStopsTheRun() {
+        let harness = Harness()
+        harness.runner.routed(folder: "/work/shop")
+        harness.options = AutoStart.Options()
+        harness.letTimePass()
+        XCTAssertTrue(harness.started.isEmpty)
+    }
+
+    func testNoOpenItemsLeftMeansNoRun() {
+        let harness = Harness()
+        harness.runner.routed(folder: "/work/shop")
+        harness.openItems = false
+        harness.letTimePass()
+        XCTAssertTrue(harness.started.isEmpty)
+        XCTAssertTrue(harness.logs.contains { $0.contains("no open items") })
+    }
+
+    func testAMissingCLIStartsNothingAndLogsOneLine() {
+        let harness = Harness()
+        harness.cli = nil
+        harness.runner.routed(folder: "/work/shop")
+        harness.letTimePass()
+        XCTAssertTrue(harness.started.isEmpty)
+        XCTAssertTrue(harness.runner.runs.isEmpty)
+        XCTAssertEqual(harness.logs.filter { $0.contains("claude CLI was not found") }.count, 1)
+    }
+
+    func testAProcessThatCannotStartFreesTheFolderAndIsLogged() {
+        struct Boom: Error {}
+        let harness = Harness()
+        harness.startError = Boom()
+        harness.runner.routed(folder: "/work/shop")
+        harness.letTimePass()
+        XCTAssertTrue(harness.runner.runs.isEmpty)
+        XCTAssertTrue(harness.logs.contains { $0.hasPrefix("could not start /work/shop") })
+    }
+
+    func testTheStartLineNamesTheChosenSettings() {
+        let harness = Harness()
+        harness.options = AutoStart.Options(agent: "claude", model: "opus", effort: "high", budget: 4, permission: "auto")
+        harness.runner.routed(folder: "/work/shop")
+        harness.letTimePass()
+        XCTAssertEqual(harness.logs.first, "start /work/shop: model opus, effort high, budget 4, permission auto")
+    }
+}

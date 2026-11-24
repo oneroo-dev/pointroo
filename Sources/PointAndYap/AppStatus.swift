@@ -12,6 +12,8 @@ struct AppStatus: Equatable {
     var microphone: Bool
     var screenRecording: Bool
     var accessibility: Bool
+    /// The headless agent runs that auto-start has going now.
+    var autoRuns: [AutoStart.Run] = []
 
     /// The words permissions.ask accepts.
     static let permissionNames = ["microphone", "screenRecording", "accessibility"]
@@ -19,13 +21,15 @@ struct AppStatus: Equatable {
     /// Builds a status from plain inputs. Nothing here touches a socket or the permission system, so tests can call it.
     /// The port shown is the bound port when the server runs, else the configured one.
     static func make(boundPort: Int, configuredPort: Int, text: String, live: [LiveSession],
-                     microphone: Bool, screenRecording: Bool, accessibility: Bool) -> AppStatus {
+                     microphone: Bool, screenRecording: Bool, accessibility: Bool,
+                     autoRuns: [AutoStart.Run] = []) -> AppStatus {
         AppStatus(mcpRunning: boundPort != 0,
                   mcpPort: boundPort != 0 ? boundPort : configuredPort,
                   mcpText: text,
                   sessions: live.count,
                   agents: Array(Set(live.map(\.agent))).sorted(),
-                  microphone: microphone, screenRecording: screenRecording, accessibility: accessibility)
+                  microphone: microphone, screenRecording: screenRecording, accessibility: accessibility,
+                  autoRuns: autoRuns)
     }
 
     /// The real values: the listener's statics and the running sessions (this reads the disk). The three permission values
@@ -33,7 +37,8 @@ struct AppStatus: Equatable {
     static func current(microphone: Bool, screenRecording: Bool, accessibility: Bool) -> AppStatus {
         make(boundPort: Int(MCPListener.boundPort), configuredPort: Int(MCPListener.mcpPort), text: MCPListener.status,
              live: LiveSessions.all(),
-             microphone: microphone, screenRecording: screenRecording, accessibility: accessibility)
+             microphone: microphone, screenRecording: screenRecording, accessibility: accessibility,
+             autoRuns: AutoStart.shared.runs)
     }
 
     /// Reads everything now, including the permissions (the same three calls AppState.refreshAccess makes). Real system calls: tests must not use it.
@@ -45,6 +50,7 @@ struct AppStatus: Equatable {
 
     var dictionary: [String: Any] {
         ["mcpRunning": mcpRunning, "mcpPort": mcpPort, "mcpText": mcpText, "sessions": sessions, "agents": agents,
-         "microphone": microphone, "screenRecording": screenRecording, "accessibility": accessibility]
+         "microphone": microphone, "screenRecording": screenRecording, "accessibility": accessibility,
+         "autoRuns": autoRuns.map(\.dictionary)]
     }
 }

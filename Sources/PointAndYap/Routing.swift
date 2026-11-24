@@ -330,9 +330,11 @@ enum Router {
     }
 
     /// Saves route.json. A recording that is sent no longer needs a suggestion, so suggest.json is removed.
+    /// Every route goes through here, so this is where auto-start hears about it (it does nothing while the setting is off).
     static func writeRoute(_ info: RouteInfo, to directory: URL) {
         writeLogged(info, to: routeURL(directory))
         removeSuggest(in: directory)
+        AutoStart.shared.routed(folder: info.path)
     }
 
     static func suggestURL(_ directory: URL) -> URL { directory.appendingPathComponent("suggest.json") }

@@ -5,9 +5,10 @@
 import { computed } from 'vue'
 import { RooButton, RooIconButton, RooSelect, RooSwitch } from '@roo/kit/controls'
 import { RooSettingRow, RooSettingsGroup, RooStateMark } from '@roo/kit'
-import type { PermissionName, SettingKey, SettingValue, SettingsValues } from '../types'
+import type { AutoStartChoiceKey, BridgeAutoRun, PermissionName, SettingKey, SettingValue, SettingsValues } from '../types'
+import { autoStartChoices, autoStartOn, budgetLabel, budgetOptions, budgetValue, choiceValue, runsText } from './autoStart'
 
-type FlagKey = Exclude<SettingKey, 'locale'>
+type FlagKey = Exclude<SettingKey, 'locale' | 'autoStartBudget' | AutoStartChoiceKey>
 
 interface FlagRow {
   key: FlagKey
@@ -22,9 +23,11 @@ const props = withDefaults(
     values: SettingsValues
     /** Which permissions are on. Left out while the app has not answered yet. */
     permissions?: Record<PermissionName, boolean> | undefined
+    /** The headless runs Auto-start has going now (status.get). Left out while the app has not answered yet. */
+    autoRuns?: BridgeAutoRun[] | undefined
     loading?: boolean
   }>(),
-  { permissions: undefined, loading: false },
+  { permissions: undefined, autoRuns: undefined, loading: false },
 )
 
 const emit = defineEmits<{
@@ -90,6 +93,28 @@ function onFlag(row: FlagRow, value: boolean): void {
   emit('change', row.key, value, `${row.label} ${value ? 'on' : 'off'}`)
 }
 
+const modelAndEffortKeys: AutoStartChoiceKey[] = ['autoStartModel', 'autoStartEffort']
+const autoStartIsOn = computed(() => autoStartOn(props.values))
+const budgetNow = computed(() => budgetValue(props.values))
+const budgetChoices = computed(() => budgetOptions(budgetNow.value))
+
+function choiceOptions(key: AutoStartChoiceKey): { value: string; label: string }[] {
+  return autoStartChoices[key].options
+}
+
+function onChoice(key: AutoStartChoiceKey, value: string | undefined): void {
+  const entry = autoStartChoices[key]
+  const option = entry.options.find((candidate) => candidate.value === value)
+  if (option === undefined) return
+  emit('change', key, option.value, `${entry.label}: ${option.label}`)
+}
+
+function onBudget(value: string | undefined): void {
+  const dollars = Number(value)
+  if (value === undefined || !Number.isFinite(dollars)) return
+  emit('change', 'autoStartBudget', dollars, `Budget: ${budgetLabel(dollars)}`)
+}
+
 function onLanguage(value: string | undefined): void {
   const language = languages.find((entry) => entry.value === value)
   if (language === undefined) return
@@ -115,6 +140,51 @@ function onLanguage(value: string | undefined): void {
         <RooSettingRow v-for="row in agentRows" :key="row.key" :label="row.label" :description="row.description">
           <RooSwitch :model-value="flagValue(row)" :disabled="loading" :aria-label="row.label" @update:model-value="(value) => onFlag(row, value)" />
         </RooSettingRow>
+      </RooSettingsGroup>
+
+      <RooSettingsGroup title="Auto-start agent">
+        <RooSettingRow label="Agent" description="Starts a headless run when an item goes to a project with no listening session.">
+          <RooSelect
+            :model-value="choiceValue(values, 'autoStartAgent')"
+            label="Agent"
+            hide-label
+            size="md"
+            :disabled="loading"
+            :options="choiceOptions('autoStartAgent')"
+            @update:model-value="(value) => onChoice('autoStartAgent', value)"
+          />
+        </RooSettingRow>
+        <template v-if="autoStartIsOn">
+          <RooSettingRow v-for="key in modelAndEffortKeys" :key="key" :label="autoStartChoices[key].label">
+            <RooSelect
+              :model-value="choiceValue(values, key)"
+              :label="autoStartChoices[key].label"
+              hide-label
+              size="md"
+              :disabled="loading"
+              :options="choiceOptions(key)"
+              @update:model-value="(value) => onChoice(key, value)"
+            />
+          </RooSettingRow>
+          <RooSettingRow label="Budget" description="The most one run may spend.">
+            <RooSelect :model-value="String(budgetNow)" label="Budget" hide-label size="md" :disabled="loading" :options="budgetChoices" @update:model-value="onBudget" />
+          </RooSettingRow>
+          <RooSettingRow label="Permission" description="What the run may do without asking. Anything else is refused.">
+            <RooSelect
+              :model-value="choiceValue(values, 'autoStartPermission')"
+              label="Permission"
+              hide-label
+              size="md"
+              :disabled="loading"
+              :options="choiceOptions('autoStartPermission')"
+              @update:model-value="(value) => onChoice('autoStartPermission', value)"
+            />
+          </RooSettingRow>
+          <RooSettingRow label="Runs" description="Headless runs going now.">
+            <RooStateMark v-if="autoRuns === undefined" state="muted" label="Checking" />
+            <RooStateMark v-else :state="autoRuns.length > 0 ? 'ok' : 'muted'" :label="runsText(autoRuns)" />
+          </RooSettingRow>
+        </template>
       </RooSettingsGroup>
 
       <RooSettingsGroup title="Agents server">

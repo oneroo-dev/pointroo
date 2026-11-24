@@ -99,6 +99,12 @@ export interface BridgeQuestion {
   asked: number
 }
 
+/** A headless agent run that auto-start has going: the project folder and when it started (ISO date). */
+export interface BridgeAutoRun {
+  project: string
+  startedAt: string
+}
+
 export interface BridgeAppStatus {
   mcpRunning: boolean
   mcpPort: number
@@ -108,12 +114,18 @@ export interface BridgeAppStatus {
   microphone: boolean
   screenRecording: boolean
   accessibility: boolean
+  autoRuns: BridgeAutoRun[]
 }
 
 export type PermissionName = 'microphone' | 'screenRecording' | 'accessibility'
 
-/** Every setting the page may read and write (WebBridge.allowedSettings). Flags are true or false; locale is a language id. */
+/** The auto-start settings that are one of a few words (autoStartBudget is a number of dollars, 0.5 to 20). */
+export type AutoStartChoiceKey = 'autoStartAgent' | 'autoStartModel' | 'autoStartEffort' | 'autoStartPermission'
+
+/** Every setting the page may read and write (WebBridge.allowedSettings). Flags are true or false; locale is a language id; the auto-start ones are words or a number. */
 export type SettingKey =
+  | AutoStartChoiceKey
+  | 'autoStartBudget'
   | 'sounds'
   | 'doubleControl'
   | 'escCancels'
@@ -127,7 +139,7 @@ export type SettingKey =
   | 'kitFloating'
   | 'locale'
 
-export type SettingValue = boolean | string
+export type SettingValue = boolean | string | number
 
 export type SettingsValues = Partial<Record<SettingKey, SettingValue>>
 
