@@ -122,6 +122,20 @@ enum AutoStart {
         }
     }
 
+    /// The last run that ended: the folder, when it ended, the exit code (-1 when it could not start) and the cost when the output had one.
+    struct LastRun: Equatable {
+        var project: String
+        var endedAt: Date
+        var exitCode: Int32
+        var cost: Double?
+
+        var dictionary: [String: Any] {
+            var result: [String: Any] = ["project": project, "endedAt": ISO8601DateFormatter().string(from: endedAt), "exitCode": Int(exitCode)]
+            if let cost { result["cost"] = cost }
+            return result
+        }
+    }
+
     static let shared = AutoStartRunner()
 
     static var logFile: URL { Paths.support.appendingPathComponent("autostart.log") }
@@ -211,8 +225,10 @@ final class AutoStartRunner: @unchecked Sendable {
     private let schedule: Scheduler
     private let now: () -> Date
     private let log: (String) -> Void
+    private let onChange: () -> Void
 
     private let lock = NSLock()
+    private var lastFinished: AutoStart.LastRun?
     private var waiting: [String: Date] = [:]
     private var going: [String: Date] = [:]
 
@@ -225,7 +241,8 @@ final class AutoStartRunner: @unchecked Sendable {
          start: @escaping Starter = { try AutoStart.startProcess($0, completion: $1) },
          schedule: @escaping Scheduler = { seconds, work in DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + seconds, execute: work) },
          now: @escaping () -> Date = { Date() },
-         log: @escaping (String) -> Void = { AutoStart.appendLog($0) }) {
+         log: @escaping (String) -> Void = { AutoStart.appendLog($0) },
+         onChange: @escaping () -> Void = {}) {
         self.options = options
         self.findCLI = findCLI
         self.liveSessionExists = liveSessionExists
@@ -234,6 +251,14 @@ final class AutoStartRunner: @unchecked Sendable {
         self.schedule = schedule
         self.now = now
         self.log = log
+        self.onChange = onChange
+    }
+
+    /// The last run that ended (status.get shows it), or nil when none ended yet in this app run.
+    var lastRun: AutoStart.LastRun? {
+        lock.lock()
+        defer { lock.unlock() }
+        return lastFinished
     }
 
     /// The runs that are going now, oldest first (status.get shows them).
@@ -291,9 +316,12 @@ final class AutoStartRunner: @unchecked Sendable {
             log("start \(folder): model \(current.model), effort \(current.effort), budget \(AutoStart.budgetText(current.budget)), permission \(current.permission)")
             do {
                 try start(request) { [self] outcome in finish(folder: folder, outcome: outcome) }
+                onChange()
             } catch {
                 release(key)
+                record(folder: folder, exitCode: -1, cost: nil)
                 log("could not start \(folder): \(error.localizedDescription)")
+                onChange()
             }
         }
     }
@@ -322,7 +350,17 @@ final class AutoStartRunner: @unchecked Sendable {
 
     private func finish(folder: String, outcome: Outcome) {
         release(AutoStart.key(for: folder))
-        let cost = AutoStart.cost(fromOutput: outcome.output).map { ", cost $\(String(format: "%.4f", $0))" } ?? ""
-        log("end \(folder): exit \(outcome.exitCode)\(cost)")
+        let cost = AutoStart.cost(fromOutput: outcome.output)
+        record(folder: folder, exitCode: outcome.exitCode, cost: cost)
+        let costText = cost.map { ", cost $\(String(format: "%.4f", $0))" } ?? ""
+        log("end \(folder): exit \(outcome.exitCode)\(costText)")
+        onChange()
+    }
+
+    private func record(folder: String, exitCode: Int32, cost: Double?) {
+        let entry = AutoStart.LastRun(project: AutoStart.key(for: folder), endedAt: now(), exitCode: exitCode, cost: cost)
+        lock.lock()
+        lastFinished = entry
+        lock.unlock()
     }
 }

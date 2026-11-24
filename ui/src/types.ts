@@ -105,6 +105,14 @@ export interface BridgeAutoRun {
   startedAt: string
 }
 
+/** The last auto-start run that ended: the folder, when it ended (ISO date), the exit code (-1 = could not start) and the cost in dollars when known. */
+export interface BridgeLastAutoRun {
+  project: string
+  endedAt: string
+  exitCode: number
+  cost?: number
+}
+
 export interface BridgeAppStatus {
   mcpRunning: boolean
   mcpPort: number
@@ -115,6 +123,7 @@ export interface BridgeAppStatus {
   screenRecording: boolean
   accessibility: boolean
   autoRuns: BridgeAutoRun[]
+  lastAutoRun?: BridgeLastAutoRun
 }
 
 export type PermissionName = 'microphone' | 'screenRecording' | 'accessibility'

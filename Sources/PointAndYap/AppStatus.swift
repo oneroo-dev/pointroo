@@ -14,6 +14,8 @@ struct AppStatus: Equatable {
     var accessibility: Bool
     /// The headless agent runs that auto-start has going now.
     var autoRuns: [AutoStart.Run] = []
+    /// The last auto-start run that ended (nil until one did).
+    var lastAutoRun: AutoStart.LastRun?
 
     /// The words permissions.ask accepts.
     static let permissionNames = ["microphone", "screenRecording", "accessibility"]
@@ -22,14 +24,14 @@ struct AppStatus: Equatable {
     /// The port shown is the bound port when the server runs, else the configured one.
     static func make(boundPort: Int, configuredPort: Int, text: String, live: [LiveSession],
                      microphone: Bool, screenRecording: Bool, accessibility: Bool,
-                     autoRuns: [AutoStart.Run] = []) -> AppStatus {
+                     autoRuns: [AutoStart.Run] = [], lastAutoRun: AutoStart.LastRun? = nil) -> AppStatus {
         AppStatus(mcpRunning: boundPort != 0,
                   mcpPort: boundPort != 0 ? boundPort : configuredPort,
                   mcpText: text,
                   sessions: live.count,
                   agents: Array(Set(live.map(\.agent))).sorted(),
                   microphone: microphone, screenRecording: screenRecording, accessibility: accessibility,
-                  autoRuns: autoRuns)
+                  autoRuns: autoRuns, lastAutoRun: lastAutoRun)
     }
 
     /// The real values: the listener's statics and the running sessions (this reads the disk). The three permission values
@@ -38,7 +40,7 @@ struct AppStatus: Equatable {
         make(boundPort: Int(MCPListener.boundPort), configuredPort: Int(MCPListener.mcpPort), text: MCPListener.status,
              live: LiveSessions.all(),
              microphone: microphone, screenRecording: screenRecording, accessibility: accessibility,
-             autoRuns: AutoStart.shared.runs)
+             autoRuns: AutoStart.shared.runs, lastAutoRun: AutoStart.shared.lastRun)
     }
 
     /// Reads everything now, including the permissions (the same three calls AppState.refreshAccess makes). Real system calls: tests must not use it.
@@ -49,8 +51,10 @@ struct AppStatus: Equatable {
     }
 
     var dictionary: [String: Any] {
-        ["mcpRunning": mcpRunning, "mcpPort": mcpPort, "mcpText": mcpText, "sessions": sessions, "agents": agents,
-         "microphone": microphone, "screenRecording": screenRecording, "accessibility": accessibility,
-         "autoRuns": autoRuns.map(\.dictionary)]
+        var result: [String: Any] = ["mcpRunning": mcpRunning, "mcpPort": mcpPort, "mcpText": mcpText, "sessions": sessions, "agents": agents,
+                                     "microphone": microphone, "screenRecording": screenRecording, "accessibility": accessibility,
+                                     "autoRuns": autoRuns.map(\.dictionary)]
+        if let lastAutoRun { result["lastAutoRun"] = lastAutoRun.dictionary }
+        return result
     }
 }
