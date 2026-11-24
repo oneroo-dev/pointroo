@@ -70,6 +70,8 @@ export function createStore(bridge: Bridge, options: StoreOptions = {}) {
   const filter = ref('all')
   const selectedId = ref<string | undefined>(undefined)
   const toast = ref<MainToast | undefined>(undefined)
+  /** The project folders whose auto-start run has been asked to stop and has not answered yet. */
+  const stoppingRuns = ref<string[]>([])
   const now = ref(new Date())
   const view = ref<'queue' | 'settings'>('queue')
   const settings = ref<SettingsValues>({})
@@ -630,6 +632,21 @@ export function createStore(bridge: Bridge, options: StoreOptions = {}) {
     }
   }
 
+  /** Stops one auto-start run, then asks for the status again. A run that already ended gets a quiet toast. */
+  async function stopAutoRun(project: string): Promise<void> {
+    if (stoppingRuns.value.includes(project)) return
+    stoppingRuns.value = [...stoppingRuns.value, project]
+    try {
+      const reply = await bridge.call('autoRuns.stop', { project })
+      if (!reply.stopped) showToast('That run already ended', 'muted', false)
+      await loadStatus()
+    } catch (error) {
+      fail(error)
+    } finally {
+      stoppingRuns.value = stoppingRuns.value.filter((path) => path !== project)
+    }
+  }
+
   /** Asks the app to move the agents server to the next free port. */
   async function useAnotherPort(): Promise<void> {
     try {
@@ -774,6 +791,8 @@ export function createStore(bridge: Bridge, options: StoreOptions = {}) {
     allow,
     useAnotherPort,
     checkUpdates,
+    stopAutoRun,
+    stoppingRuns,
     select,
     selectProjectNumber,
     showToast,

@@ -33,6 +33,7 @@ export type Scenario =
   | 'setup-done'
   | 'settings'
   | 'settings-auto-start'
+  | 'settings-auto-start-run'
 
 const props = withDefaults(defineProps<{ width?: number; height?: number; scenario?: Scenario; detailOpen?: boolean }>(), {
   width: 960,
@@ -52,6 +53,7 @@ const recordingView: RecordingView = {
 }
 const filter = ref('all')
 
+const autoStartScenario = props.scenario === 'settings-auto-start' || props.scenario === 'settings-auto-start-run'
 const settingsValues = ref<SettingsValues>({
   sounds: true,
   doubleControl: true,
@@ -64,14 +66,20 @@ const settingsValues = ref<SettingsValues>({
   autoSendSingle: true,
   kitWindow: true,
   locale: 'en-US',
-  autoStartAgent: props.scenario === 'settings-auto-start' ? 'claude' : 'off',
+  autoStartAgent: autoStartScenario ? 'claude' : 'off',
   autoStartModel: 'sonnet',
   autoStartEffort: 'medium',
   autoStartBudget: 2,
   autoStartPermission: 'acceptEdits',
 })
-const settingsOpen = props.scenario === 'settings' || props.scenario === 'settings-auto-start'
-const autoRuns = props.scenario === 'settings-auto-start' ? [{ project: '/Users/sample/Workspace/tinkeroo', startedAt: '2026-11-24T10:42:00Z' }] : []
+const settingsOpen = props.scenario === 'settings' || autoStartScenario
+const autoRuns = autoStartScenario ? [{ project: '/Users/sample/Workspace/tinkeroo', startedAt: '2026-11-24T10:42:00Z' }] : []
+// Only the "run" frame shows the Last run row. The time is fixed so the "ago" words stay the same.
+const lastAutoRun =
+  props.scenario === 'settings-auto-start-run'
+    ? { project: '/Users/sample/Workspace/pointroo', endedAt: '2026-11-24T10:34:00Z', exitCode: 0, cost: 0.42 }
+    : undefined
+const settingsClock = Date.parse('2026-11-24T10:44:00Z')
 
 function onSettingChange(key: SettingKey, value: SettingValue): void {
   settingsValues.value = { ...settingsValues.value, [key]: value }
@@ -184,7 +192,14 @@ const sessionsText = computed(() => (props.scenario === 'no-session' ? 'None lis
     >
       <template #setup><SetupView :step="setupStep" /></template>
       <template #settings>
-        <SettingsScreen :values="settingsValues" :permissions="{ microphone: true, screenRecording: false, accessibility: true }" :auto-runs="autoRuns" @change="onSettingChange" />
+        <SettingsScreen
+          :values="settingsValues"
+          :permissions="{ microphone: true, screenRecording: false, accessibility: true }"
+          :auto-runs="autoRuns"
+          :last-auto-run="lastAutoRun"
+          :now="settingsClock"
+          @change="onSettingChange"
+        />
       </template>
     </MainWindow>
   </div>

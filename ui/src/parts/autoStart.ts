@@ -1,6 +1,6 @@
 // The "Auto-start agent" settings (A1): the choices the Settings screen shows, the defaults the app uses when nothing is
 // saved (the same ones as AutoStart.swift), and small helpers so the screen and the tests read a value the same way.
-import type { AutoStartChoiceKey, BridgeAutoRun, SettingsValues } from '../types'
+import type { AutoStartChoiceKey, BridgeAutoRun, BridgeLastAutoRun, SettingsValues } from '../types'
 
 export interface AutoStartOption {
   value: string
@@ -74,6 +74,45 @@ export function budgetOptions(current: number): AutoStartOption[] {
 
 export function autoStartOn(values: SettingsValues): boolean {
   return choiceValue(values, 'autoStartAgent') !== 'off'
+}
+
+/** The last folder of a project path: "/Users/sample/Workspace/tinkeroo/" gives "tinkeroo". */
+export function projectShortName(project: string): string {
+  const parts = project.split('/').filter((part) => part !== '')
+  return parts.length === 0 ? project : (parts[parts.length - 1] ?? project)
+}
+
+/** How long ago a date (ISO text) was, as short words. `now` is in milliseconds and is passed in so tests stay the same. */
+export function relativeTime(isoDate: string, now: number): string {
+  const then = Date.parse(isoDate)
+  if (!Number.isFinite(then)) return ''
+  const minutes = Math.floor(Math.max(0, now - then) / 60000)
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${minutes} min ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return hours === 1 ? '1 hour ago' : `${hours} hours ago`
+  const days = Math.floor(hours / 24)
+  return days === 1 ? '1 day ago' : `${days} days ago`
+}
+
+/** One going run: "tinkeroo, started 2 min ago". */
+export function runLineText(run: BridgeAutoRun, now: number): string {
+  const ago = relativeTime(run.startedAt, now)
+  const name = projectShortName(run.project)
+  return ago === '' ? name : `${name}, started ${ago}`
+}
+
+/** The last run that ended: "tinkeroo, 10 min ago, $0.42". The cost is left out when it is not known. */
+export function lastRunText(run: BridgeLastAutoRun, now: number): string {
+  const pieces = [projectShortName(run.project), relativeTime(run.endedAt, now)]
+  if (typeof run.cost === 'number' && Number.isFinite(run.cost)) pieces.push(`$${run.cost.toFixed(2)}`)
+  return pieces.filter((piece) => piece !== '').join(', ')
+}
+
+/** The small note beside the last run: nothing when it went fine. */
+export function lastRunNote(run: BridgeLastAutoRun): string | undefined {
+  if (run.exitCode === -1) return 'could not start'
+  return run.exitCode === 0 ? undefined : 'ended with an error'
 }
 
 export function runsText(runs: BridgeAutoRun[]): string {
