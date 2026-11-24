@@ -93,8 +93,11 @@ import Foundation
 ///                   until that many minutes from now, then it comes back (and questions.changed is sent both times)
 ///                   result {snoozed: true, until: seconds since 1970}
 ///                   error not_found when the question is unknown or already answered, bad_params when id is missing or minutes is out of range
-///   recording.start no params   the same as double Control while idle (AppState.start)
-///                   result {started: true}   error busy (recording, or the last one is processing), not_available
+///   recording.start params {followUp?: item id}   the same as double Control while idle (AppState.start). With followUp, the
+///                   item must be done and routed to a project, and the recording is routed there as its follow-up (the request is kept
+///                   in follow-next.json, used once, and ignored when older than 10 minutes)
+///                   result {started: true, followUp?: item id}   error busy (recording, or the last one is processing; checked first),
+///                   bad_params (followUp is not a done item that went to a project), not_available
 ///   recording.stop  no params   result {stopped: true}   error busy (not recording), not_available
 ///   recording.cancel no params  stops and keeps nothing; result {cancelled: true}   error busy (not recording), not_available
 ///                   (start can still fail inside the app, for example when a permission is missing; the page sees that in recording.get)
@@ -197,9 +200,9 @@ final class WebBridge {
         "notices.list": { bridge, params in try bridge.noticesList(params) },
         "notices.seen": { bridge, params in try bridge.noticesSeen(params) },
         "session.get": { bridge, params in try bridge.sessionGet(params) },
-        "recording.start": { bridge, params in try bridge.recordingControl(.start) },
-        "recording.stop": { bridge, params in try bridge.recordingControl(.stop) },
-        "recording.cancel": { bridge, params in try bridge.recordingControl(.cancel) },
+        "recording.start": { bridge, params in try bridge.recordingControl(.start, params: params) },
+        "recording.stop": { bridge, params in try bridge.recordingControl(.stop, params: params) },
+        "recording.cancel": { bridge, params in try bridge.recordingControl(.cancel, params: params) },
         "recording.get": { bridge, params in try bridge.recordingGet(params) },
         "picker.get": { bridge, params in try bridge.pickerGet(params) },
         "picker.pick": { bridge, params in try bridge.pickerPick(params) },
@@ -229,6 +232,7 @@ final class WebBridge {
     private let now: () -> Date
     private let loadQuestions: (Date) -> [Question]
     private let noticeStore: NoticeStore
+    private let followUpStore: FollowUpStore
 
     /// What recording.start, recording.stop and recording.cancel ask the app to do.
     enum RecordingAction {
@@ -270,6 +274,7 @@ final class WebBridge {
     /// Esc does, and returns false when no picker was open any more. Either one nil means picker.* answers not_available.
     /// `now` is the clock for the question snooze (tests set it).
     /// `loadQuestions` (given `now`) gives the pending questions for notices.list; `noticeStore` is where notices.seen keeps the seen ids.
+    /// `followUpStore` is where recording.start keeps a follow-up request (recording.cancel removes it).
     init(defaults: UserDefaults = .standard,
          loadItems: @escaping () -> [Item] = { Items.all() },
          findProject: @escaping (String) -> Project? = { WebBridge.knownProject($0) },
@@ -288,7 +293,8 @@ final class WebBridge {
          answerPicker: ((String?) -> Bool)? = nil,
          now: @escaping () -> Date = { Date() },
          loadQuestions: @escaping (Date) -> [Question] = { Questions.pending(now: $0) },
-         noticeStore: NoticeStore = NoticeStore()) {
+         noticeStore: NoticeStore = NoticeStore(),
+         followUpStore: FollowUpStore = FollowUpStore()) {
         self.defaults = defaults
         self.loadItems = loadItems
         self.findProject = findProject
@@ -308,6 +314,7 @@ final class WebBridge {
         self.now = now
         self.loadQuestions = loadQuestions
         self.noticeStore = noticeStore
+        self.followUpStore = followUpStore
     }
 
     /// A known project whose folder is this path, or whose name is this text (ignoring case).
@@ -579,7 +586,7 @@ final class WebBridge {
         return ["dragging": true]
     }
 
-    private func recordingControl(_ action: RecordingAction) throws -> Any {
+    private func recordingControl(_ action: RecordingAction, params: [String: Any] = [:]) throws -> Any {
         guard let controlRecording, let loadRecording else {
             throw Failure(code: "not_available", message: "Recording is not available.")
         }
@@ -588,7 +595,21 @@ final class WebBridge {
         case .start:
             if phase == "recording" { throw Failure(code: "busy", message: "Already recording.") }
             if phase == "processing" { throw Failure(code: "busy", message: "The last recording is still being processed.") }
+            var followUpId: String?
+            var request: FollowUpRequest?
+            if let value = params["followUp"], !(value is NSNull) {
+                let badFollowUp = Failure(code: "bad_params", message: "followUp must be a done item that went to a project.")
+                guard let id = value as? String, !id.isEmpty,
+                      let item = loadItems().first(where: { $0.id == id }),
+                      item.status == "done", let path = item.project, !path.isEmpty else { throw badFollowUp }
+                followUpId = id
+                request = FollowUpRequest(id: id, path: path, at: now())
+            }
+            if let request {
+                guard followUpStore.save(request) else { throw Failure(code: "not_available", message: "Could not save the follow-up request.") }
+            }
             controlRecording(.start)
+            if let followUpId { return ["started": true, "followUp": followUpId] }
             return ["started": true]
         case .stop:
             guard phase == "recording" else { throw Failure(code: "busy", message: "Not recording.") }
@@ -596,6 +617,7 @@ final class WebBridge {
             return ["stopped": true]
         case .cancel:
             guard phase == "recording" else { throw Failure(code: "busy", message: "Not recording.") }
+            followUpStore.remove()
             controlRecording(.cancel)
             return ["cancelled": true]
         }
