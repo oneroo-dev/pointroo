@@ -227,6 +227,7 @@ final class AutoStartTests: XCTestCase {
         var cli: URL? = URL(fileURLWithPath: "/fake/bin/claude")
         var liveSession = false
         var openItems = true
+        var folderExists = true
         var startError: Error?
         var clock = Date(timeIntervalSince1970: 1000)
         var started: [AutoStartRunner.Request] = []
@@ -256,7 +257,8 @@ final class AutoStartTests: XCTestCase {
             schedule: { seconds, work in self.scheduled.append((seconds, work)) },
             now: { self.clock },
             log: { self.logs.append($0) },
-            onChange: { self.changeCount += 1 })
+            onChange: { self.changeCount += 1 },
+            folderExists: { _ in self.folderExists })
 
         /// Lets the waiting time pass and runs what was scheduled.
         func letTimePass(_ seconds: TimeInterval = 20) {
@@ -524,5 +526,119 @@ final class AutoStartTests: XCTestCase {
             XCTAssertEqual(try T1Support.errorCode(subject.handle(message: ["id": 1, "method": "autoRuns.stop", "params": bad])), "bad_params", "\(bad)")
         }
         XCTAssertEqual(asked.count, 2, "bad params never reach the closure")
+    }
+
+    func testAfterAMissingCLIALaterRouteCanTryAgain() {
+        let harness = Harness()
+        harness.cli = nil
+        harness.runner.routed(folder: "/work/shop")
+        harness.letTimePass()
+        XCTAssertTrue(harness.started.isEmpty)
+        XCTAssertEqual(harness.logs.count, 1, "exactly one line for the whole failed try: \(harness.logs)")
+        XCTAssertNil(harness.runner.lastRun, "nothing ran, so there is no last run")
+        harness.cli = URL(fileURLWithPath: "/fake/bin/claude")
+        harness.runner.routed(folder: "/work/shop")
+        XCTAssertEqual(harness.scheduled.count, 1, "the folder is not left waiting")
+        harness.letTimePass()
+        XCTAssertEqual(harness.started.count, 1)
+    }
+
+    func testARunThatExitsWithAnErrorFreesTheFolderAndALaterRouteStartsAgain() throws {
+        let harness = Harness()
+        harness.runner.routed(folder: "/work/shop")
+        harness.letTimePass()
+        harness.finishers[0](AutoStartRunner.Outcome(exitCode: 1, output: ""))
+        XCTAssertTrue(harness.runner.runs.isEmpty)
+        let last = try XCTUnwrap(harness.runner.lastRun)
+        XCTAssertEqual(last.exitCode, 1)
+        XCTAssertEqual(last.project, AutoStart.key(for: "/work/shop"))
+        XCTAssertTrue(harness.logs.contains { $0.hasPrefix("end /work/shop: exit 1") }, "\(harness.logs)")
+        harness.runner.routed(folder: "/work/shop")
+        harness.letTimePass()
+        XCTAssertEqual(harness.started.count, 2)
+        XCTAssertEqual(harness.runner.runs.count, 1)
+    }
+
+    func testAStoppedRunThatEndsBeforeTheKillDelayIsNeverKilled() {
+        let harness = Harness()
+        harness.runner.routed(folder: "/work/shop")
+        harness.letTimePass()
+        XCTAssertTrue(harness.runner.stop(project: "/work/shop"))
+        harness.finishers[0](AutoStartRunner.Outcome(exitCode: 15, output: ""))
+        XCTAssertTrue(harness.runner.runs.isEmpty, "finish frees the folder")
+        harness.letTimePass(5)
+        XCTAssertEqual(harness.killCounts, [0], "the run is gone, so the late kill does nothing")
+    }
+
+    func testAFolderDeletedDuringTheWaitIsSkippedAndLogged() {
+        let harness = Harness()
+        harness.runner.routed(folder: "/work/shop")
+        harness.folderExists = false
+        harness.letTimePass()
+        XCTAssertTrue(harness.started.isEmpty)
+        XCTAssertTrue(harness.runner.runs.isEmpty)
+        XCTAssertTrue(harness.logs.contains("skipped /work/shop: the folder is gone"), "\(harness.logs)")
+        harness.folderExists = true
+        harness.runner.routed(folder: "/work/shop")
+        XCTAssertEqual(harness.scheduled.count, 1, "the folder is not left waiting")
+        harness.letTimePass()
+        XCTAssertEqual(harness.started.count, 1)
+    }
+
+    func testTheKeyMadeAtRouteTimeIsUsedAfterTheFolderIsDeleted() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("autostart-drift-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let harness = Harness()
+        harness.runner.routed(folder: folder.path)
+        try FileManager.default.removeItem(at: folder)
+        harness.letTimePass()
+        XCTAssertEqual(harness.started.count, 1, "the wait entry is still found, even if the key of the missing path would differ")
+        XCTAssertEqual(harness.runner.runs.count, 1)
+    }
+
+    func testAFolderThatDoesNotExistOnDiskWorksLikeAnyOtherFolder() {
+        let harness = Harness()
+        harness.runner.routed(folder: "/work/never-existed/")
+        XCTAssertEqual(harness.scheduled.count, 1)
+        harness.letTimePass()
+        XCTAssertEqual(harness.started.count, 1)
+        XCTAssertEqual(harness.runner.runs.map(\.project), ["/work/never-existed"])
+    }
+
+    func testTwoRunsStoppedAtQuitAreBothLoggedAndFreedOnFinish() {
+        let harness = Harness()
+        harness.runner.routed(folder: "/work/shop")
+        harness.runner.routed(folder: "/work/blog")
+        harness.letTimePass()
+        harness.runner.stopAll()
+        XCTAssertEqual(harness.logs.filter { $0.hasPrefix("stopped at quit") }.count, 2)
+        harness.finishers[0](AutoStartRunner.Outcome(exitCode: 15, output: ""))
+        harness.finishers[1](AutoStartRunner.Outcome(exitCode: 15, output: ""))
+        XCTAssertTrue(harness.runner.runs.isEmpty)
+    }
+
+    func testTheSameFolderThroughATrailingSlashOrASymlinkIsOneFolder() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("autostart-links-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let real = root.appendingPathComponent("real")
+        let link = root.appendingPathComponent("link")
+        try FileManager.default.createDirectory(at: real, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: real)
+        XCTAssertEqual(AutoStart.key(for: real.path), AutoStart.key(for: link.path))
+        XCTAssertEqual(AutoStart.key(for: real.path + "/"), AutoStart.key(for: real.path))
+
+        let harness = Harness()
+        harness.runner.routed(folder: real.path)
+        harness.runner.routed(folder: link.path)
+        harness.runner.routed(folder: real.path + "/")
+        XCTAssertEqual(harness.scheduled.count, 1, "one wait for the one folder")
+        harness.letTimePass()
+        XCTAssertEqual(harness.started.count, 1)
+        harness.runner.routed(folder: link.path)
+        harness.letTimePass()
+        XCTAssertEqual(harness.started.count, 1, "a run is going in that folder")
+        XCTAssertEqual(harness.runner.runs.count, 1)
+        XCTAssertTrue(harness.runner.stop(project: link.path), "stop finds the run through the other spelling")
+        XCTAssertEqual(harness.terminateCounts, [1])
     }
 }

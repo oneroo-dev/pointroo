@@ -249,6 +249,7 @@ final class AutoStartRunner: @unchecked Sendable {
     private let now: () -> Date
     private let log: (String) -> Void
     private let onChange: () -> Void
+    private let folderExists: (String) -> Bool
 
     private let lock = NSLock()
     private var lastFinished: AutoStart.LastRun?
@@ -268,7 +269,9 @@ final class AutoStartRunner: @unchecked Sendable {
          schedule: @escaping Scheduler = { seconds, work in DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + seconds, execute: work) },
          now: @escaping () -> Date = { Date() },
          log: @escaping (String) -> Void = { AutoStart.appendLog($0) },
-         onChange: @escaping () -> Void = {}) {
+         onChange: @escaping () -> Void = {},
+         folderExists: @escaping (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) {
+        self.folderExists = folderExists
         self.options = options
         self.findCLI = findCLI
         self.liveSessionExists = liveSessionExists
@@ -305,11 +308,12 @@ final class AutoStartRunner: @unchecked Sendable {
         }
         waiting[key] = now()
         lock.unlock()
-        schedule(AutoStart.waitSeconds) { [self] in check(folder: folder) }
+        schedule(AutoStart.waitSeconds) { [self] in check(folder: folder, key: key) }
     }
 
-    private func check(folder: String) {
-        let key = AutoStart.key(for: folder)
+    /// The key is made once, when the item is routed. The folder may be deleted during the wait, and the key of a missing
+    /// path can come out different, so it is never made again here.
+    private func check(folder: String, key: String) {
         lock.lock()
         let routedAt = waiting[key]
         let runGoing = going[key] != nil
@@ -319,7 +323,7 @@ final class AutoStartRunner: @unchecked Sendable {
         let current = options()
         switch AutoStart.decide(options: current, liveSessionExists: liveSessionExists(folder), runGoing: runGoing, secondsSinceRouted: elapsed) {
         case .wait:
-            schedule(max(AutoStart.waitSeconds - elapsed, 1)) { [self] in check(folder: folder) }
+            schedule(max(AutoStart.waitSeconds - elapsed, 1)) { [self] in check(folder: folder, key: key) }
         case .skip(let reason):
             stopWaiting(key)
             log("skipped \(folder): \(reason)")
@@ -327,6 +331,11 @@ final class AutoStartRunner: @unchecked Sendable {
             guard hasOpenItems(folder) else {
                 stopWaiting(key)
                 log("skipped \(folder): no open items")
+                return
+            }
+            guard folderExists(folder) else {
+                stopWaiting(key)
+                log("skipped \(folder): the folder is gone")
                 return
             }
             guard let cli = findCLI() else {
@@ -341,7 +350,7 @@ final class AutoStartRunner: @unchecked Sendable {
             let request = Request(executable: cli, arguments: AutoStart.arguments(options: current), folder: folder)
             log("start \(folder): model \(current.model), effort \(current.effort), budget \(AutoStart.budgetText(current.budget)), permission \(current.permission)")
             do {
-                let stopper = try start(request) { [self] outcome in finish(folder: folder, outcome: outcome) }
+                let stopper = try start(request) { [self] outcome in finish(folder: folder, key: key, outcome: outcome) }
                 keep(stopper, for: key, runID: runID)
                 onChange()
             } catch {
@@ -421,8 +430,8 @@ final class AutoStartRunner: @unchecked Sendable {
         }
     }
 
-    private func finish(folder: String, outcome: Outcome) {
-        release(AutoStart.key(for: folder))
+    private func finish(folder: String, key: String, outcome: Outcome) {
+        release(key)
         let cost = AutoStart.cost(fromOutput: outcome.output)
         record(folder: folder, exitCode: outcome.exitCode, cost: cost)
         let costText = cost.map { ", cost $\(String(format: "%.4f", $0))" } ?? ""
