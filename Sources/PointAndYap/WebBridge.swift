@@ -25,7 +25,7 @@ import Foundation
 ///   item.focus         {id}                        the app was asked to open this item (Open on a notice card, the done banner, a pointroo://item/<id>
 ///                      link); the main window page selects it. Sent to the kit main window's page by the app (WebHost.focusItem), not by
 ///                      the timer; if the page has not loaded yet it is sent right after the load.
-///   status.changed     {mcpRunning, mcpPort, mcpText, sessions, agents, microphone, screenRecording, accessibility, autoRuns}
+///   status.changed     {mcpRunning, mcpPort, mcpText, sessions, agents, microphone, screenRecording, accessibility, autoRuns, lastAutoRun?}
 ///                      the same object status.get returns inside `status`; sent when any part of it changed
 ///
 /// Error codes: bad_request (not valid JSON, or no method), unknown_method, bad_params, not_found, not_available, refused,
@@ -131,7 +131,9 @@ import Foundation
 ///                   result {status: {mcpRunning: bool (the listener has a port), mcpPort: number (the bound port, else the configured one),
 ///                   mcpText: string (the listener's status line), sessions: number (running agent sessions), agents: [string] (distinct, sorted),
 ///                   microphone: bool, screenRecording: bool, accessibility: bool,
-///                   autoRuns: [{project: string (the folder), startedAt: ISO date}] (headless agent runs auto-start has going now)}}
+///                   autoRuns: [{project: string (the folder), startedAt: ISO date}] (headless agent runs auto-start has going now),
+///                   lastAutoRun?: {project: string, endedAt: ISO date, exitCode: number (-1 = could not start), cost?: number (dollars)}
+///                   (the last run that ended; left out until one did)}}
 ///   permissions.ask params {which: "microphone" | "screenRecording" | "accessibility"}
 ///                   result {asked: true}   error bad_params when which is missing or unknown, not_available when the app gave no way to ask
 ///

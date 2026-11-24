@@ -233,6 +233,7 @@ final class AutoStartTests: XCTestCase {
         var finishers: [@Sendable (AutoStartRunner.Outcome) -> Void] = []
         var scheduled: [(seconds: TimeInterval, work: @Sendable () -> Void)] = []
         var logs: [String] = []
+        var changeCount = 0
 
         lazy var runner = AutoStartRunner(
             options: { self.options },
@@ -246,7 +247,8 @@ final class AutoStartTests: XCTestCase {
             },
             schedule: { seconds, work in self.scheduled.append((seconds, work)) },
             now: { self.clock },
-            log: { self.logs.append($0) })
+            log: { self.logs.append($0) },
+            onChange: { self.changeCount += 1 })
 
         /// Lets the waiting time pass and runs what was scheduled.
         func letTimePass(_ seconds: TimeInterval = 20) {
@@ -313,6 +315,70 @@ final class AutoStartTests: XCTestCase {
         harness.runner.routed(folder: "/work/shop")
         harness.letTimePass()
         XCTAssertEqual(harness.started.count, 2)
+    }
+
+    func testAFinishedRunIsKeptAsTheLastRunWithItsCost() throws {
+        let harness = Harness()
+        XCTAssertNil(harness.runner.lastRun)
+        harness.runner.routed(folder: "/work/shop")
+        harness.letTimePass()
+        XCTAssertNil(harness.runner.lastRun, "a run that is still going is not the last run")
+        harness.clock = harness.clock.addingTimeInterval(50)
+        harness.finishers[0](AutoStartRunner.Outcome(exitCode: 0, output: #"{"total_cost_usd":0.25}"#))
+        let last = try XCTUnwrap(harness.runner.lastRun)
+        XCTAssertEqual(last.project, AutoStart.key(for: "/work/shop"))
+        XCTAssertEqual(last.endedAt, harness.clock)
+        XCTAssertEqual(last.exitCode, 0)
+        XCTAssertEqual(last.cost, 0.25)
+    }
+
+    func testAFinishedRunWithoutCostKeepsNoCost() throws {
+        let harness = Harness()
+        harness.runner.routed(folder: "/work/shop")
+        harness.letTimePass()
+        harness.finishers[0](AutoStartRunner.Outcome(exitCode: 2, output: "not json"))
+        let last = try XCTUnwrap(harness.runner.lastRun)
+        XCTAssertEqual(last.exitCode, 2)
+        XCTAssertNil(last.cost)
+    }
+
+    func testARunThatCouldNotStartIsTheLastRunWithExitCodeMinusOne() throws {
+        struct Boom: Error {}
+        let harness = Harness()
+        harness.startError = Boom()
+        harness.runner.routed(folder: "/work/shop")
+        harness.letTimePass()
+        let last = try XCTUnwrap(harness.runner.lastRun)
+        XCTAssertEqual(last.project, AutoStart.key(for: "/work/shop"))
+        XCTAssertEqual(last.exitCode, -1)
+        XCTAssertNil(last.cost)
+        XCTAssertTrue(harness.runner.runs.isEmpty)
+    }
+
+    func testOnChangeIsCalledWhenARunStartsAndWhenItEnds() {
+        let harness = Harness()
+        harness.runner.routed(folder: "/work/shop")
+        XCTAssertEqual(harness.changeCount, 0, "waiting changes nothing")
+        harness.letTimePass()
+        XCTAssertEqual(harness.changeCount, 1, "start")
+        harness.finishers[0](AutoStartRunner.Outcome(exitCode: 0, output: ""))
+        XCTAssertEqual(harness.changeCount, 2, "end")
+    }
+
+    func testStatusDictionaryHasTheLastAutoRunOnlyWhenPresent() {
+        var status = AppStatus(mcpRunning: false, mcpPort: 1, mcpText: "", sessions: 0, agents: [],
+                               microphone: false, screenRecording: false, accessibility: false)
+        XCTAssertNil(status.dictionary["lastAutoRun"])
+        status.lastAutoRun = AutoStart.LastRun(project: "/work/shop", endedAt: Date(timeIntervalSince1970: 0), exitCode: 1, cost: 0.5)
+        var last = status.dictionary["lastAutoRun"] as? [String: Any]
+        XCTAssertEqual(last?["project"] as? String, "/work/shop")
+        XCTAssertEqual(last?["endedAt"] as? String, "1970-01-01T00:00:00Z")
+        XCTAssertEqual(last?["exitCode"] as? Int, 1)
+        XCTAssertEqual(last?["cost"] as? Double, 0.5)
+        status.lastAutoRun = AutoStart.LastRun(project: "/work/shop", endedAt: Date(timeIntervalSince1970: 0), exitCode: -1, cost: nil)
+        last = status.dictionary["lastAutoRun"] as? [String: Any]
+        XCTAssertEqual(last?["exitCode"] as? Int, -1)
+        XCTAssertNil(last?["cost"])
     }
 
     func testASessionThatShowsUpDuringTheWaitStopsTheRun() {

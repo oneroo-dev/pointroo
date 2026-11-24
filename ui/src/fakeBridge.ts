@@ -175,7 +175,8 @@ export function createFakeBridge(): Bridge {
   function statusNow(): BridgeAppStatus {
     // One sample run, only while Auto-start is on, so the Settings frame can show "1 run going".
     const autoRuns = settingValues.autoStartAgent === 'off' ? [] : [{ project: '/Users/sample/Workspace/tinkeroo', startedAt: new Date(Date.now() - 90000).toISOString() }]
-    return { mcpRunning: true, mcpPort: 6742, mcpText: 'Shared MCP server: running on 127.0.0.1:6742', sessions: 2, agents: ['Claude Code', 'Codex'], autoRuns, ...permissions }
+    const lastAutoRun = settingValues.autoStartAgent === 'claude' ? { project: '/Users/sample/Workspace/tinkeroo', endedAt: new Date(Date.now() - 600000).toISOString(), exitCode: 0, cost: 0.42 } : undefined
+    return { mcpRunning: true, mcpPort: 6742, mcpText: 'Shared MCP server: running on 127.0.0.1:6742', sessions: 2, agents: ['Claude Code', 'Codex'], autoRuns, ...(lastAutoRun === undefined ? {} : { lastAutoRun }), ...permissions }
   }
 
   function listItems(params: ItemsListParams): { items: BridgeItem[] } | { groups: ItemGroup[] } {
