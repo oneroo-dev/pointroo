@@ -528,6 +528,51 @@ final class AutoStartTests: XCTestCase {
         XCTAssertEqual(asked.count, 2, "bad params never reach the closure")
     }
 
+    private func autoRunLogReply(_ params: [String: Any], lineCount: Int?) throws -> (lines: [String]?, code: String?) {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("autoruns-log-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appendingPathComponent("autostart.log")
+        if let lineCount {
+            let text = (1...lineCount).map { "line \($0)" }.joined(separator: "\n") + "\n"
+            try text.write(to: file, atomically: true, encoding: .utf8)
+        }
+        let subject = WebBridge(defaults: defaults, readAutoRunLog: { AutoStart.readLog(lines: $0, from: file) })
+        let raw = subject.handle(message: ["id": 1, "method": "autoRuns.log", "params": params])
+        let reply = try T1Support.replyObject(raw)
+        if let result = reply["result"] as? [String: Any] { return (result["lines"] as? [String], nil) }
+        return (nil, try T1Support.errorCode(raw))
+    }
+
+    func testAutoRunsLogGivesFiftyLinesByDefaultNewestLast() throws {
+        let reply = try autoRunLogReply([:], lineCount: 120)
+        XCTAssertEqual(reply.lines?.count, 50)
+        XCTAssertEqual(reply.lines?.first, "line 71")
+        XCTAssertEqual(reply.lines?.last, "line 120")
+    }
+
+    func testAutoRunsLogGivesTheAskedCount() throws {
+        let reply = try autoRunLogReply(["lines": 3], lineCount: 10)
+        XCTAssertEqual(reply.lines, ["line 8", "line 9", "line 10"])
+    }
+
+    func testAutoRunsLogGivesEverythingWhenMoreIsAskedThanThereIs() throws {
+        let reply = try autoRunLogReply(["lines": 200], lineCount: 4)
+        XCTAssertEqual(reply.lines, ["line 1", "line 2", "line 3", "line 4"])
+    }
+
+    func testAutoRunsLogIsEmptyWhenThereIsNoFile() throws {
+        let reply = try autoRunLogReply([:], lineCount: nil)
+        XCTAssertEqual(reply.lines, [])
+    }
+
+    func testAutoRunsLogRejectsBadLineCounts() throws {
+        for bad in [0, 201, 2.5, true, "10"] as [Any] {
+            let reply = try autoRunLogReply(["lines": bad], lineCount: 5)
+            XCTAssertEqual(reply.code, "bad_params", "\(bad)")
+        }
+    }
+
     func testAfterAMissingCLIALaterRouteCanTryAgain() {
         let harness = Harness()
         harness.cli = nil

@@ -445,6 +445,16 @@ export function createFakeBridge(): Bridge {
       if (wasGoing) emit('status.changed', statusNow())
       return { stopped: wasGoing }
     },
+    'autoRuns.log': (params) => {
+      const count = params.lines ?? 50
+      if (!Number.isInteger(count) || count < 1 || count > 200) throw new BridgeError('bad_params', 'lines is a whole number from 1 to 200.')
+      const sampleLines = [
+        '2026-11-24T09:00:00Z started a run in /Users/sample/Workspace/tinkeroo',
+        '2026-11-24T09:04:12Z run in /Users/sample/Workspace/tinkeroo ended (exit 0, $0.42)',
+        '2026-11-24T09:30:00Z started a run in /Users/sample/Workspace/shoproo',
+      ]
+      return { lines: sampleLines.slice(-count) }
+    },
   }
 
   window.pointrooDev = {

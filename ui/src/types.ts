@@ -202,6 +202,8 @@ export interface BridgeMethods {
   'notices.seen': { params: { ids: string[] }; result: { seen: number } }
   // Added by R34 (the Swift side).
   'autoRuns.stop': { params: { project: string }; result: { stopped: boolean } }
+  // Added by R37 (the Swift side): the newest lines of the auto-start log, newest last.
+  'autoRuns.log': { params: { lines?: number }; result: { lines: string[] } }
 }
 
 export type BridgeMethod = keyof BridgeMethods

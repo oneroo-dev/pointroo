@@ -56,6 +56,7 @@ const minimalParams: Record<BridgeMethod, Record<string, unknown>> = {
   'notices.list': {},
   'notices.seen': { ids: [] },
   'autoRuns.stop': { project: '/Users/sample/Workspace/tinkeroo' },
+  'autoRuns.log': { lines: 2 },
 }
 
 /** The keys of an interface in types.ts: quoted names at the first indent level, like `  'items.list': {...}`. */
