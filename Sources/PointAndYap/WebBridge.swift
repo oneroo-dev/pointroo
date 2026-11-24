@@ -139,6 +139,9 @@ import Foundation
 ///   autoRuns.stop   params {project: string (the folder of a going auto-start run)}
 ///                   result {stopped: bool} (true when a run was going there and was told to stop; false when none was)
 ///                   error bad_params when project is missing or empty
+///   autoRuns.log    params {lines?: whole number 1...200 (default 50)}
+///                   result {lines: [string]} (the newest lines of the auto-start log, newest last; empty when there is no log yet)
+///                   error bad_params when lines is not a whole number from 1 to 200
 ///
 /// Item: {id, session, n, title, body, crops: [path], status, alsoSaid: [string], at?: ISO date, by?, note?, project?, routeHow?,
 ///        suggested?, suggestedName?, priority?, commit?, branch?, duplicateOf?, said?, firstElement?, duration?}
@@ -240,6 +243,7 @@ final class WebBridge {
         "status.get": { bridge, params in try bridge.statusGet(params) },
         "permissions.ask": { bridge, params in try bridge.permissionsAsk(params) },
         "autoRuns.stop": { bridge, params in try bridge.autoRunsStop(params) },
+        "autoRuns.log": { bridge, params in try bridge.autoRunsLog(params) },
         "server.useAnotherPort": { bridge, params in try bridge.serverUseAnotherPort(params) },
         "app.checkUpdates": { bridge, params in try bridge.appCheckUpdates(params) },
     ]
@@ -267,6 +271,7 @@ final class WebBridge {
     private let noticeStore: NoticeStore
     private let followUpStore: FollowUpStore
     private let stopAutoRun: (String) -> Bool
+    private let readAutoRunLog: (Int) -> [String]
 
     /// What recording.start, recording.stop and recording.cancel ask the app to do.
     enum RecordingAction {
@@ -311,6 +316,7 @@ final class WebBridge {
     /// `loadQuestions` (given `now`) gives the pending questions for notices.list; `noticeStore` is where notices.seen keeps the seen ids.
     /// `followUpStore` is where recording.start keeps a follow-up request (recording.cancel removes it).
     /// `stopAutoRun` serves autoRuns.stop: it gets the folder and says whether a run was going there (the default asks the shared runner).
+    /// `readAutoRunLog` serves autoRuns.log: it gets how many lines to give and returns the newest ones, oldest first (the default reads autostart.log).
     init(defaults: UserDefaults = .standard,
          loadItems: @escaping () -> [Item] = { Items.all() },
          findProject: @escaping (String) -> Project? = { WebBridge.knownProject($0) },
@@ -333,7 +339,8 @@ final class WebBridge {
          loadQuestions: @escaping (Date) -> [Question] = { Questions.pending(now: $0) },
          noticeStore: NoticeStore = NoticeStore(),
          followUpStore: FollowUpStore = FollowUpStore(),
-         stopAutoRun: @escaping (String) -> Bool = { AutoStart.shared.stop(project: $0) }) {
+         stopAutoRun: @escaping (String) -> Bool = { AutoStart.shared.stop(project: $0) },
+         readAutoRunLog: @escaping (Int) -> [String] = { AutoStart.readLog(lines: $0) }) {
         self.defaults = defaults
         self.loadItems = loadItems
         self.findProject = findProject
@@ -357,6 +364,7 @@ final class WebBridge {
         self.noticeStore = noticeStore
         self.followUpStore = followUpStore
         self.stopAutoRun = stopAutoRun
+        self.readAutoRunLog = readAutoRunLog
     }
 
     /// A known project whose folder is this path, or whose name is this text (ignoring case).
@@ -900,6 +908,11 @@ final class WebBridge {
             throw Failure(code: "bad_params", message: "project is needed.")
         }
         return ["stopped": stopAutoRun(project)]
+    }
+
+    private func autoRunsLog(_ params: [String: Any]) throws -> Any {
+        let count = try Self.wholeNumber(params["lines"], named: "lines", range: 1...200, defaultValue: 50)
+        return ["lines": readAutoRunLog(count)]
     }
 
     private static func kind(of key: String) -> SettingKind? {

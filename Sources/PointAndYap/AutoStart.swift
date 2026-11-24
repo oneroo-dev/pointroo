@@ -154,6 +154,15 @@ enum AutoStart {
         catch { FileHandle.standardError.write(Data("pointroo: could not save \(file.path): \(error.localizedDescription)\n".utf8)) }
     }
 
+    /// The newest `count` lines of autostart.log, oldest first. Empty when there is no file. Reads under the same lock appendLog uses.
+    static func readLog(lines count: Int, from file: URL = AutoStart.logFile) -> [String] {
+        logLock.lock()
+        defer { logLock.unlock() }
+        guard let text = try? String(contentsOf: file, encoding: .utf8) else { return [] }
+        let allLines = text.split(separator: "\n", omittingEmptySubsequences: true).map(String.init)
+        return Array(allLines.suffix(count))
+    }
+
     /// The real process starter: runs the CLI in the folder, collects what it prints, and calls `completion` once when it ends.
     /// It returns a stopper for the run: terminate() asks the process to end (SIGTERM), kill() ends it for sure (SIGKILL) if it still runs.
     static func startProcess(_ request: AutoStartRunner.Request, completion: @escaping @Sendable (AutoStartRunner.Outcome) -> Void) throws -> AutoStartRunner.Stopper {
