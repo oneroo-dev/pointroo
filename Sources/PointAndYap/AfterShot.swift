@@ -35,7 +35,7 @@ enum AfterShot {
     /// An item without crops gets a plain notice and no screenshot.
     static func notice(item: Item, project: String) async -> BannerNotice {
         let dir = Paths.root.appendingPathComponent(item.session)
-        var notice = BannerNotice(project: project, note: item.note ?? item.title)
+        var notice = BannerNotice(project: project, note: item.note ?? item.title, itemId: item.id)
         guard let before = item.crops.first, let point = firstPoint(of: item, in: dir) else { return notice }
         notice.before = before
         notice.session = dir

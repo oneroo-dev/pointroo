@@ -8,6 +8,8 @@ struct BannerNotice: Equatable {
     var before: URL? = nil
     var after: URL? = nil
     var session: URL? = nil
+    /// The id of the done item this banner is about, so showing it can mark the item as seen.
+    var itemId: String? = nil
 }
 
 /// Waiting banners. One shows at a time; none start while `paused` (recording).
@@ -62,17 +64,35 @@ final class DoneBanner {
     /// Called each time a banner is put on screen. No visual change.
     var onShown: (() -> Void)?
 
+    /// Called with the item id when its banner is put on screen, so the notices list does not show it again.
+    var markSeen: (String) -> Void = { _ = NoticeStore().markSeen([$0]) }
+    /// Tests set this to false so no window opens.
+    var opensPanel = true
+
     private var queue = BannerQueue()
     private var panel: NSPanel?
 
-    func show(project: String, note: String, before: URL? = nil, after: URL? = nil, session: URL? = nil, onClick: @escaping () -> Void) {
+    func show(project: String, note: String, before: URL? = nil, after: URL? = nil, session: URL? = nil, itemId: String? = nil,
+              onClick: @escaping () -> Void) {
         self.onClick = onClick
-        queue.add(BannerNotice(project: project, note: note, before: before, after: after, session: session))
+        queue.add(BannerNotice(project: project, note: note, before: before, after: after, session: session, itemId: itemId))
         showNext()
     }
 
     private func showNext() {
         guard let notice = queue.next(paused: paused) else { return }
+        if opensPanel { present(notice) }
+        if let itemId = notice.itemId { markSeen(itemId) }
+        onShown?()
+        generation += 1
+        let mine = generation
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            if let self, self.generation == mine { self.finish() }
+        }
+    }
+
+    private func present(_ notice: BannerNotice) {
         let panel = self.panel ?? makePanel()
         self.panel = panel
         let host = NSHostingView(rootView: DoneBannerView(notice: notice) { [weak self] in self?.clicked() })
@@ -81,13 +101,6 @@ final class DoneBanner {
         let frame = (NSScreen.main ?? NSScreen.screens[0]).visibleFrame
         panel.setFrameOrigin(NSPoint(x: frame.maxX - 320 - 16, y: frame.maxY - 64 - 12))
         panel.orderFrontRegardless()
-        onShown?()
-        generation += 1
-        let mine = generation
-        Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 4_000_000_000)
-            if let self, self.generation == mine { self.finish() }
-        }
     }
 
     /// Counts the banners shown, so an old banner's timer cannot hide a newer one.
