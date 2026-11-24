@@ -32,6 +32,7 @@ export type Scenario =
   | 'setup'
   | 'setup-done'
   | 'settings'
+  | 'settings-auto-start'
 
 const props = withDefaults(defineProps<{ width?: number; height?: number; scenario?: Scenario; detailOpen?: boolean }>(), {
   width: 960,
@@ -63,7 +64,14 @@ const settingsValues = ref<SettingsValues>({
   autoSendSingle: true,
   kitWindow: true,
   locale: 'en-US',
+  autoStartAgent: props.scenario === 'settings-auto-start' ? 'claude' : 'off',
+  autoStartModel: 'sonnet',
+  autoStartEffort: 'medium',
+  autoStartBudget: 2,
+  autoStartPermission: 'acceptEdits',
 })
+const settingsOpen = props.scenario === 'settings' || props.scenario === 'settings-auto-start'
+const autoRuns = props.scenario === 'settings-auto-start' ? [{ project: '/Users/sample/Workspace/tinkeroo', startedAt: '2026-11-24T10:42:00Z' }] : []
 
 function onSettingChange(key: SettingKey, value: SettingValue): void {
   settingsValues.value = { ...settingsValues.value, [key]: value }
@@ -165,7 +173,7 @@ const sessionsText = computed(() => (props.scenario === 'no-session' ? 'None lis
       :record-disabled="scenario === 'permission'"
       :update="update"
       :setup="isSetup"
-      :settings-open="scenario === 'settings'"
+      :settings-open="settingsOpen"
       :sessions-text="sessionsText"
       :sessions-warn="scenario === 'no-session'"
       agents-text="Claude Code, Codex"
@@ -176,7 +184,7 @@ const sessionsText = computed(() => (props.scenario === 'no-session' ? 'None lis
     >
       <template #setup><SetupView :step="setupStep" /></template>
       <template #settings>
-        <SettingsScreen :values="settingsValues" :permissions="{ microphone: true, screenRecording: false, accessibility: true }" @change="onSettingChange" />
+        <SettingsScreen :values="settingsValues" :permissions="{ microphone: true, screenRecording: false, accessibility: true }" :auto-runs="autoRuns" @change="onSettingChange" />
       </template>
     </MainWindow>
   </div>

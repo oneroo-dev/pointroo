@@ -31,7 +31,7 @@ function createStubBridge(overrides: Record<string, Handler> = {}) {
     'projects.list': () => ({ projects: [] }),
     'questions.list': () => ({ questions: [] }),
     'status.get': () => ({
-      status: { mcpRunning: true, mcpPort: 6742, mcpText: 'running', sessions: 1, agents: [], microphone: true, screenRecording: true, accessibility: true },
+      status: { mcpRunning: true, mcpPort: 6742, mcpText: 'running', sessions: 1, agents: [], microphone: true, screenRecording: true, accessibility: true, autoRuns: [] },
     }),
     'recording.get': () => ({ phase: 'idle', points: 0 }),
     'picker.get': () => ({ open: false }),
