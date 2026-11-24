@@ -8,10 +8,23 @@ vi.hoisted(() => {
 })
 
 import { createFakeBridge } from './fakeBridge'
-import { currentNotice, doneNoticeNote, elapsedText, maxChoices, noticeChoices, noticeProject, pickerEndsAt, pickerTiles, pillView, sizeToReport } from './floatModel'
+import {
+  currentNotice,
+  doneNoticeNote,
+  elapsedText,
+  maxChoices,
+  noticeChoices,
+  noticeProject,
+  pickerEndsAt,
+  pickerTiles,
+  pillView,
+  sentSeconds,
+  sentView,
+  sizeToReport,
+} from './floatModel'
 import { floatRouteFrom } from './floatRoute'
 import { createStore } from './store'
-import type { DoneNotice, Notice, OpenPicker, QuestionNotice } from './types'
+import type { DoneNotice, Notice, OpenPicker, QuestionNotice, RouteSent } from './types'
 
 beforeEach(() => {
   vi.useFakeTimers()
@@ -130,6 +143,24 @@ describe('notice card', () => {
     expect(doneNoticeNote(doneNotice)).toBe('Moved Delete.')
     const { note: _note, ...withoutNote } = doneNotice
     expect(doneNoticeNote(withoutNote)).toBe('Finished.')
+  })
+})
+
+describe('sent pill', () => {
+  const sent: RouteSent = { session: 's1', project: '/Users/me/Workspace/pointroo', projectName: 'Pointroo', how: 'only', ids: ['s1#1'] }
+
+  it('it_says_where_it_went_and_why', () => {
+    expect(sentSeconds).toBe(6)
+    expect(sentView(undefined)).toBeUndefined()
+    expect(sentView(sent)).toEqual({ label: 'Sent to Pointroo', note: 'Only session listening' })
+    expect(sentView({ ...sent, how: 'said' })?.note).toBe('You said the name')
+    expect(sentView({ ...sent, how: 'screen' })?.note).toBe('Matched from the screen')
+    expect(sentView({ ...sent, how: 'followup' })?.note).toBe('Follow-up on a finished item')
+  })
+
+  it('it_falls_back_to_the_folder_name_and_then_a_plain_word', () => {
+    expect(sentView({ ...sent, projectName: '' })?.label).toBe('Sent to pointroo')
+    expect(sentView({ ...sent, projectName: '', project: '' })?.label).toBe('Sent to the project')
   })
 })
 

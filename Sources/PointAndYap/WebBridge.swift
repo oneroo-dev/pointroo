@@ -18,6 +18,10 @@ import Foundation
 ///   recording.changed  {phase, pointCount}         phase is "idle", "recording", "processing" or "picking" (the project picker is open)
 ///   picker.changed     {open, session?}            the project picker opened or closed (session is the recording it asks about)
 ///   notices.changed    {count}                     the set of notices (unseen agent-done items and pending questions) changed
+///   route.sent         {session, project, projectName, how, ids}   a recording the app sent by itself (how is "said", "screen", "followup"
+///                      or "only"; never "picked"). project is the folder, projectName its name, ids the item ids of the recording (for
+///                      items.unroute). Sent once per recording; recordings that were already routed when the events started send nothing.
+///                      The kit pill panel also gets it from the app when it shows "Sent to X / Undo".
 ///   status.changed     {mcpRunning, mcpPort, mcpText, sessions, agents, microphone, screenRecording, accessibility}
 ///                      the same object status.get returns inside `status`; sent when any part of it changed
 ///

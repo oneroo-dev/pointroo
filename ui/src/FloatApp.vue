@@ -5,11 +5,12 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RooTooltipProvider } from '@roo/kit/controls'
 import { bridge } from './bridge'
 import { postFloatMessage } from './floatChannel'
-import { currentNotice, pickerEndsAt, pickerTiles, pillView, sizeToReport } from './floatModel'
+import { currentNotice, pickerEndsAt, pickerTiles, pillView, sentView, sizeToReport } from './floatModel'
 import type { FloatRoute } from './floatRoute'
 import FloatNotice from './parts/FloatNotice.vue'
 import FloatPicker from './parts/FloatPicker.vue'
 import FloatPill from './parts/FloatPill.vue'
+import FloatSent from './parts/FloatSent.vue'
 import { createStore } from './store'
 import type { Notice, QuestionNotice } from './types'
 
@@ -24,9 +25,11 @@ const endsAt = ref<number | undefined>(undefined)
 const pill = computed(() => pillView(store.recording, nowMilliseconds.value, lastPoints.value))
 const tiles = computed(() => (store.picker === null ? [] : pickerTiles(store.picker)))
 const notice = computed(() => currentNotice(store.notices))
+// "Sent to X / Undo" shows on the pill panel when the pill has nothing else to show (not recording, not making items).
+const sent = computed(() => (pill.value === undefined ? sentView(store.lastSent) : undefined))
 
 const hasContent = computed(() => {
-  if (props.route === 'pill') return pill.value !== undefined
+  if (props.route === 'pill') return pill.value !== undefined || sent.value !== undefined
   if (props.route === 'picker') return store.picker !== null
   return notice.value !== undefined
 })
@@ -104,10 +107,18 @@ function typingInField(target: EventTarget | null): boolean {
   return target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)
 }
 
-// The card's keys work while the card has the key focus (the app's panel does not take focus on its own).
+// The card's keys work while the panel has the key focus (the app's panel does not take it on its own; a click on it does).
 function onKey(event: KeyboardEvent): void {
-  if (props.route !== 'notice' || event.defaultPrevented || event.isComposing || event.metaKey || event.ctrlKey || event.altKey) return
+  if (event.defaultPrevented || event.isComposing || event.metaKey || event.ctrlKey || event.altKey) return
   if (typingInField(event.target)) return
+  if (props.route === 'pill') {
+    if (event.key.toLowerCase() === 'u' && sent.value !== undefined) {
+      void store.undoSent()
+      event.preventDefault()
+    }
+    return
+  }
+  if (props.route !== 'notice') return
   const shown = notice.value
   if (shown === undefined) return
   const key = event.key.toLowerCase()
@@ -121,7 +132,7 @@ function onKey(event: KeyboardEvent): void {
   }
   const choice = /^[1-3]$/.test(key) ? shown.choices[Number(key) - 1] : undefined
   if (choice !== undefined) void onAnswer(shown, choice)
-  else if (key === 'l') void onLater(shown)
+  else if (key === 'l' || key === 'escape') void onLater(shown)
   else return
   event.preventDefault()
 }
@@ -158,6 +169,7 @@ onBeforeUnmount(() => {
     <div ref="root" class="float-root">
       <template v-if="route === 'pill'">
         <FloatPill v-if="pill !== undefined" :phase="pill.phase" :elapsed="pill.elapsed" :points="pill.points" @stop="store.stopRecording" @cancel="store.cancelRecording" />
+        <FloatSent v-else-if="sent !== undefined" :label="sent.label" :note="sent.note" @undo="store.undoSent" />
       </template>
       <template v-else-if="route === 'picker'">
         <FloatPicker v-if="store.picker !== null" :tiles="tiles" :ends-at="endsAt" @pick="onPick" @skip="onSkip" />

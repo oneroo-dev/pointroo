@@ -119,7 +119,8 @@ final class WebHost {
         guard isReadingEvents else { return }   // stopEvents ran while the read was going
         isReadingEvents = false
         guard eventTimer != nil else { return }
-        for event in webEvents.items(items) + webEvents.questions(questions) + webEvents.notices(noticeIds) + webEvents.status(status) {
+        let sent = webEvents.routeSent(items, projectName: { Projects.name(for: $0) })
+        for event in webEvents.items(items) + webEvents.questions(questions) + webEvents.notices(noticeIds) + webEvents.status(status) + sent {
             emit(event.name, event.data)
         }
     }
