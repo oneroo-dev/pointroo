@@ -4,11 +4,22 @@ import SwiftUI
 /// A small floating list of the live projects after a recording that no rule could route: 1-9 or a click picks, Esc skips.
 @MainActor
 enum ProjectPicker {
-    private static var panel: PickerPanel?
+    private static var panel: PickerHandle?
     private static var waiting: CheckedContinuation<Project?, Never>?
 
     /// How long the picker waits before it skips by itself.
     static let timeoutSeconds = 60
+
+    /// Opens the window for the choices and calls the closure with the answer (a click or a key). Tests replace it so no window opens.
+    static var makePanel: ([Project], @escaping @MainActor (Project?) -> Void) -> PickerHandle = ProjectPicker.makeRealPanel
+
+    /// Sleeps this many seconds before the picker skips by itself. Tests replace it so they do not wait.
+    static var pause: (Int) async -> Void = { seconds in
+        try? await Task.sleep(nanoseconds: UInt64(seconds) * 1_000_000_000)
+    }
+
+    /// The time the picker uses for its countdown. Tests replace it.
+    static var clock: () -> Date = { Date() }
 
     /// What the open picker shows, for the web bridge. Nil when no picker is open.
     private static var open: (choices: [Project], session: String?, suggested: String?, openedAt: Date)?
@@ -21,7 +32,8 @@ enum ProjectPicker {
     }
 
     /// The open picker as the bridge reports it (choices in number-key order), or nil when none is open.
-    static func snapshot(now: Date = Date()) -> PickerSnapshot? {
+    static func snapshot(now givenNow: Date? = nil) -> PickerSnapshot? {
+        let now = givenNow ?? clock()
         guard waiting != nil, let open else { return nil }
         let choices = open.choices.enumerated().map { index, project in
             PickerSnapshot.Choice(name: project.name, path: project.path, key: index + 1,
@@ -46,7 +58,7 @@ enum ProjectPicker {
     }
 
     private static func finish(_ project: Project?) {
-        panel?.orderOut(nil)
+        panel?.close()
         panel = nil
         open = nil
         let continuation = waiting
@@ -56,8 +68,17 @@ enum ProjectPicker {
 
     private static func show(_ choices: [Project], _ continuation: CheckedContinuation<Project?, Never>, session: String?, suggested: String?) {
         waiting = continuation
-        open = (choices: choices, session: session, suggested: suggested, openedAt: Date())
-        let host = NSHostingView(rootView: PickerView(projects: choices, pick: { finish($0) }))
+        open = (choices: choices, session: session, suggested: suggested, openedAt: clock())
+        let handle = makePanel(choices) { finish($0) }
+        panel = handle
+        Task { @MainActor in
+            await pause(timeoutSeconds)
+            if panel === handle { finish(nil) }
+        }
+    }
+
+    private static func makeRealPanel(_ choices: [Project], _ done: @escaping @MainActor (Project?) -> Void) -> PickerHandle {
+        let host = NSHostingView(rootView: PickerView(projects: choices, pick: { done($0) }))
         let height = CGFloat(choices.count) * 34 + 78
         host.frame = NSRect(x: 0, y: 0, width: 340, height: height)
         let picker = PickerPanel(contentRect: host.frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
@@ -71,17 +92,22 @@ enum ProjectPicker {
         picker.appearance = NSAppearance(named: .aqua)
         picker.contentView = host
         picker.onKey = { event in
-            if event.keyCode == 53 { finish(nil); return }
-            if let digit = Int(event.charactersIgnoringModifiers ?? ""), digit >= 1, digit <= choices.count { finish(choices[digit - 1]) }
+            if event.keyCode == 53 { done(nil); return }
+            if let digit = Int(event.charactersIgnoringModifiers ?? ""), digit >= 1, digit <= choices.count { done(choices[digit - 1]) }
         }
         let frame = (NSScreen.main ?? NSScreen.screens[0]).visibleFrame
         picker.setFrameOrigin(NSPoint(x: frame.midX - 170, y: frame.maxY - height - 60))
-        panel = picker
         picker.makeKeyAndOrderFront(nil)
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: UInt64(timeoutSeconds) * 1_000_000_000)
-            if panel === picker { finish(nil) }
-        }
+        return PickerHandle(close: { picker.orderOut(nil) })
+    }
+}
+
+/// What the picker keeps of its window: a way to close it, and an identity the timeout compares.
+final class PickerHandle {
+    let close: () -> Void
+
+    init(close: @escaping () -> Void) {
+        self.close = close
     }
 }
 
