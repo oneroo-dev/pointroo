@@ -49,6 +49,11 @@
     "SearchOpen",
     "SearchNarrow",
     "SearchEmpty",
+    "SearchLive",
+    "SearchLiveNarrow",
+    "SearchLiveEmpty",
+    "SearchLiveLoading",
+    "SearchLiveError",
     "MenuBarMenu",
     "HowItWorks"
   ],
@@ -100,6 +105,11 @@
     "SearchOpen": "Search 960",
     "SearchNarrow": "Search 640",
     "SearchEmpty": "Search: no results",
+    "SearchLive": "Real window: search 960",
+    "SearchLiveNarrow": "Real window: search 640",
+    "SearchLiveEmpty": "Real window: search, no results",
+    "SearchLiveLoading": "Real window: search, loading",
+    "SearchLiveError": "Real window: search, error",
     "MenuBarMenu": "Menu bar menu",
     "HowItWorks": "How it works"
   }
