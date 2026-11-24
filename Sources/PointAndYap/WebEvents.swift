@@ -30,6 +30,7 @@ struct WebEvents {
 
     private var itemSignature: [String]?
     private var questionIdentifiers: [String]?
+    private var noticeIdentifiers: [String]?
     private var recordingState: (phase: String, pointCount: Int)?
 
     private var lastStatus: AppStatus?
@@ -55,6 +56,14 @@ struct WebEvents {
         guard identifiers != questionIdentifiers else { return [] }
         questionIdentifiers = identifiers
         return [(name: "questions.changed", data: ["count": questions.count])]
+    }
+
+    /// `notices.changed` {count} when the set of notice ids changed (see Notices.identifiers).
+    mutating func notices(_ identifiers: [String]) -> [Event] {
+        let sorted = identifiers.sorted()
+        guard sorted != noticeIdentifiers else { return [] }
+        noticeIdentifiers = sorted
+        return [(name: "notices.changed", data: ["count": sorted.count])]
     }
 
     /// `status.changed` {the AppStatus dictionary} when any part of the status changed.

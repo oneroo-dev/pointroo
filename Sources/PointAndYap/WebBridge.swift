@@ -17,6 +17,7 @@ import Foundation
 ///   questions.changed  {count}                     the set of unanswered agent questions changed
 ///   recording.changed  {phase, pointCount}         phase is "idle", "recording", "processing" or "picking" (the project picker is open)
 ///   picker.changed     {open, session?}            the project picker opened or closed (session is the recording it asks about)
+///   notices.changed    {count}                     the set of notices (unseen agent-done items and pending questions) changed
 ///   status.changed     {mcpRunning, mcpPort, mcpText, sessions, agents, microphone, screenRecording, accessibility}
 ///                      the same object status.get returns inside `status`; sent when any part of it changed
 ///
@@ -71,6 +72,14 @@ import Foundation
 ///                   the same value as the item's `at`; an item with no date goes last and has no doneAt). Each Item has project, note,
 ///                   by, crops and cropURLs (the before pictures) and afterURL (the after picture of the done banner, when it exists).
 ///                   error bad_params when limit is not a whole number from 1 to 50
+///   notices.list    params {limit?: whole number 1...50, default 20}
+///                   result {notices: [Notice]}   newest first: done items an agent finished that the user has not seen (never by "you" or
+///                   "user"), mixed with the pending questions. Done: {kind: "done", id (the item id), agent, project?, projectName?, note?,
+///                   cropURL? (first crop), afterURL?, at?}. Question: the Question keys plus kind: "question".
+///                   error bad_params when limit is not a whole number from 1 to 50
+///   notices.seen    params {ids: [string]}   marks done items as seen (the newest 500 are kept). Ids that are not done items are ignored;
+///                   questions leave the list when answered or snoozed.
+///                   result {seen: number of ids that were done items}   error bad_params (ids is not a list of text), not_available (could not save)
 ///   session.get     params {session: string}   the id of a recording (an item's `session`)
 ///                   result {session, started: ISO date, duration: seconds, said: [{text, start, end}] (every spoken word, seconds from the start),
 ///                   points: [{at: seconds from the start, x, y, app?, window?, url?, element?}] (element is a short text like AXButton "Save"),
@@ -185,6 +194,8 @@ final class WebBridge {
         "questions.answer": { bridge, params in try bridge.questionsAnswer(params) },
         "questions.later": { bridge, params in try bridge.questionsLater(params) },
         "done.recent": { bridge, params in try bridge.doneRecent(params) },
+        "notices.list": { bridge, params in try bridge.noticesList(params) },
+        "notices.seen": { bridge, params in try bridge.noticesSeen(params) },
         "session.get": { bridge, params in try bridge.sessionGet(params) },
         "recording.start": { bridge, params in try bridge.recordingControl(.start) },
         "recording.stop": { bridge, params in try bridge.recordingControl(.stop) },
@@ -216,6 +227,8 @@ final class WebBridge {
     private let loadPicker: (() -> PickerSnapshot?)?
     private let answerPicker: ((String?) -> Bool)?
     private let now: () -> Date
+    private let loadQuestions: (Date) -> [Question]
+    private let noticeStore: NoticeStore
 
     /// What recording.start, recording.stop and recording.cancel ask the app to do.
     enum RecordingAction {
@@ -256,6 +269,7 @@ final class WebBridge {
     /// `loadPicker` gives the open project picker or nil; `answerPicker` answers it with a folder path (nil = skip) the way a click or
     /// Esc does, and returns false when no picker was open any more. Either one nil means picker.* answers not_available.
     /// `now` is the clock for the question snooze (tests set it).
+    /// `loadQuestions` (given `now`) gives the pending questions for notices.list; `noticeStore` is where notices.seen keeps the seen ids.
     init(defaults: UserDefaults = .standard,
          loadItems: @escaping () -> [Item] = { Items.all() },
          findProject: @escaping (String) -> Project? = { WebBridge.knownProject($0) },
@@ -272,7 +286,9 @@ final class WebBridge {
          loadRecording: (() -> RecordingSnapshot)? = nil,
          loadPicker: (() -> PickerSnapshot?)? = nil,
          answerPicker: ((String?) -> Bool)? = nil,
-         now: @escaping () -> Date = { Date() }) {
+         now: @escaping () -> Date = { Date() },
+         loadQuestions: @escaping (Date) -> [Question] = { Questions.pending(now: $0) },
+         noticeStore: NoticeStore = NoticeStore()) {
         self.defaults = defaults
         self.loadItems = loadItems
         self.findProject = findProject
@@ -290,6 +306,8 @@ final class WebBridge {
         self.loadPicker = loadPicker
         self.answerPicker = answerPicker
         self.now = now
+        self.loadQuestions = loadQuestions
+        self.noticeStore = noticeStore
     }
 
     /// A known project whose folder is this path, or whose name is this text (ignoring case).
@@ -661,6 +679,55 @@ final class WebBridge {
             return entry
         }
         return ["items": items]
+    }
+
+    private func noticesList(_ params: [String: Any]) throws -> Any {
+        let limit = try Self.wholeNumber(params["limit"], named: "limit", range: 1...50, defaultValue: 20)
+        let seen = Set(noticeStore.seenIds())
+        var entries: [(date: Date, entry: [String: Any])] = []
+        for item in loadItems() where Notices.isUnseenDone(item, seen: seen) {
+            entries.append((item.at ?? .distantPast, Self.doneNotice(item)))
+        }
+        for question in loadQuestions(now()) {
+            entries.append((question.asked, Self.questionNotice(question)))
+        }
+        let newest = entries.enumerated().sorted { first, second in
+            first.element.date != second.element.date ? first.element.date > second.element.date : first.offset < second.offset
+        }.prefix(limit)
+        return ["notices": newest.map { $0.element.entry }]
+    }
+
+    private func noticesSeen(_ params: [String: Any]) throws -> Any {
+        guard let list = params["ids"] as? [Any] else { throw Failure(code: "bad_params", message: "ids must be a list of item ids.") }
+        var ids: [String] = []
+        for value in list {
+            guard let id = value as? String else { throw Failure(code: "bad_params", message: "ids must be a list of item ids.") }
+            ids.append(id)
+        }
+        let done = Set(loadItems().filter { $0.status == "done" }.map(\.id))
+        let known = ids.filter { done.contains($0) }
+        guard noticeStore.markSeen(known) else { throw Failure(code: "not_available", message: "Could not save the seen notices.") }
+        return ["seen": known.count]
+    }
+
+    private static func doneNotice(_ item: Item) -> [String: Any] {
+        let base = dictionary(item)
+        var out: [String: Any] = ["kind": "done", "id": item.id, "agent": item.by ?? ""]
+        if let project = item.project {
+            out["project"] = project
+            out["projectName"] = Projects.name(for: project)
+        }
+        if let note = item.note { out["note"] = note }
+        if let cropURL = (base["cropURLs"] as? [String])?.first { out["cropURL"] = cropURL }
+        if let afterURL = base["afterURL"] { out["afterURL"] = afterURL }
+        if let at = base["at"] { out["at"] = at }
+        return out
+    }
+
+    private static func questionNotice(_ question: Question) -> [String: Any] {
+        var out = dictionary(question)
+        out["kind"] = "question"
+        return out
     }
 
     private func sessionGet(_ params: [String: Any]) throws -> Any {

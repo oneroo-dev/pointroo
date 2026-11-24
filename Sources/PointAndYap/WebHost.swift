@@ -92,15 +92,16 @@ final class WebHost {
             // Read the permissions directly, not through state.refreshAccess(): setting AppState's published values every
             // second would redraw every SwiftUI view that watches it, even when nothing changed.
             let status = AppStatus.readNow()
-            await self?.finishRead(items: items, questions: questions, status: status)
+            let noticeIds = Notices.identifiers(items: items, questions: questions, seen: Set(NoticeStore().seenIds()))
+            await self?.finishRead(items: items, questions: questions, status: status, noticeIds: noticeIds)
         }
     }
 
-    private func finishRead(items: [Item], questions: [Question], status: AppStatus) {
+    private func finishRead(items: [Item], questions: [Question], status: AppStatus, noticeIds: [String]) {
         guard isReadingEvents else { return }   // stopEvents ran while the read was going
         isReadingEvents = false
         guard eventTimer != nil else { return }
-        for event in webEvents.items(items) + webEvents.questions(questions) + webEvents.status(status) {
+        for event in webEvents.items(items) + webEvents.questions(questions) + webEvents.notices(noticeIds) + webEvents.status(status) {
             emit(event.name, event.data)
         }
     }
