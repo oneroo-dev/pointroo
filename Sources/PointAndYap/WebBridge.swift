@@ -22,6 +22,9 @@ import Foundation
 ///                      or "only"; never "picked"). project is the folder, projectName its name, ids the item ids of the recording (for
 ///                      items.unroute). Sent once per recording; recordings that were already routed when the events started send nothing.
 ///                      The kit pill panel also gets it from the app when it shows "Sent to X / Undo".
+///   item.focus         {id}                        the app was asked to open this item (Open on a notice card, the done banner, a pointroo://item/<id>
+///                      link); the main window page selects it. Sent to the kit main window's page by the app (WebHost.focusItem), not by
+///                      the timer; if the page has not loaded yet it is sent right after the load.
 ///   status.changed     {mcpRunning, mcpPort, mcpText, sessions, agents, microphone, screenRecording, accessibility}
 ///                      the same object status.get returns inside `status`; sent when any part of it changed
 ///

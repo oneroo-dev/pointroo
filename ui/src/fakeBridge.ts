@@ -24,11 +24,22 @@ import type {
   PickerSnapshot,
   QuestionNotice,
   RecordingPhase,
+  RouteSent,
   SearchField,
   SearchResult,
   SettingKey,
   SettingValue,
 } from './types'
+
+declare global {
+  interface Window {
+    /** Set by the fake bridge (plain browser only): try the events the app sends by itself, from the console. */
+    pointrooDev?: {
+      focusItem(id: string): void
+      sent(data: RouteSent): void
+    }
+  }
+}
 
 const minutesPerUnit: Record<string, number> = { min: 1, hour: 60, hours: 60, day: 1440, days: 1440 }
 
@@ -405,6 +416,11 @@ export function createFakeBridge(): Bridge {
     'window.startDrag': () => ({ dragging: true }),
     'server.useAnotherPort': () => ({ asked: true }),
     'app.checkUpdates': () => ({ asked: true }),
+  }
+
+  window.pointrooDev = {
+    focusItem: (id) => emit('item.focus', { id }),
+    sent: (data) => emit('route.sent', data),
   }
 
   return {

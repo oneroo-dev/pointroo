@@ -283,6 +283,7 @@ export interface BridgeEvents {
   'picker.changed': { open: boolean; session?: string }
   'notices.changed': { count: number }
   'route.sent': RouteSent
+  'item.focus': { id: string }
   'status.changed': BridgeAppStatus
 }
 
