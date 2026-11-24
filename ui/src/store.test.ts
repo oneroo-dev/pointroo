@@ -11,7 +11,7 @@ import type { Bridge } from './bridge'
 import { BridgeError } from './bridgeError'
 import { createFakeBridge } from './fakeBridge'
 import { createStore } from './store'
-import type { BridgeEventName, BridgeEvents, Notice, SearchResult } from './types'
+import type { BridgeEventName, BridgeEvents, BridgeItem, Notice, SearchResult } from './types'
 
 type Handler = (params: unknown) => unknown
 
@@ -576,5 +576,75 @@ describe('with the fake bridge', () => {
     expect(doneIds.length).toBeGreaterThan(0)
     await settle(store.markNoticesSeen(doneIds))
     expect(store.notices.some((notice) => notice.kind === 'done')).toBe(false)
+  })
+})
+
+describe('item.focus', () => {
+  function bridgeItem(id: string, status: 'open' | 'done'): BridgeItem {
+    return { id, session: 'sample', n: 1, title: `Item ${id}`, body: 'body', crops: [], cropURLs: [], status, alsoSaid: [] }
+  }
+
+  function listOf(...items: BridgeItem[]): Handler {
+    return () => ({ groups: [{ project: null, items }] })
+  }
+
+  it('it_selects_a_queue_item_and_switches_to_the_tab_it_lives_in', async () => {
+    const stub = createStubBridge({ 'items.list': listOf(bridgeItem('a#1', 'open'), bridgeItem('d#1', 'done')) })
+    const store = createStore(stub.bridge)
+    const stop = store.start()
+    await flush()
+    stub.emit('item.focus', { id: 'd#1' })
+    await flush()
+    expect(store.selectedId).toBe('d#1')
+    expect(store.tab).toBe('done')
+    stub.emit('item.focus', { id: 'a#1' })
+    await flush()
+    expect(store.selectedId).toBe('a#1')
+    expect(store.tab).toBe('now')
+    stop()
+  })
+
+  it('it_closes_search_and_settings', async () => {
+    const stub = createStubBridge({ 'items.list': listOf(bridgeItem('a#1', 'open')) })
+    const store = createStore(stub.bridge)
+    const stop = store.start()
+    await flush()
+    store.openSearch()
+    await store.openSettings()
+    expect(store.searchOpen).toBe(true)
+    expect(store.view).toBe('settings')
+    stub.emit('item.focus', { id: 'a#1' })
+    await flush()
+    expect(store.searchOpen).toBe(false)
+    expect(store.view).toBe('queue')
+    expect(store.selectedId).toBe('a#1')
+    stop()
+  })
+
+  it('it_loads_the_items_once_for_an_unknown_id_and_then_selects_it', async () => {
+    let known = [bridgeItem('a#1', 'open')]
+    const stub = createStubBridge({ 'items.list': () => ({ groups: [{ project: null, items: known }] }) })
+    const store = createStore(stub.bridge)
+    const stop = store.start()
+    await flush()
+    known = [bridgeItem('a#1', 'open'), bridgeItem('new#1', 'open')]
+    const before = stub.callsTo('items.list').length
+    stub.emit('item.focus', { id: 'new#1' })
+    await flush()
+    expect(stub.callsTo('items.list').length).toBe(before + 1)
+    expect(store.selectedId).toBe('new#1')
+    stop()
+  })
+
+  it('it_selects_nothing_and_shows_no_toast_when_the_id_is_still_missing', async () => {
+    const stub = createStubBridge({ 'items.list': listOf(bridgeItem('a#1', 'open')) })
+    const store = createStore(stub.bridge)
+    const stop = store.start()
+    await flush()
+    stub.emit('item.focus', { id: 'gone#1' })
+    await flush()
+    expect(store.selectedId).toBeUndefined()
+    expect(store.toast).toBeUndefined()
+    stop()
   })
 })

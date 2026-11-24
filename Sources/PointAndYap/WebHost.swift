@@ -15,6 +15,9 @@ final class WebHost {
     private var webEvents = WebEvents()
     private var eventTimer: Timer?
     private var isReadingEvents = false
+    /// True once the page has finished loading (its listeners are set up when the page is mounted, before that point).
+    private var pageReady = false
+    private var pendingFocus = PendingFocus()
 
     /// The folder inside the app that holds the built screens (Contents/Resources/ui).
     static var bundleFolder: URL? { Bundle.main.resourceURL?.appendingPathComponent("ui", isDirectory: true) }
@@ -49,10 +52,26 @@ final class WebHost {
             configuration.userContentController.addUserScript(script)
             configuration.userContentController.add(WeakFloatHandler(host: self), name: "pointrooFloat")
         }
+        policy.onFinish = { [weak self] in MainActor.assumeIsolated { self?.pageDidLoad() } }
+    }
+
+    private func pageDidLoad() {
+        pageReady = true
+        if let id = pendingFocus.pageBecameReady() { send(PendingFocus.event(id: id)) }
+    }
+
+    private func send(_ event: WebEvents.Event) {
+        emit(event.name, event.data)
+    }
+
+    /// Asks the page to select an item (event item.focus). If the page has not loaded yet, the id waits and goes out after the load.
+    func focusItem(_ id: String) {
+        if let now = pendingFocus.request(id, pageReady: pageReady) { send(PendingFocus.event(id: now)) }
     }
 
     /// Loads the dev address when one is set, else ui/index.html from the app, with read access to that folder only.
     func load() {
+        pageReady = false
         if let devURL = Self.devURL(from: Prefs.webDevURL) {
             webView.load(URLRequest(url: devURL))
         } else if let folder = Self.bundleFolder {
@@ -193,10 +212,16 @@ private final class PlainWebView: WKWebView {
 private final class NavigationPolicy: NSObject, WKNavigationDelegate {
     let bundleFolder: URL?
     let devOrigin: URL?
+    /// Called on the main thread when a page load has finished.
+    var onFinish: (() -> Void)?
 
     init(bundleFolder: URL?, devOrigin: URL?) {
         self.bundleFolder = bundleFolder
         self.devOrigin = devOrigin
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        DispatchQueue.main.async { [weak self] in self?.onFinish?() }
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,

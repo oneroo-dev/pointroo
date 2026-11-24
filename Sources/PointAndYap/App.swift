@@ -106,7 +106,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             Task {
                 let notice = await AfterShot.notice(item: item, project: project)
                 DoneBanner.shared.show(project: notice.project, note: notice.note, before: notice.before, after: notice.after,
-                                       session: notice.session, itemId: notice.itemId) { self?.showWindow() }
+                                       session: notice.session, itemId: notice.itemId) {
+                    if let id = notice.itemId { self?.focusItem(id) } else { self?.showWindow() }
+                }
             }
         }
         // Agents mark items done from their own processes: look again, with the window hidden too (the scan is off the main actor).
@@ -283,7 +285,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     /// pointroo://item/<id>: show the main window on that item.
     func application(_ application: NSApplication, open urls: [URL]) {
-        for url in urls where state.handle(url: url) { showWindow() }
+        for url in urls {
+            guard state.handle(url: url), let id = DeepLink.itemID(from: url) else { continue }
+            focusItem(id)
+        }
     }
 
     func applicationDidBecomeActive(_ note: Notification) { state.refreshAccess(); state.loadSessions() }
@@ -368,7 +373,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     /// "Open" on a kit notice: show the main window on that item.
     private func openItemFromFloating(_ id: String) {
+        focusItem(id)
+    }
+
+    /// Opens the main window on an item: the classic window through state.selectedItem, the kit window through the item.focus event.
+    private func focusItem(_ id: String) {
         state.selectedItem = id
+        kitHost?.focusItem(id)
         showWindow()
     }
 

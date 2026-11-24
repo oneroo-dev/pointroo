@@ -286,6 +286,7 @@ export function createStore(bridge: Bridge, options: StoreOptions = {}) {
       bridge.on('status.changed', (data) => {
         status.value = data
       }),
+      bridge.on('item.focus', (data) => void focusItem(data.id)),
       ...listenToFloatingEvents(),
     ]
     void refresh()
@@ -456,6 +457,25 @@ export function createStore(bridge: Bridge, options: StoreOptions = {}) {
     selectedId.value = itemId
     searchOpen.value = false
     void search('', 'all')
+  }
+
+  /**
+   * The app asked to open an item (Open on a notice, the done banner, a pointroo:// link). Search and Settings close, the tab follows
+   * where the item lives and it is selected. An item the queue does not know yet: the queue is loaded once, then it is selected if found.
+   */
+  async function focusItem(itemId: string): Promise<void> {
+    closeSearch()
+    view.value = 'queue'
+    let found = itemById(itemId)
+    if (found === undefined) {
+      await refresh()
+      found = itemById(itemId)
+    }
+    if (found === undefined) return
+    tab.value = found.state === 'done' || found.state === 'done-by-you' ? 'done' : 'now'
+    searchOpened.value = undefined
+    filter.value = 'all'
+    selectedId.value = itemId
   }
 
   function projectById(projectId: string): Project | undefined {
@@ -709,6 +729,7 @@ export function createStore(bridge: Bridge, options: StoreOptions = {}) {
     openSearch,
     closeSearch,
     openSearchResult,
+    focusItem,
     startRecording,
     stopRecording,
     cancelRecording,
