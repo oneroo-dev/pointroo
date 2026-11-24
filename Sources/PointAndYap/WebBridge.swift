@@ -136,6 +136,9 @@ import Foundation
 ///                   (the last run that ended; left out until one did)}}
 ///   permissions.ask params {which: "microphone" | "screenRecording" | "accessibility"}
 ///                   result {asked: true}   error bad_params when which is missing or unknown, not_available when the app gave no way to ask
+///   autoRuns.stop   params {project: string (the folder of a going auto-start run)}
+///                   result {stopped: bool} (true when a run was going there and was told to stop; false when none was)
+///                   error bad_params when project is missing or empty
 ///
 /// Item: {id, session, n, title, body, crops: [path], status, alsoSaid: [string], at?: ISO date, by?, note?, project?, routeHow?,
 ///        suggested?, suggestedName?, priority?, commit?, branch?, duplicateOf?, said?, firstElement?, duration?}
@@ -236,6 +239,7 @@ final class WebBridge {
         "settings.set": { bridge, params in try bridge.settingsSet(params) },
         "status.get": { bridge, params in try bridge.statusGet(params) },
         "permissions.ask": { bridge, params in try bridge.permissionsAsk(params) },
+        "autoRuns.stop": { bridge, params in try bridge.autoRunsStop(params) },
         "server.useAnotherPort": { bridge, params in try bridge.serverUseAnotherPort(params) },
         "app.checkUpdates": { bridge, params in try bridge.appCheckUpdates(params) },
     ]
@@ -262,6 +266,7 @@ final class WebBridge {
     private let loadQuestions: (Date) -> [Question]
     private let noticeStore: NoticeStore
     private let followUpStore: FollowUpStore
+    private let stopAutoRun: (String) -> Bool
 
     /// What recording.start, recording.stop and recording.cancel ask the app to do.
     enum RecordingAction {
@@ -305,6 +310,7 @@ final class WebBridge {
     /// `now` is the clock for the question snooze (tests set it).
     /// `loadQuestions` (given `now`) gives the pending questions for notices.list; `noticeStore` is where notices.seen keeps the seen ids.
     /// `followUpStore` is where recording.start keeps a follow-up request (recording.cancel removes it).
+    /// `stopAutoRun` serves autoRuns.stop: it gets the folder and says whether a run was going there (the default asks the shared runner).
     init(defaults: UserDefaults = .standard,
          loadItems: @escaping () -> [Item] = { Items.all() },
          findProject: @escaping (String) -> Project? = { WebBridge.knownProject($0) },
@@ -326,7 +332,8 @@ final class WebBridge {
          now: @escaping () -> Date = { Date() },
          loadQuestions: @escaping (Date) -> [Question] = { Questions.pending(now: $0) },
          noticeStore: NoticeStore = NoticeStore(),
-         followUpStore: FollowUpStore = FollowUpStore()) {
+         followUpStore: FollowUpStore = FollowUpStore(),
+         stopAutoRun: @escaping (String) -> Bool = { AutoStart.shared.stop(project: $0) }) {
         self.defaults = defaults
         self.loadItems = loadItems
         self.findProject = findProject
@@ -349,6 +356,7 @@ final class WebBridge {
         self.loadQuestions = loadQuestions
         self.noticeStore = noticeStore
         self.followUpStore = followUpStore
+        self.stopAutoRun = stopAutoRun
     }
 
     /// A known project whose folder is this path, or whose name is this text (ignoring case).
@@ -885,6 +893,13 @@ final class WebBridge {
         guard let askPermission else { throw Failure(code: "not_available", message: "Asking for a permission is not available yet.") }
         askPermission(which)
         return ["asked": true]
+    }
+
+    private func autoRunsStop(_ params: [String: Any]) throws -> Any {
+        guard let project = params["project"] as? String, !project.isEmpty else {
+            throw Failure(code: "bad_params", message: "project is needed.")
+        }
+        return ["stopped": stopAutoRun(project)]
     }
 
     private static func kind(of key: String) -> SettingKind? {

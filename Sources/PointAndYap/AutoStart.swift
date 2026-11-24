@@ -155,7 +155,8 @@ enum AutoStart {
     }
 
     /// The real process starter: runs the CLI in the folder, collects what it prints, and calls `completion` once when it ends.
-    static func startProcess(_ request: AutoStartRunner.Request, completion: @escaping @Sendable (AutoStartRunner.Outcome) -> Void) throws {
+    /// It returns a stopper for the run: terminate() asks the process to end (SIGTERM), kill() ends it for sure (SIGKILL) if it still runs.
+    static func startProcess(_ request: AutoStartRunner.Request, completion: @escaping @Sendable (AutoStartRunner.Outcome) -> Void) throws -> AutoStartRunner.Stopper {
         let process = Foundation.Process()
         process.executableURL = request.executable
         process.arguments = request.arguments
@@ -179,6 +180,19 @@ enum AutoStart {
             completion(AutoStartRunner.Outcome(exitCode: finished.terminationStatus, output: buffer.text))
         }
         try process.run()
+        let box = ProcessBox(process)
+        return AutoStartRunner.Stopper(
+            terminate: { box.process.terminate() },
+            kill: {
+                if box.process.isRunning { Darwin.kill(box.process.processIdentifier, SIGKILL) }
+            })
+    }
+
+    /// Holds the process so the stopper closures can be Sendable. The Process is only asked to stop, from any thread, which it allows.
+    private final class ProcessBox: @unchecked Sendable {
+        let process: Foundation.Process
+
+        init(_ process: Foundation.Process) { self.process = process }
     }
 
     /// The output of a run, kept up to about a megabyte.
@@ -214,7 +228,16 @@ final class AutoStartRunner: @unchecked Sendable {
         var output: String
     }
 
-    typealias Starter = (Request, @escaping @Sendable (Outcome) -> Void) throws -> Void
+    /// How to end a run that is going. terminate() is the polite stop (SIGTERM); kill() is the hard one (SIGKILL), only if it still runs.
+    struct Stopper: Sendable {
+        var terminate: @Sendable () -> Void
+        var kill: @Sendable () -> Void
+    }
+
+    /// Seconds between the polite stop and the hard kill.
+    static let killDelaySeconds: TimeInterval = 5
+
+    typealias Starter = (Request, @escaping @Sendable (Outcome) -> Void) throws -> Stopper
     typealias Scheduler = (TimeInterval, @escaping @Sendable () -> Void) -> Void
 
     private let options: () -> AutoStart.Options
@@ -231,6 +254,9 @@ final class AutoStartRunner: @unchecked Sendable {
     private var lastFinished: AutoStart.LastRun?
     private var waiting: [String: Date] = [:]
     private var going: [String: Date] = [:]
+    /// One id for each going run, so a late kill only hits the run it was meant for.
+    private var runIDs: [String: UUID] = [:]
+    private var stoppers: [String: Stopper] = [:]
 
     init(options: @escaping () -> AutoStart.Options = { AutoStart.Options.current() },
          findCLI: @escaping () -> URL? = { AgentInstall.claudeCLI },
@@ -308,14 +334,15 @@ final class AutoStartRunner: @unchecked Sendable {
                 log("nothing started for \(folder): the claude CLI was not found")
                 return
             }
-            guard claim(key) else {
+            guard let runID = claim(key) else {
                 log("skipped \(folder): a run is already going")
                 return
             }
             let request = Request(executable: cli, arguments: AutoStart.arguments(options: current), folder: folder)
             log("start \(folder): model \(current.model), effort \(current.effort), budget \(AutoStart.budgetText(current.budget)), permission \(current.permission)")
             do {
-                try start(request) { [self] outcome in finish(folder: folder, outcome: outcome) }
+                let stopper = try start(request) { [self] outcome in finish(folder: folder, outcome: outcome) }
+                keep(stopper, for: key, runID: runID)
                 onChange()
             } catch {
                 release(key)
@@ -332,20 +359,66 @@ final class AutoStartRunner: @unchecked Sendable {
         lock.unlock()
     }
 
-    /// Moves the folder from waiting to going. False when a run is already going there.
-    private func claim(_ key: String) -> Bool {
+    /// Moves the folder from waiting to going. Gives the id of the new run, or nil when a run is already going there.
+    private func claim(_ key: String) -> UUID? {
         lock.lock()
         defer { lock.unlock() }
         waiting[key] = nil
-        if going[key] != nil { return false }
+        if going[key] != nil { return nil }
         going[key] = now()
-        return true
+        let runID = UUID()
+        runIDs[key] = runID
+        return runID
     }
 
     private func release(_ key: String) {
         lock.lock()
         going[key] = nil
+        runIDs[key] = nil
+        stoppers[key] = nil
         lock.unlock()
+    }
+
+    /// Keeps the stopper, but only when this run is still the one going (it may have ended already, very fast).
+    private func keep(_ stopper: Stopper, for key: String, runID: UUID) {
+        lock.lock()
+        if runIDs[key] == runID { stoppers[key] = stopper }
+        lock.unlock()
+    }
+
+    /// Ends the run going in `project` (SIGTERM now, SIGKILL after 5 seconds if it is still the same run). False when no run is going there.
+    /// The normal finish path then frees the folder and records the last run, as for any run that ends.
+    @discardableResult
+    func stop(project: String) -> Bool {
+        let key = AutoStart.key(for: project)
+        lock.lock()
+        guard going[key] != nil, let stopper = stoppers[key], let runID = runIDs[key] else {
+            lock.unlock()
+            return false
+        }
+        lock.unlock()
+        log("stopped by user \(project)")
+        stopper.terminate()
+        schedule(Self.killDelaySeconds) { [self] in
+            lock.lock()
+            let sameRun = runIDs[key] == runID
+            lock.unlock()
+            if sameRun { stopper.kill() }
+        }
+        return true
+    }
+
+    /// For when the app quits: ends every going run now, so no headless claude stays behind. There is no time to wait 5 seconds at
+    /// quit, so each run gets terminate() and then kill() straight away (kill does nothing when the process is already gone).
+    func stopAll() {
+        lock.lock()
+        let entries = going.keys.compactMap { key in stoppers[key].map { (key, $0) } }
+        lock.unlock()
+        for (key, stopper) in entries {
+            log("stopped at quit \(key)")
+            stopper.terminate()
+            stopper.kill()
+        }
     }
 
     private func finish(folder: String, outcome: Outcome) {

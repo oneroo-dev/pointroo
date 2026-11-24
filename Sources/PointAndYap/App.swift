@@ -293,6 +293,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationDidBecomeActive(_ note: Notification) { state.refreshAccess(); state.loadSessions() }
 
+    /// No headless auto-start run is left behind when the app quits.
+    func applicationWillTerminate(_ note: Notification) { AutoStart.shared.stopAll() }
+
     func applicationShouldHandleReopen(_ app: NSApplication, hasVisibleWindows: Bool) -> Bool {
         if case .recording = state.phase { return false }
         bringWindowToFront()
