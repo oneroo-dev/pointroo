@@ -139,8 +139,10 @@ final class AppState: ObservableObject {
         onRecordingChanged?(false)
         let practice = practiceNext
         practiceNext = false
+        FloatingWatcher.openReadWindow()
         Task {
             let dir = await r.stop()
+            FloatingWatcher.openReadWindow()
             if practice { Practice.mark(dir) }
             loadSessions()
             // The short pointer goes on the clipboard as soon as the timeline exists; the MCP and the folder fill in after.
