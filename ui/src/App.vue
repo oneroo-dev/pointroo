@@ -40,7 +40,7 @@ function onReveal(): void {
 }
 
 function onUseOtherPort(): void {
-  void store.openSettings()
+  void store.useAnotherPort()
 }
 
 function onCopyHint(): void {
@@ -190,6 +190,8 @@ onBeforeUnmount(() => {
           v-bind="store.status === undefined ? {} : { permissions: store.status }"
           @change="store.setSetting"
           @allow="store.allow"
+          @use-another-port="store.useAnotherPort"
+          @check-updates="store.checkUpdates"
           @back="store.closeSettings"
         />
       </template>

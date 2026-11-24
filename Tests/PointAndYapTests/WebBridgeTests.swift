@@ -571,6 +571,22 @@ final class WebBridgeTests: XCTestCase {
         XCTAssertEqual(try code(WebBridge(defaults: defaults), "window.startDrag", [:]), "not_available")
     }
 
+    func testUseAnotherPortCallsTheClosureOnceAndWithoutOneIsNotAvailable() throws {
+        var calls = 0
+        let subject = WebBridge(defaults: defaults, loadItems: { [] }, useAnotherPort: { calls += 1 })
+        XCTAssertEqual(try result(subject, "server.useAnotherPort")["asked"] as? Bool, true)
+        XCTAssertEqual(calls, 1)
+        XCTAssertEqual(try code(WebBridge(defaults: defaults), "server.useAnotherPort", [:]), "not_available")
+    }
+
+    func testCheckUpdatesCallsTheClosureOnceAndWithoutOneIsNotAvailable() throws {
+        var calls = 0
+        let subject = WebBridge(defaults: defaults, loadItems: { [] }, checkUpdates: { calls += 1 })
+        XCTAssertEqual(try result(subject, "app.checkUpdates")["asked"] as? Bool, true)
+        XCTAssertEqual(calls, 1)
+        XCTAssertEqual(try code(WebBridge(defaults: defaults), "app.checkUpdates", [:]), "not_available")
+    }
+
     func testKitWindowSettingIsAFlagThatDefaultsToOn() throws {
         let subject = bridge()
         let first = try XCTUnwrap(result(subject, "settings.get", ["key": "kitWindow"])["value"] as? Bool)

@@ -210,6 +210,8 @@ export function createFakeBridge(): Bridge {
     },
     'clipboard.copy': () => ({ copied: true }),
     'window.startDrag': () => ({ dragging: true }),
+    'server.useAnotherPort': () => ({ asked: true }),
+    'app.checkUpdates': () => ({ asked: true }),
   }
 
   return {

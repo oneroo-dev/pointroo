@@ -231,7 +231,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     guard let project = ProjectPicker.snapshotProject(path: path) else { return false }
                     return ProjectPicker.answer(project)
                 }
-            })
+            },
+            useAnotherPort: { MainActor.assumeIsolated { state.useAnotherPort() } },
+            checkUpdates: { MainActor.assumeIsolated { Updater.shared.checkNow() } })
         // One WebHost for the life of the app: a swap back to the kit window moves the same web view into the new window.
         let host: WebHost
         if let existing = kitHost {

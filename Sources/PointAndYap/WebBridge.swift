@@ -67,6 +67,10 @@ import Foundation
 ///                   result {copied: true}   error bad_params when text is not a non-empty string
 ///   window.startDrag no params   the page calls this from a mousedown on its own drag area; the window then follows the mouse
 ///                   result {dragging: true}   error not_available when the app gave no way to drag
+///   server.useAnotherPort no params   moves the agents server to the next free port, then the agent install follows it
+///                   result {asked: true}   error not_available when the app gave no way to do it
+///   app.checkUpdates no params   asks the updater to look for a new version
+///                   result {asked: true}   error not_available when the app gave no way to do it
 ///   done.recent     params {limit?: whole number 1...50, default 10}
 ///                   result {items: [Item + doneAt]}   items with status done, newest done first (doneAt is the ISO date it was marked done,
 ///                   the same value as the item's `at`; an item with no date goes last and has no doneAt). Each Item has project, note,
@@ -211,6 +215,8 @@ final class WebBridge {
         "settings.set": { bridge, params in try bridge.settingsSet(params) },
         "status.get": { bridge, params in try bridge.statusGet(params) },
         "permissions.ask": { bridge, params in try bridge.permissionsAsk(params) },
+        "server.useAnotherPort": { bridge, params in try bridge.serverUseAnotherPort(params) },
+        "app.checkUpdates": { bridge, params in try bridge.appCheckUpdates(params) },
     ]
 
     private let defaults: UserDefaults
@@ -229,6 +235,8 @@ final class WebBridge {
     private let loadRecording: (() -> RecordingSnapshot)?
     private let loadPicker: (() -> PickerSnapshot?)?
     private let answerPicker: ((String?) -> Bool)?
+    private let useAnotherPort: (() -> Void)?
+    private let checkUpdates: (() -> Void)?
     private let now: () -> Date
     private let loadQuestions: (Date) -> [Question]
     private let noticeStore: NoticeStore
@@ -272,6 +280,7 @@ final class WebBridge {
     /// (the same one recording.changed uses); both nil means recording.* answers not_available (recording.get needs `loadRecording`).
     /// `loadPicker` gives the open project picker or nil; `answerPicker` answers it with a folder path (nil = skip) the way a click or
     /// Esc does, and returns false when no picker was open any more. Either one nil means picker.* answers not_available.
+    /// `useAnotherPort` serves server.useAnotherPort and `checkUpdates` serves app.checkUpdates; when one is nil, its method answers not_available.
     /// `now` is the clock for the question snooze (tests set it).
     /// `loadQuestions` (given `now`) gives the pending questions for notices.list; `noticeStore` is where notices.seen keeps the seen ids.
     /// `followUpStore` is where recording.start keeps a follow-up request (recording.cancel removes it).
@@ -291,6 +300,8 @@ final class WebBridge {
          loadRecording: (() -> RecordingSnapshot)? = nil,
          loadPicker: (() -> PickerSnapshot?)? = nil,
          answerPicker: ((String?) -> Bool)? = nil,
+         useAnotherPort: (() -> Void)? = nil,
+         checkUpdates: (() -> Void)? = nil,
          now: @escaping () -> Date = { Date() },
          loadQuestions: @escaping (Date) -> [Question] = { Questions.pending(now: $0) },
          noticeStore: NoticeStore = NoticeStore(),
@@ -311,6 +322,8 @@ final class WebBridge {
         self.loadRecording = loadRecording
         self.loadPicker = loadPicker
         self.answerPicker = answerPicker
+        self.useAnotherPort = useAnotherPort
+        self.checkUpdates = checkUpdates
         self.now = now
         self.loadQuestions = loadQuestions
         self.noticeStore = noticeStore
@@ -584,6 +597,18 @@ final class WebBridge {
         guard let startDrag else { throw Failure(code: "not_available", message: "Dragging the window is not available.") }
         startDrag()
         return ["dragging": true]
+    }
+
+    private func serverUseAnotherPort(_ params: [String: Any]) throws -> Any {
+        guard let useAnotherPort else { throw Failure(code: "not_available", message: "Using another port is not available.") }
+        useAnotherPort()
+        return ["asked": true]
+    }
+
+    private func appCheckUpdates(_ params: [String: Any]) throws -> Any {
+        guard let checkUpdates else { throw Failure(code: "not_available", message: "Checking for updates is not available.") }
+        checkUpdates()
+        return ["asked": true]
     }
 
     private func recordingControl(_ action: RecordingAction, params: [String: Any] = [:]) throws -> Any {

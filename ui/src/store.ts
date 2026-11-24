@@ -288,6 +288,26 @@ export function createStore(bridge: Bridge) {
     }
   }
 
+  /** Asks the app to move the agents server to the next free port. */
+  async function useAnotherPort(): Promise<void> {
+    try {
+      await bridge.call('server.useAnotherPort', {})
+      showToast('Asked.', 'ok', false)
+    } catch (error) {
+      fail(error)
+    }
+  }
+
+  /** Asks the app to look for a new version. */
+  async function checkUpdates(): Promise<void> {
+    try {
+      await bridge.call('app.checkUpdates', {})
+      showToast('Asked.', 'ok', false)
+    } catch (error) {
+      fail(error)
+    }
+  }
+
   async function loadSettings(): Promise<void> {
     const reply = await bridge.call('settings.get', {})
     if ('values' in reply) settings.value = reply.values
@@ -382,6 +402,8 @@ export function createStore(bridge: Bridge) {
     copyText,
     answer,
     allow,
+    useAnotherPort,
+    checkUpdates,
     select,
     selectProjectNumber,
     showToast,
