@@ -29,6 +29,7 @@ const recentDoneLimit = 50
 const laterMinutes = 30
 const defaultSearchDelayMilliseconds = 200
 const searchTextLimit = 200
+const autoRunLogLines = 50
 
 export interface StoreOptions {
   /** How long the search waits after the last key before it asks the app. Tests make it small. */
@@ -72,6 +73,9 @@ export function createStore(bridge: Bridge, options: StoreOptions = {}) {
   const toast = ref<MainToast | undefined>(undefined)
   /** The project folders whose auto-start run has been asked to stop and has not answered yet. */
   const stoppingRuns = ref<string[]>([])
+  /** The newest lines of the auto-start log while the log panel is open. Undefined when the panel is closed. */
+  const autoRunLog = ref<string[] | undefined>(undefined)
+  const autoRunLogLoading = ref(false)
   const now = ref(new Date())
   const view = ref<'queue' | 'settings'>('queue')
   const settings = ref<SettingsValues>({})
@@ -647,6 +651,23 @@ export function createStore(bridge: Bridge, options: StoreOptions = {}) {
     }
   }
 
+  /** Reads the newest lines of the auto-start log. A failed read shows the usual toast and leaves the panel closed if it was closed. */
+  async function loadAutoRunLog(): Promise<void> {
+    autoRunLogLoading.value = true
+    try {
+      autoRunLog.value = (await bridge.call('autoRuns.log', { lines: autoRunLogLines })).lines
+    } catch (error) {
+      fail(error)
+    } finally {
+      autoRunLogLoading.value = false
+    }
+  }
+
+  /** Hide on the log panel: the lines are forgotten, so the next Show log reads them fresh. */
+  function hideAutoRunLog(): void {
+    autoRunLog.value = undefined
+  }
+
   /** Asks the app to move the agents server to the next free port. */
   async function useAnotherPort(): Promise<void> {
     try {
@@ -793,6 +814,10 @@ export function createStore(bridge: Bridge, options: StoreOptions = {}) {
     checkUpdates,
     stopAutoRun,
     stoppingRuns,
+    autoRunLog,
+    autoRunLogLoading,
+    loadAutoRunLog,
+    hideAutoRunLog,
     select,
     selectProjectNumber,
     showToast,

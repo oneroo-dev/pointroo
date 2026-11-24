@@ -238,6 +238,8 @@ onBeforeUnmount(() => {
           :values="store.settings"
           :loading="!store.settingsLoaded"
           :stopping="store.stoppingRuns"
+          :log-lines="store.autoRunLog"
+          :log-loading="store.autoRunLogLoading"
           v-bind="
             store.status === undefined
               ? {}
@@ -245,6 +247,8 @@ onBeforeUnmount(() => {
           "
           @change="store.setSetting"
           @stop-run="store.stopAutoRun"
+          @load-log="store.loadAutoRunLog"
+          @hide-log="store.hideAutoRunLog"
           @allow="store.allow"
           @use-another-port="store.useAnotherPort"
           @check-updates="store.checkUpdates"

@@ -2,7 +2,7 @@
 // Settings as a screen inside the main window (the old Settings dialog is gone). Every switch saves at once: one click
 // raises `change` and the store saves it and shows an Undo toast. The values come from the app; a key that is not there
 // yet shows the app's own default. The mockups pass sample values.
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RooButton, RooIconButton, RooSelect, RooSwitch } from '@roo/kit/controls'
 import { RooSettingRow, RooSettingsGroup, RooStateMark } from '@roo/kit'
 import type { AutoStartChoiceKey, BridgeAutoRun, BridgeLastAutoRun, PermissionName, SettingKey, SettingValue, SettingsValues } from '../types'
@@ -43,10 +43,27 @@ const props = withDefaults(
     stopping?: string[]
     /** The time to count "ago" from, in milliseconds. Left out: the real time, updated every 30 seconds. The mockups fix it. */
     now?: number | undefined
+    /** The newest lines of the auto-start log. Left out while the log panel is closed. */
+    logLines?: string[] | undefined
+    /** The log is being read now. */
+    logLoading?: boolean
     loading?: boolean
   }>(),
-  { permissions: undefined, autoRuns: undefined, lastAutoRun: undefined, stopping: () => [], now: undefined, loading: false },
+  { permissions: undefined, autoRuns: undefined, lastAutoRun: undefined, stopping: () => [], now: undefined, logLines: undefined, logLoading: false, loading: false },
 )
+
+const logOpen = computed(() => props.logLines !== undefined || props.logLoading)
+const logBox = ref<HTMLElement | null>(null)
+
+// The newest line is at the bottom, so the box starts scrolled down.
+function scrollLogToBottom(): void {
+  void nextTick(() => {
+    const box = logBox.value
+    if (box !== null) box.scrollTop = box.scrollHeight
+  })
+}
+
+watch(() => props.logLines, scrollLogToBottom)
 
 const realNow = ref(Date.now())
 const clockNow = computed(() => props.now ?? realNow.value)
@@ -56,6 +73,7 @@ onMounted(() => {
   clockTimer = window.setInterval(() => {
     realNow.value = Date.now()
   }, 30000)
+  scrollLogToBottom()
 })
 
 onBeforeUnmount(() => {
@@ -66,6 +84,8 @@ const emit = defineEmits<{
   change: [key: SettingKey, value: SettingValue, message: string]
   allow: [which: PermissionName]
   stopRun: [project: string]
+  loadLog: []
+  hideLog: []
   useAnotherPort: []
   checkUpdates: []
   back: []
@@ -237,6 +257,22 @@ function onLanguage(value: string | undefined): void {
               <RooStateMark v-if="lastRunNote(lastAutoRun) !== undefined" state="muted" :label="lastRunNote(lastAutoRun) ?? ''" />
             </div>
           </RooSettingRow>
+          <RooSettingRow v-if="!logOpen" label="Log" description="What Auto-start did, newest last.">
+            <RooButton variant="secondary" size="sm" aria-label="Show log" @click="emit('loadLog')">Show log</RooButton>
+          </RooSettingRow>
+          <RooSettingRow v-else label="Log" description="What Auto-start did, newest last." stack>
+            <div class="log">
+              <div ref="logBox" class="log-box" tabindex="0" role="log" aria-label="Auto-start log">
+                <span v-if="logLines === undefined" class="log-note">Loading...</span>
+                <span v-else-if="logLines.length === 0" class="log-note">No runs yet.</span>
+                <div v-for="(line, index) in logLines" v-else :key="index" class="log-line">{{ line }}</div>
+              </div>
+              <div class="log-buttons">
+                <RooButton variant="secondary" size="sm" :disabled="logLoading" aria-label="Refresh the log" @click="emit('loadLog')">Refresh</RooButton>
+                <RooButton variant="secondary" size="sm" aria-label="Hide the log" @click="emit('hideLog')">Hide</RooButton>
+              </div>
+            </div>
+          </RooSettingRow>
         </template>
       </RooSettingsGroup>
 
@@ -309,6 +345,39 @@ function onLanguage(value: string | undefined): void {
 .run-text {
   font-size: var(--roo-p-size-13);
   color: var(--roo-muted);
+}
+
+.log {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--roo-space-item);
+}
+
+.log-box {
+  box-sizing: border-box;
+  max-height: 240px;
+  overflow: auto;
+  padding: var(--roo-space-item);
+  border: 1px solid var(--roo-border);
+  border-radius: var(--roo-p-radius-medium);
+  background: var(--roo-surface);
+  font-family: var(--roo-font-mono);
+  font-size: var(--roo-p-size-12);
+}
+
+.log-line {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.log-note {
+  color: var(--roo-muted);
+}
+
+.log-buttons {
+  display: flex;
+  gap: var(--roo-space-item);
 }
 
 .head {
