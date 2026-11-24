@@ -104,7 +104,7 @@ final class CloseLoopTests: XCTestCase {
     func testNoticeWithoutCropsIsPlainAndTakesNoShot() async throws {
         _ = try sessionWithEvents("after-c", points: [point(10, 10)])
         let notice = await AfterShot.notice(item: item("after-c", crops: []), project: "alpha")
-        XCTAssertEqual(notice, BannerNotice(project: "alpha", note: "fixed it"))
+        XCTAssertEqual(notice, BannerNotice(project: "alpha", note: "fixed it", itemId: "after-c#1"))
         XCTAssertNil(notice.after)
         XCTAssertFalse(FileManager.default.fileExists(atPath: PointAndYapTests.root.appendingPathComponent("after-c/after").path))
     }

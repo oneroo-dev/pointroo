@@ -79,7 +79,9 @@ final class WebHost {
     }
 
     private func tick(state: AppState) {
-        for event in webEvents.recording(phase: Self.phaseName(state.phase), pointCount: state.pointCount) {
+        let picker = ProjectPicker.snapshot()
+        let recording = Self.recordingSnapshot(state: state, pickerOpen: picker != nil)
+        for event in webEvents.recording(phase: recording.phase, pointCount: recording.points) + webEvents.picker(picker) {
             emit(event.name, event.data)
         }
         guard !isReadingEvents else { return }
@@ -90,20 +92,35 @@ final class WebHost {
             // Read the permissions directly, not through state.refreshAccess(): setting AppState's published values every
             // second would redraw every SwiftUI view that watches it, even when nothing changed.
             let status = AppStatus.readNow()
-            await self?.finishRead(items: items, questions: questions, status: status)
+            let noticeIds = Notices.identifiers(items: items, questions: questions, seen: Set(NoticeStore().seenIds()))
+            await self?.finishRead(items: items, questions: questions, status: status, noticeIds: noticeIds)
         }
     }
 
-    private func finishRead(items: [Item], questions: [Question], status: AppStatus) {
+    private func finishRead(items: [Item], questions: [Question], status: AppStatus, noticeIds: [String]) {
         guard isReadingEvents else { return }   // stopEvents ran while the read was going
         isReadingEvents = false
         guard eventTimer != nil else { return }
-        for event in webEvents.items(items) + webEvents.questions(questions) + webEvents.status(status) {
+        for event in webEvents.items(items) + webEvents.questions(questions) + webEvents.notices(noticeIds) + webEvents.status(status) {
             emit(event.name, event.data)
         }
     }
 
-    /// recording.changed phase: idle, recording, or processing (every case of AppState.Phase).
+    /// The one recording snapshot: recording.get and recording.changed both use it. "picking" while the project picker is open
+    /// (AppState is idle then, but it is waiting for the answer).
+    static func recordingSnapshot(state: AppState, pickerOpen: Bool) -> RecordingSnapshot {
+        recordingSnapshot(phase: state.phase, pointCount: state.pointCount, pickerOpen: pickerOpen)
+    }
+
+    nonisolated static func recordingSnapshot(phase: AppState.Phase, pointCount: Int, pickerOpen: Bool) -> RecordingSnapshot {
+        var name = phaseName(phase)
+        if pickerOpen, name == "idle" { name = "picking" }
+        var startedAt: Date?
+        if case .recording(let date) = phase { startedAt = date }
+        return RecordingSnapshot(phase: name, startedAt: startedAt, points: pointCount)
+    }
+
+    /// recording.changed phase: idle, recording, or processing (every case of AppState.Phase); the snapshot adds picking.
     nonisolated static func phaseName(_ phase: AppState.Phase) -> String {
         switch phase {
         case .idle: return "idle"

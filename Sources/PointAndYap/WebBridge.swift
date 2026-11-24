@@ -15,11 +15,14 @@ import Foundation
 /// Events the app sends once WebHost.startEvents runs (about once a second, only when something changed; the first of each is sent at start):
 ///   items.changed      {count, open, inProgress}   an item came, went, or changed status, note or project
 ///   questions.changed  {count}                     the set of unanswered agent questions changed
-///   recording.changed  {phase, pointCount}         phase is "idle", "recording" or "processing"
+///   recording.changed  {phase, pointCount}         phase is "idle", "recording", "processing" or "picking" (the project picker is open)
+///   picker.changed     {open, session?}            the project picker opened or closed (session is the recording it asks about)
+///   notices.changed    {count}                     the set of notices (unseen agent-done items and pending questions) changed
 ///   status.changed     {mcpRunning, mcpPort, mcpText, sessions, agents, microphone, screenRecording, accessibility}
 ///                      the same object status.get returns inside `status`; sent when any part of it changed
 ///
-/// Error codes: bad_request (not valid JSON, or no method), unknown_method, bad_params, not_found, not_available, refused.
+/// Error codes: bad_request (not valid JSON, or no method), unknown_method, bad_params, not_found, not_available, refused,
+/// busy (a recording call that does not fit the phase now).
 ///
 /// Methods
 ///   items.list      params {status?: "open" | "in_progress" | "done" | "trashed", project?: string, maxAgeHours?: number, groupBy?: "project"}
@@ -40,6 +43,13 @@ import Foundation
 ///                   of its recording); left out when there is none.
 ///   items.get       params {id: string}
 ///                   result {item: Item}   error not_found when there is no such item
+///   items.search    params {text: string 1...200 characters, status?: "open" | "in_progress" | "done" | "trashed" | "any", limit?: whole number 1...100, default 30}
+///                   status    no status = every item except the trashed ones; "any" = every item, trashed too
+///                   matching  case and accents ignored; every word of text must be found in the item's title, body, said, alsoSaid, note,
+///                   project name or firstElement. Title hits come first, then said/body, then the rest; inside a rank the newest comes first.
+///                   result {items: [Item + match: {field, snippet}]}   field is the best field with a hit; snippet is up to 80
+///                   characters around the first hit, on one line
+///                   error bad_params (text empty or longer than 200, status not allowed, limit not a whole number 1...100)
 ///   items.reroute   params {id: string, project: string}   (project is a project's name or folder path, as in Projects.known())
 ///                   result {moved: true}
 ///                   error not_found (no such item, or no such project), refused (the item is done), not_available (could not save), bad_params
@@ -66,6 +76,14 @@ import Foundation
 ///                   the same value as the item's `at`; an item with no date goes last and has no doneAt). Each Item has project, note,
 ///                   by, crops and cropURLs (the before pictures) and afterURL (the after picture of the done banner, when it exists).
 ///                   error bad_params when limit is not a whole number from 1 to 50
+///   notices.list    params {limit?: whole number 1...50, default 20}
+///                   result {notices: [Notice]}   newest first: done items an agent finished that the user has not seen (never by "you" or
+///                   "user"), mixed with the pending questions. Done: {kind: "done", id (the item id), agent, project?, projectName?, note?,
+///                   cropURL? (first crop), afterURL?, at?}. Question: the Question keys plus kind: "question".
+///                   error bad_params when limit is not a whole number from 1 to 50
+///   notices.seen    params {ids: [string]}   marks done items as seen (the newest 500 are kept). Ids that are not done items are ignored;
+///                   questions leave the list when answered or snoozed.
+///                   result {seen: number of ids that were done items}   error bad_params (ids is not a list of text), not_available (could not save)
 ///   session.get     params {session: string}   the id of a recording (an item's `session`)
 ///                   result {session, started: ISO date, duration: seconds, said: [{text, start, end}] (every spoken word, seconds from the start),
 ///                   points: [{at: seconds from the start, x, y, app?, window?, url?, element?}] (element is a short text like AXButton "Save"),
@@ -79,6 +97,24 @@ import Foundation
 ///                   until that many minutes from now, then it comes back (and questions.changed is sent both times)
 ///                   result {snoozed: true, until: seconds since 1970}
 ///                   error not_found when the question is unknown or already answered, bad_params when id is missing or minutes is out of range
+///   recording.start params {followUp?: item id}   the same as double Control while idle (AppState.start). With followUp, the
+///                   item must be done and routed to a project, and the recording is routed there as its follow-up (the request is kept
+///                   in follow-next.json, used once, and ignored when older than 10 minutes)
+///                   result {started: true, followUp?: item id}   error busy (recording, or the last one is processing; checked first),
+///                   bad_params (followUp is not a done item that went to a project), not_available
+///   recording.stop  no params   result {stopped: true}   error busy (not recording), not_available
+///   recording.cancel no params  stops and keeps nothing; result {cancelled: true}   error busy (not recording), not_available
+///                   (start can still fail inside the app, for example when a permission is missing; the page sees that in recording.get)
+///   recording.get   no params
+///                   result {phase: "idle" | "recording" | "processing" | "picking", startedAt?: ISO date (only while recording),
+///                   points: number, words?: [string] (the last few spoken words, when the app has them)}   error not_available
+///   picker.get      no params
+///                   result {open: false} or {open: true, session?: string, choices: [{name, path, key, suggested}] (in number-key order,
+///                   key is 1...9, suggested is true for the folder the router guessed), countdown?: whole seconds before it skips by itself}
+///   picker.pick     params {path: string}   answers the open picker like a click on that project; the recording is sent there and the router learns it
+///                   result {picked: true}   error bad_params (no path, or not one of the choices), not_found (no picker open, or it was answered already), not_available
+///   picker.skip     no params   answers the open picker like Esc: the recording stays in the queue
+///                   result {skipped: true}   error not_found (no picker open, or it was answered already), not_available
 ///   settings.get    params {key?: string}
 ///                   result {key, value} for one key, or {values: {key: value}} for all allowed keys
 ///   settings.set    params {key: string, value: bool | string}
@@ -153,6 +189,7 @@ final class WebBridge {
         "items.list": { bridge, params in try bridge.itemsList(params) },
         "projects.list": { bridge, params in try bridge.projectsList(params) },
         "items.get": { bridge, params in try bridge.itemsGet(params) },
+        "items.search": { bridge, params in try bridge.itemsSearch(params) },
         "items.reroute": { bridge, params in try bridge.itemsReroute(params) },
         "items.done": { bridge, params in try bridge.itemsChangeStatus(params, status: "done", key: "done") },
         "items.reopen": { bridge, params in try bridge.itemsChangeStatus(params, status: "open", key: "reopened") },
@@ -164,7 +201,16 @@ final class WebBridge {
         "questions.answer": { bridge, params in try bridge.questionsAnswer(params) },
         "questions.later": { bridge, params in try bridge.questionsLater(params) },
         "done.recent": { bridge, params in try bridge.doneRecent(params) },
+        "notices.list": { bridge, params in try bridge.noticesList(params) },
+        "notices.seen": { bridge, params in try bridge.noticesSeen(params) },
         "session.get": { bridge, params in try bridge.sessionGet(params) },
+        "recording.start": { bridge, params in try bridge.recordingControl(.start, params: params) },
+        "recording.stop": { bridge, params in try bridge.recordingControl(.stop, params: params) },
+        "recording.cancel": { bridge, params in try bridge.recordingControl(.cancel, params: params) },
+        "recording.get": { bridge, params in try bridge.recordingGet(params) },
+        "picker.get": { bridge, params in try bridge.pickerGet(params) },
+        "picker.pick": { bridge, params in try bridge.pickerPick(params) },
+        "picker.skip": { bridge, params in try bridge.pickerSkip(params) },
         "settings.get": { bridge, params in try bridge.settingsGet(params) },
         "settings.set": { bridge, params in try bridge.settingsSet(params) },
         "status.get": { bridge, params in try bridge.statusGet(params) },
@@ -185,9 +231,23 @@ final class WebBridge {
     private let unroute: (String) -> Items.UnrouteResult
     private let writeClipboard: (String) -> Void
     private let startDrag: (() -> Void)?
+    private let controlRecording: ((RecordingAction) -> Void)?
+    private let loadRecording: (() -> RecordingSnapshot)?
+    private let loadPicker: (() -> PickerSnapshot?)?
+    private let answerPicker: ((String?) -> Bool)?
     private let useAnotherPort: (() -> Void)?
     private let checkUpdates: (() -> Void)?
     private let now: () -> Date
+    private let loadQuestions: (Date) -> [Question]
+    private let noticeStore: NoticeStore
+    private let followUpStore: FollowUpStore
+
+    /// What recording.start, recording.stop and recording.cancel ask the app to do.
+    enum RecordingAction {
+        case start
+        case stop
+        case cancel
+    }
 
     /// What changing one item's status did.
     enum StatusChange: Equatable {
@@ -216,8 +276,14 @@ final class WebBridge {
     /// `changeStatus` (id, new status, note) serves items.done, items.reopen and items.trash. `unroute` serves items.unroute.
     /// `startDrag` serves window.startDrag; when it is nil, that method answers not_available.
     /// `writeClipboard` serves clipboard.copy. The defaults are the real Items.set, Items.unroute and the general pasteboard.
+    /// `controlRecording` runs the start, stop or cancel (AppState.start, stop, cancel); `loadRecording` gives the recording snapshot
+    /// (the same one recording.changed uses); both nil means recording.* answers not_available (recording.get needs `loadRecording`).
+    /// `loadPicker` gives the open project picker or nil; `answerPicker` answers it with a folder path (nil = skip) the way a click or
+    /// Esc does, and returns false when no picker was open any more. Either one nil means picker.* answers not_available.
     /// `useAnotherPort` serves server.useAnotherPort and `checkUpdates` serves app.checkUpdates; when one is nil, its method answers not_available.
     /// `now` is the clock for the question snooze (tests set it).
+    /// `loadQuestions` (given `now`) gives the pending questions for notices.list; `noticeStore` is where notices.seen keeps the seen ids.
+    /// `followUpStore` is where recording.start keeps a follow-up request (recording.cancel removes it).
     init(defaults: UserDefaults = .standard,
          loadItems: @escaping () -> [Item] = { Items.all() },
          findProject: @escaping (String) -> Project? = { WebBridge.knownProject($0) },
@@ -230,9 +296,16 @@ final class WebBridge {
          unroute: @escaping (String) -> Items.UnrouteResult = { Items.unroute(id: $0) },
          writeClipboard: @escaping (String) -> Void = { WebBridge.copyToClipboard($0) },
          startDrag: (() -> Void)? = nil,
+         controlRecording: ((RecordingAction) -> Void)? = nil,
+         loadRecording: (() -> RecordingSnapshot)? = nil,
+         loadPicker: (() -> PickerSnapshot?)? = nil,
+         answerPicker: ((String?) -> Bool)? = nil,
          useAnotherPort: (() -> Void)? = nil,
          checkUpdates: (() -> Void)? = nil,
-         now: @escaping () -> Date = { Date() }) {
+         now: @escaping () -> Date = { Date() },
+         loadQuestions: @escaping (Date) -> [Question] = { Questions.pending(now: $0) },
+         noticeStore: NoticeStore = NoticeStore(),
+         followUpStore: FollowUpStore = FollowUpStore()) {
         self.defaults = defaults
         self.loadItems = loadItems
         self.findProject = findProject
@@ -245,9 +318,16 @@ final class WebBridge {
         self.unroute = unroute
         self.writeClipboard = writeClipboard
         self.startDrag = startDrag
+        self.controlRecording = controlRecording
+        self.loadRecording = loadRecording
+        self.loadPicker = loadPicker
+        self.answerPicker = answerPicker
         self.useAnotherPort = useAnotherPort
         self.checkUpdates = checkUpdates
         self.now = now
+        self.loadQuestions = loadQuestions
+        self.noticeStore = noticeStore
+        self.followUpStore = followUpStore
     }
 
     /// A known project whose folder is this path, or whose name is this text (ignoring case).
@@ -454,6 +534,29 @@ final class WebBridge {
         return ["item": Self.dictionary(item)]
     }
 
+    private func itemsSearch(_ params: [String: Any]) throws -> Any {
+        guard let text = params["text"] as? String, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              text.count <= 200 else {
+            throw Failure(code: "bad_params", message: "text must be 1 to 200 characters.")
+        }
+        var items = loadItems()
+        if let status = params["status"] {
+            guard let wanted = status as? String, ["open", "in_progress", "done", "trashed", "any"].contains(wanted) else {
+                throw Failure(code: "bad_params", message: "status must be open, in_progress, done, trashed or any.")
+            }
+            if wanted != "any" { items = items.filter { $0.status == wanted } }
+        } else {
+            items = items.filter { $0.status != "trashed" }
+        }
+        let limit = try Self.wholeNumber(params["limit"], named: "limit", range: 1...100, defaultValue: 30)
+        let found = ItemSearch.matches(items, text: text).prefix(limit)
+        return ["items": found.map { match -> [String: Any] in
+            var entry = Self.dictionary(match.item)
+            entry["match"] = ["field": match.field, "snippet": match.snippet]
+            return entry
+        }]
+    }
+
     private func itemsReroute(_ params: [String: Any]) throws -> Any {
         guard let id = params["id"] as? String, !id.isEmpty else { throw Failure(code: "bad_params", message: "id is needed.") }
         guard let name = params["project"] as? String, !name.isEmpty else { throw Failure(code: "bad_params", message: "project is needed.") }
@@ -508,6 +611,83 @@ final class WebBridge {
         return ["asked": true]
     }
 
+    private func recordingControl(_ action: RecordingAction, params: [String: Any] = [:]) throws -> Any {
+        guard let controlRecording, let loadRecording else {
+            throw Failure(code: "not_available", message: "Recording is not available.")
+        }
+        let phase = loadRecording().phase
+        switch action {
+        case .start:
+            if phase == "recording" { throw Failure(code: "busy", message: "Already recording.") }
+            if phase == "processing" { throw Failure(code: "busy", message: "The last recording is still being processed.") }
+            var followUpId: String?
+            var request: FollowUpRequest?
+            if let value = params["followUp"], !(value is NSNull) {
+                let badFollowUp = Failure(code: "bad_params", message: "followUp must be a done item that went to a project.")
+                guard let id = value as? String, !id.isEmpty,
+                      let item = loadItems().first(where: { $0.id == id }),
+                      item.status == "done", let path = item.project, !path.isEmpty else { throw badFollowUp }
+                followUpId = id
+                request = FollowUpRequest(id: id, path: path, at: now())
+            }
+            if let request {
+                guard followUpStore.save(request) else { throw Failure(code: "not_available", message: "Could not save the follow-up request.") }
+            }
+            controlRecording(.start)
+            if let followUpId { return ["started": true, "followUp": followUpId] }
+            return ["started": true]
+        case .stop:
+            guard phase == "recording" else { throw Failure(code: "busy", message: "Not recording.") }
+            controlRecording(.stop)
+            return ["stopped": true]
+        case .cancel:
+            guard phase == "recording" else { throw Failure(code: "busy", message: "Not recording.") }
+            followUpStore.remove()
+            controlRecording(.cancel)
+            return ["cancelled": true]
+        }
+    }
+
+    private func recordingGet(_ params: [String: Any]) throws -> Any {
+        guard let loadRecording else { throw Failure(code: "not_available", message: "Recording is not available.") }
+        let snapshot = loadRecording()
+        var out: [String: Any] = ["phase": snapshot.phase, "points": snapshot.points]
+        if let startedAt = snapshot.startedAt { out["startedAt"] = ISO8601DateFormatter().string(from: startedAt) }
+        if !snapshot.words.isEmpty { out["words"] = snapshot.words }
+        return out
+    }
+
+    private func pickerGet(_ params: [String: Any]) throws -> Any {
+        guard let loadPicker else { throw Failure(code: "not_available", message: "The project picker is not available.") }
+        guard let snapshot = loadPicker() else { return ["open": false] }
+        var out: [String: Any] = [
+            "open": true,
+            "choices": snapshot.choices.map { choice -> [String: Any] in
+                ["name": choice.name, "path": choice.path, "key": choice.key, "suggested": choice.suggested]
+            },
+        ]
+        if let session = snapshot.session { out["session"] = session }
+        if let countdown = snapshot.countdown { out["countdown"] = countdown }
+        return out
+    }
+
+    private func pickerPick(_ params: [String: Any]) throws -> Any {
+        guard let path = params["path"] as? String, !path.isEmpty else { throw Failure(code: "bad_params", message: "path is needed.") }
+        guard let loadPicker, let answerPicker else { throw Failure(code: "not_available", message: "The project picker is not available.") }
+        guard let snapshot = loadPicker() else { throw Failure(code: "not_found", message: "No project picker is open.") }
+        guard let choice = snapshot.choices.first(where: { Router.samePath($0.path, path) }) else {
+            throw Failure(code: "bad_params", message: "That folder is not one of the choices.")
+        }
+        guard answerPicker(choice.path) else { throw Failure(code: "not_found", message: "No project picker is open.") }
+        return ["picked": true]
+    }
+
+    private func pickerSkip(_ params: [String: Any]) throws -> Any {
+        guard let loadPicker, let answerPicker else { throw Failure(code: "not_available", message: "The project picker is not available.") }
+        guard loadPicker() != nil, answerPicker(nil) else { throw Failure(code: "not_found", message: "No project picker is open.") }
+        return ["skipped": true]
+    }
+
     private func clipboardCopy(_ params: [String: Any]) throws -> Any {
         guard let text = params["text"] as? String, !text.isEmpty else { throw Failure(code: "bad_params", message: "text must be a non-empty string.") }
         writeClipboard(text)
@@ -546,6 +726,55 @@ final class WebBridge {
             return entry
         }
         return ["items": items]
+    }
+
+    private func noticesList(_ params: [String: Any]) throws -> Any {
+        let limit = try Self.wholeNumber(params["limit"], named: "limit", range: 1...50, defaultValue: 20)
+        let seen = Set(noticeStore.seenIds())
+        var entries: [(date: Date, entry: [String: Any])] = []
+        for item in loadItems() where Notices.isUnseenDone(item, seen: seen) {
+            entries.append((item.at ?? .distantPast, Self.doneNotice(item)))
+        }
+        for question in loadQuestions(now()) {
+            entries.append((question.asked, Self.questionNotice(question)))
+        }
+        let newest = entries.enumerated().sorted { first, second in
+            first.element.date != second.element.date ? first.element.date > second.element.date : first.offset < second.offset
+        }.prefix(limit)
+        return ["notices": newest.map { $0.element.entry }]
+    }
+
+    private func noticesSeen(_ params: [String: Any]) throws -> Any {
+        guard let list = params["ids"] as? [Any] else { throw Failure(code: "bad_params", message: "ids must be a list of item ids.") }
+        var ids: [String] = []
+        for value in list {
+            guard let id = value as? String else { throw Failure(code: "bad_params", message: "ids must be a list of item ids.") }
+            ids.append(id)
+        }
+        let done = Set(loadItems().filter { $0.status == "done" }.map(\.id))
+        let known = ids.filter { done.contains($0) }
+        guard noticeStore.markSeen(known) else { throw Failure(code: "not_available", message: "Could not save the seen notices.") }
+        return ["seen": known.count]
+    }
+
+    private static func doneNotice(_ item: Item) -> [String: Any] {
+        let base = dictionary(item)
+        var out: [String: Any] = ["kind": "done", "id": item.id, "agent": item.by ?? ""]
+        if let project = item.project {
+            out["project"] = project
+            out["projectName"] = Projects.name(for: project)
+        }
+        if let note = item.note { out["note"] = note }
+        if let cropURL = (base["cropURLs"] as? [String])?.first { out["cropURL"] = cropURL }
+        if let afterURL = base["afterURL"] { out["afterURL"] = afterURL }
+        if let at = base["at"] { out["at"] = at }
+        return out
+    }
+
+    private static func questionNotice(_ question: Question) -> [String: Any] {
+        var out = dictionary(question)
+        out["kind"] = "question"
+        return out
     }
 
     private func sessionGet(_ params: [String: Any]) throws -> Any {
