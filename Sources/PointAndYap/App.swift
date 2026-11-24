@@ -48,6 +48,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var pill: NSPanel!
     /// The kit pill, picker and notice panels; used only while the kitFloating setting is on (FloatingChoice).
     private var floatingSurfaces: FloatingSurfaces?
+    /// Looks for automatic sends and new questions to show on the kit panels (only while kitFloating is on).
+    private var floatingWatcher: FloatingWatcher?
     private var phaseSubscription: AnyCancellable?
     private var previousApp: NSRunningApplication?
     private var doubleControl: DoubleControl?
@@ -351,6 +353,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         phaseSubscription = state.$phase.sink { phase in
             if phase == .idle { MainActor.assumeIsolated { surfaces.hidePill() } }
         }
+        // An automatic send shows "Sent to X / Undo" in the pill panel; a new agent question shows its card. Both only while the
+        // setting is on (the watcher reads nothing otherwise). A send that finishes while a new recording is on is not shown.
+        let watcher = FloatingWatcher(
+            onSent: { [weak self] data in
+                guard let self, FloatingChoice.useKitNow else { return }
+                if case .recording = self.state.phase { return }
+                surfaces.showSent(data)
+            },
+            onQuestion: { if FloatingChoice.useKitNow { surfaces.showQuestionCard() } })
+        floatingWatcher = watcher
+        watcher.start()
     }
 
     /// "Open" on a kit notice: show the main window on that item.

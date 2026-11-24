@@ -13,12 +13,14 @@ import type {
   OpenPicker,
   PermissionName,
   RecordingPhase,
+  RouteSent,
   SearchFilter,
   SearchResult,
   SettingKey,
   SettingValue,
   SettingsValues,
 } from './types'
+import { sentSeconds } from './floatModel'
 import { matchQuestions, toRecordingView, toViewItem, toViewProjects } from './viewModel'
 
 const undoSeconds = 5
@@ -52,6 +54,8 @@ export function createStore(bridge: Bridge, options: StoreOptions = {}) {
   /** The open project picker, or null while it is closed. */
   const picker = ref<OpenPicker | null>(null)
   const notices = ref<Notice[]>([])
+  /** The recording the app just sent by itself (route.sent), for the pill's "Sent to X / Undo". Cleared after sentSeconds or on undo. */
+  const lastSent = ref<RouteSent | undefined>(undefined)
   const searchState = reactive<{ query: string; status: SearchFilter; results: SearchResult[]; loading: boolean; error: string | undefined }>({
     query: '',
     status: 'all',
@@ -72,6 +76,9 @@ export function createStore(bridge: Bridge, options: StoreOptions = {}) {
   const settingsLoaded = ref(false)
 
   let toastTimer: number | undefined
+  let sentTimer: number | undefined
+  /** The recordings whose send was already shown, so the same event twice (the app may send it from two places) shows once. */
+  const shownSentSessions = new Set<string>()
   let undoSteps: UndoStep[] = []
   let settingUndo: (() => Promise<void>) | undefined
   let refreshing: Promise<void> | undefined
@@ -219,15 +226,48 @@ export function createStore(bridge: Bridge, options: StoreOptions = {}) {
     return refreshing
   }
 
-  /** Listens for the three things a floating panel shows: the recording, the picker and the notices. */
+  /** Takes "Sent to X / Undo" off the pill (and stops its timer). */
+  function clearSent(): void {
+    window.clearTimeout(sentTimer)
+    sentTimer = undefined
+    lastSent.value = undefined
+  }
+
+  /** Shows "Sent to X / Undo" for a recording the app sent by itself. It goes after sentSeconds. The same recording shows once. */
+  function showSent(data: RouteSent): void {
+    if (shownSentSessions.has(data.session)) return
+    shownSentSessions.add(data.session)
+    window.clearTimeout(sentTimer)
+    lastSent.value = data
+    sentTimer = window.setTimeout(clearSent, sentSeconds * 1000)
+  }
+
+  /** Undo on the pill: the pill goes at once, then every item of the recording is unrouted (it waits in the queue again). */
+  async function undoSent(): Promise<void> {
+    const sent = lastSent.value
+    if (sent === undefined) return
+    clearSent()
+    try {
+      for (const id of sent.ids) await bridge.call('items.unroute', { id })
+    } catch (error) {
+      fail(error)
+    }
+  }
+
+  /** Listens for what a floating panel shows: the recording, the picker, the notices and the automatic send. */
   function listenToFloatingEvents(): (() => void)[] {
     return [
       bridge.on('recording.changed', (data) => {
         recording.phase = data.phase
         recording.pointCount = data.pointCount
-        if (data.phase === 'recording') void loadRecordingState().catch(() => undefined)
-        else recording.startedAt = undefined
+        if (data.phase === 'recording') {
+          clearSent()
+          void loadRecordingState().catch(() => undefined)
+        } else {
+          recording.startedAt = undefined
+        }
       }),
+      bridge.on('route.sent', showSent),
       bridge.on('picker.changed', () => void loadPicker().catch(() => undefined)),
       bridge.on('notices.changed', () => void loadNotices().catch(() => undefined)),
     ]
@@ -659,6 +699,8 @@ export function createStore(bridge: Bridge, options: StoreOptions = {}) {
     recording,
     picker,
     notices,
+    lastSent,
+    undoSent,
     noticeCount: computed(() => notices.value.length),
     searchState,
     searchOpen,

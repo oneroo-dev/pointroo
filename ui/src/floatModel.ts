@@ -1,9 +1,26 @@
 // What the three floating panels show, worked out from the store. Plain functions, so tests need no page.
 import type { ProjectTile } from './parts/types'
-import type { DoneNotice, Notice, OpenPicker, QuestionNotice, RecordingPhase } from './types'
+import type { DoneNotice, Notice, OpenPicker, QuestionNotice, RecordingPhase, RouteSent, SentHow } from './types'
 
 /** A question card shows at most this many choices (the keys 1 to 3). */
 export const maxChoices = 3
+
+/** How long "Sent to X / Undo" stays on the pill before it goes by itself. */
+export const sentSeconds = 6
+
+/** The small line under "Sent to X": why the app chose that project. */
+const sentNotes: Record<SentHow, string> = {
+  said: 'You said the name',
+  screen: 'Matched from the screen',
+  followup: 'Follow-up on a finished item',
+  only: 'Only session listening',
+}
+
+export interface SentView {
+  /** "Sent to Pointroo". */
+  label: string
+  note: string
+}
 
 export interface PillView {
   phase: 'recording' | 'processing'
@@ -38,6 +55,18 @@ export function pillView(
   return undefined
 }
 
+function lastFolderName(path: string): string {
+  const parts = path.split('/').filter((part) => part !== '')
+  return parts[parts.length - 1] ?? ''
+}
+
+/** What the "Sent to" pill says: the project's name (else its folder's name, else "the project") and why it was chosen. */
+export function sentView(sent: RouteSent | undefined): SentView | undefined {
+  if (sent === undefined) return undefined
+  const name = sent.projectName !== '' ? sent.projectName : lastFolderName(sent.project)
+  return { label: `Sent to ${name === '' ? 'the project' : name}`, note: sentNotes[sent.how] ?? '' }
+}
+
 /** The picker rows in number-key order. The id of a row is the folder, which is what picker.pick wants. */
 export function pickerTiles(picker: OpenPicker): ProjectTile[] {
   return picker.choices.map((choice) => ({ id: choice.path, name: choice.name, suggested: choice.suggested, live: true }))
@@ -51,11 +80,6 @@ export function pickerEndsAt(picker: OpenPicker, nowMilliseconds: number): numbe
 /** The notice the card shows now: the newest one (the app sends them newest first). */
 export function currentNotice(notices: Notice[]): Notice | undefined {
   return notices[0]
-}
-
-function lastFolderName(path: string): string {
-  const parts = path.split('/').filter((part) => part !== '')
-  return parts[parts.length - 1] ?? ''
 }
 
 /** The project name on a card: the name the app gave, else the folder's name, else a plain word. */

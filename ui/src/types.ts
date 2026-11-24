@@ -261,6 +261,20 @@ export interface ItemsSearchParams {
   limit?: number
 }
 
+/** How the app chose the project by itself (a route the user picked never sends route.sent). */
+export type SentHow = 'said' | 'screen' | 'followup' | 'only'
+
+/** The data of route.sent: a recording the app sent to a project by itself. */
+export interface RouteSent {
+  session: string
+  /** The project folder. */
+  project: string
+  projectName: string
+  how: SentHow
+  /** The item ids of the recording, for items.unroute. */
+  ids: string[]
+}
+
 /** Every event the app can send, with its data. */
 export interface BridgeEvents {
   'items.changed': { count: number; open: number; inProgress: number }
@@ -268,6 +282,7 @@ export interface BridgeEvents {
   'recording.changed': { phase: RecordingPhase; pointCount: number }
   'picker.changed': { open: boolean; session?: string }
   'notices.changed': { count: number }
+  'route.sent': RouteSent
   'status.changed': BridgeAppStatus
 }
 

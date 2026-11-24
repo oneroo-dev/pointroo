@@ -32,6 +32,7 @@ struct WebEvents {
     private var questionIdentifiers: [String]?
     private var noticeIdentifiers: [String]?
     private var recordingState: (phase: String, pointCount: Int)?
+    private var routedSessions: Set<String>?
 
     private var lastStatus: AppStatus?
     private var pickerSignature: String?
@@ -64,6 +65,32 @@ struct WebEvents {
         guard sorted != noticeIdentifiers else { return [] }
         noticeIdentifiers = sorted
         return [(name: "notices.changed", data: ["count": sorted.count])]
+    }
+
+    /// `route.sent` {session, project (the folder), projectName, how, ids (the item ids of the recording)}, once for each recording the app
+    /// routed by itself (how is said, screen, followup or only; never picked). The first call only learns the sessions that already have
+    /// a route and sends nothing, so old recordings never fire. Practice and trashed items are left out. `projectName` is asked only
+    /// for a session that fires.
+    mutating func routeSent(_ items: [Item], projectName: (String) -> String) -> [Event] {
+        var bySession: [String: [Item]] = [:]
+        for item in items where item.routeHow != nil && item.project != nil && !item.practice && item.status != "trashed" {
+            bySession[item.session, default: []].append(item)
+        }
+        guard var known = routedSessions else {
+            routedSessions = Set(bySession.keys)
+            return []
+        }
+        var events: [Event] = []
+        for session in bySession.keys.sorted() where !known.contains(session) {
+            known.insert(session)
+            guard let sessionItems = bySession[session], let first = sessionItems.first,
+                  let how = first.routeHow, how != "picked", let path = first.project else { continue }
+            let ids = sessionItems.sorted { $0.n < $1.n }.map(\.id)
+            events.append((name: "route.sent", data: ["session": session, "project": path, "projectName": projectName(path),
+                                                      "how": how, "ids": ids]))
+        }
+        routedSessions = known
+        return events
     }
 
     /// `status.changed` {the AppStatus dictionary} when any part of the status changed.

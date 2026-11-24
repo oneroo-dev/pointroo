@@ -78,13 +78,15 @@ enum FloatingPlacement {
     }
 }
 
-/// A borderless panel that never takes the app to the front. Only the picker may become the key window (it needs the number keys);
-/// its keys go to `onKey` first, so they work even when the page has no focus.
+/// A borderless panel that never takes the app to the front. Only the picker may become the key window when it shows (it needs the
+/// number keys); its keys go to `onKey` first, so they work even when the page has no focus. `becomesKeyOnClick` lets a click on
+/// the panel make it key (so the page gets its keys) without it taking the key when it shows.
 final class FloatingNSPanel: NSPanel {
     var allowsKey = false
+    var becomesKeyOnClick = false
     var onKey: (@MainActor (NSEvent) -> Bool)?
 
-    override var canBecomeKey: Bool { allowsKey }
+    override var canBecomeKey: Bool { allowsKey || becomesKeyOnClick }
 
     override func sendEvent(_ event: NSEvent) {
         if event.type == .keyDown, let handler = onKey, handler(event) { return }
@@ -107,6 +109,17 @@ final class FloatingWebPanel {
     private(set) var isShown = false
     private var placed = false
     private var hasContent = false
+    private var pageReady = false
+    private var waitingEmits: [(name: String, data: [String: Any])] = []
+
+    /// True while the pill panel shows a "Sent to" state (route.sent). The phase going idle must not hide it then; the page hides it
+    /// itself (0 by 0) when its 6 seconds are up or the user undid the send. A click on the panel makes it key, so U works.
+    private(set) var holdsSent = false {
+        didSet { if route == .pill { panel.becomesKeyOnClick = holdsSent } }
+    }
+
+    /// True while the notice panel shows for an agent's question. A done banner running out must not hide it.
+    private(set) var holdsQuestion = false
 
     var frame: NSRect { panel.frame }
 
@@ -131,12 +144,21 @@ final class FloatingWebPanel {
             panel.allowsKey = true
             panel.onKey = { event in ProjectPicker.answerKey(keyCode: event.keyCode, characters: event.charactersIgnoringModifiers) }
         }
+        // A click on the card makes it key, so its keys (1 to 3, L, Esc, Enter, R) work. It never takes the key when it shows.
+        if route == .notice { panel.becomesKeyOnClick = true }
         host.onFloatMessage = { [weak self] body in self?.receive(body) }
         host.load()
     }
 
     /// Puts the panel on screen at its default size and starts telling the page about changes. The page then sets the real size.
+    /// A panel that is already on screen stays as it is (its page keeps its content and size), and only comes to the front again.
     func show() {
+        if isShown {
+            if panel.allowsKey { panel.makeKeyAndOrderFront(nil) } else { panel.orderFrontRegardless() }
+            return
+        }
+        holdsSent = false
+        holdsQuestion = false
         isShown = true
         placed = false
         hasContent = false
@@ -154,6 +176,8 @@ final class FloatingWebPanel {
     func hide() {
         guard isShown else { return }
         isShown = false
+        holdsSent = false
+        holdsQuestion = false
         panel.orderOut(nil)
         host.stopEvents()
         switch route {
@@ -163,12 +187,44 @@ final class FloatingWebPanel {
         }
     }
 
+    /// Shows the "Sent to" state: the panel is shown (the pill's), the page is told route.sent, and the phase going idle leaves it up.
+    func showSent(_ data: [String: Any]) {
+        show()
+        holdsSent = true
+        emitWhenReady("route.sent", data)
+    }
+
+    /// A new recording starts: the pill is the recording's again, so the idle phase may hide it.
+    func releaseSent() { holdsSent = false }
+
+    /// Shows the panel for a new agent question. The page reads the question itself (notices.list).
+    func showQuestion() {
+        show()
+        holdsQuestion = true
+    }
+
+    /// Tells the page about something. A page that has not loaded yet (a panel made just now) has no listener, so the event waits until
+    /// the page has sent its first message (it does so as soon as it is up, after its listeners are set).
+    private func emitWhenReady(_ name: String, _ data: [String: Any]) {
+        if pageReady {
+            host.emit(name, data)
+        } else {
+            waitingEmits.append((name: name, data: data))
+        }
+    }
+
     private func place(size: NSSize) -> NSPoint {
         let visible = (NSScreen.main ?? NSScreen.screens[0]).visibleFrame
         return FloatingPlacement.origin(route: route, size: size, visible: visible)
     }
 
     private func receive(_ body: [String: Any]) {
+        if !pageReady {
+            pageReady = true
+            let waiting = waitingEmits
+            waitingEmits = []
+            for event in waiting { host.emit(event.name, event.data) }
+        }
         switch FloatingPageMessage.parse(body) {
         case .size(let width, let height)?: apply(width: width, height: height)
         case .open(let itemId)?: openItem(itemId)
@@ -215,9 +271,23 @@ final class FloatingSurfaces {
         return made
     }
 
-    func showPill() { panel(for: .pill).show() }
+    func showPill() {
+        let pill = panel(for: .pill)
+        pill.releaseSent()
+        pill.show()
+    }
 
-    func hidePill() { panels[.pill]?.hide() }
+    /// Hides the pill when the recording is over. A "Sent to" pill stays: the page hides it when it has had its time.
+    func hidePill() {
+        guard panels[.pill]?.holdsSent != true else { return }
+        panels[.pill]?.hide()
+    }
+
+    /// Shows the pill panel for an automatic send. `data` is the route.sent event data.
+    func showSent(_ data: [String: Any]) { panel(for: .pill).showSent(data) }
+
+    /// Shows the notice panel for a new agent question (the page shows the newest notice, which is that question).
+    func showQuestionCard() { panel(for: .notice).showQuestion() }
 
     /// The pill's frame in screen coordinates while it is on screen, else nil.
     var pillFrame: NSRect? {
@@ -234,5 +304,9 @@ final class FloatingSurfaces {
 
     func showNotice() { panel(for: .notice).show() }
 
-    func hideNotice() { panels[.notice]?.hide() }
+    /// Hides the notice panel when a done banner has had its time. A question card stays until it is answered, put off or dismissed.
+    func hideNotice() {
+        guard panels[.notice]?.holdsQuestion != true else { return }
+        panels[.notice]?.hide()
+    }
 }

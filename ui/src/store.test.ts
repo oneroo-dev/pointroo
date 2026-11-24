@@ -282,6 +282,87 @@ describe('notices', () => {
   })
 })
 
+describe('automatic send', () => {
+  const sent: BridgeEvents['route.sent'] = { session: 's1', project: '/work/pointroo', projectName: 'Pointroo', how: 'said', ids: ['s1#1', 's1#2'] }
+
+  it('it_keeps_lastSent_for_six_seconds_and_then_clears_it', async () => {
+    const stub = createStubBridge()
+    const store = createStore(stub.bridge)
+    const stop = store.startFloating()
+    await flush()
+    expect(store.lastSent).toBeUndefined()
+    stub.emit('route.sent', sent)
+    expect(store.lastSent).toEqual(sent)
+    await vi.advanceTimersByTimeAsync(5900)
+    expect(store.lastSent).toEqual(sent)
+    await vi.advanceTimersByTimeAsync(200)
+    expect(store.lastSent).toBeUndefined()
+    stop()
+  })
+
+  it('it_shows_the_same_recording_only_once', async () => {
+    const stub = createStubBridge()
+    const store = createStore(stub.bridge)
+    const stop = store.startFloating()
+    stub.emit('route.sent', sent)
+    await vi.advanceTimersByTimeAsync(7000)
+    expect(store.lastSent).toBeUndefined()
+    stub.emit('route.sent', sent)
+    expect(store.lastSent).toBeUndefined()
+    stop()
+  })
+
+  it('it_calls_items_unroute_for_each_id_on_undo_and_hides_the_pill', async () => {
+    const stub = createStubBridge({ 'items.unroute': () => ({ unrouted: true }) })
+    const store = createStore(stub.bridge)
+    const stop = store.startFloating()
+    stub.emit('route.sent', sent)
+    await store.undoSent()
+    expect(stub.callsTo('items.unroute')).toEqual([
+      { method: 'items.unroute', params: { id: 's1#1' } },
+      { method: 'items.unroute', params: { id: 's1#2' } },
+    ])
+    expect(store.lastSent).toBeUndefined()
+    stop()
+  })
+
+  it('it_does_nothing_on_undo_when_nothing_was_sent', async () => {
+    const stub = createStubBridge()
+    const store = createStore(stub.bridge)
+    await store.undoSent()
+    expect(stub.callsTo('items.unroute')).toEqual([])
+  })
+
+  it('it_clears_lastSent_when_a_new_recording_starts', async () => {
+    const stub = createStubBridge()
+    const store = createStore(stub.bridge)
+    const stop = store.startFloating()
+    stub.emit('route.sent', sent)
+    expect(store.lastSent).toEqual(sent)
+    stub.emit('recording.changed', { phase: 'recording', pointCount: 0 })
+    expect(store.lastSent).toBeUndefined()
+    stop()
+  })
+})
+
+describe('question card calls', () => {
+  const question = { id: 'q1', text: 'Which?', choices: ['Yes', 'No'] }
+
+  it('it_sends_the_chosen_text_to_questions_answer', async () => {
+    const stub = createStubBridge({ 'questions.answer': () => ({ answered: true }) })
+    const store = createStore(stub.bridge)
+    await store.answer(question, 'No')
+    expect(stub.callsTo('questions.answer')).toEqual([{ method: 'questions.answer', params: { id: 'q1', text: 'No' } }])
+  })
+
+  it('it_sends_later_to_questions_later', async () => {
+    const stub = createStubBridge({ 'questions.later': () => ({ snoozed: true, until: 1 }) })
+    const store = createStore(stub.bridge)
+    await store.later(question)
+    expect(stub.callsTo('questions.later')).toEqual([{ method: 'questions.later', params: { id: 'q1', minutes: 30 } }])
+  })
+})
+
 describe('search', () => {
   it('it_waits_200_milliseconds_and_asks_once_with_the_last_text', async () => {
     const stub = createStubBridge({ 'items.search': () => ({ items: [searchResult('s1', 'Move delete away')] }) })
