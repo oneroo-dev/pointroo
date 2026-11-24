@@ -219,13 +219,9 @@ export function createStore(bridge: Bridge, options: StoreOptions = {}) {
     return refreshing
   }
 
-  function start(): () => void {
-    const stops = [
-      bridge.on('items.changed', () => void refresh()),
-      bridge.on('questions.changed', () => void refresh()),
-      bridge.on('status.changed', (data) => {
-        status.value = data
-      }),
+  /** Listens for the three things a floating panel shows: the recording, the picker and the notices. */
+  function listenToFloatingEvents(): (() => void)[] {
+    return [
       bridge.on('recording.changed', (data) => {
         recording.phase = data.phase
         recording.pointCount = data.pointCount
@@ -235,10 +231,32 @@ export function createStore(bridge: Bridge, options: StoreOptions = {}) {
       bridge.on('picker.changed', () => void loadPicker().catch(() => undefined)),
       bridge.on('notices.changed', () => void loadNotices().catch(() => undefined)),
     ]
-    void refresh()
+  }
+
+  function loadFloatingState(): void {
     void loadRecordingState().catch(() => undefined)
     void loadPicker().catch(() => undefined)
     void loadNotices().catch(() => undefined)
+  }
+
+  function start(): () => void {
+    const stops = [
+      bridge.on('items.changed', () => void refresh()),
+      bridge.on('questions.changed', () => void refresh()),
+      bridge.on('status.changed', (data) => {
+        status.value = data
+      }),
+      ...listenToFloatingEvents(),
+    ]
+    void refresh()
+    loadFloatingState()
+    return () => stops.forEach((stop) => stop())
+  }
+
+  /** The start of a floating panel: only the recording, the picker and the notices (no queue, no projects, no status). */
+  function startFloating(): () => void {
+    const stops = listenToFloatingEvents()
+    loadFloatingState()
     return () => stops.forEach((stop) => stop())
   }
 
@@ -677,6 +695,7 @@ export function createStore(bridge: Bridge, options: StoreOptions = {}) {
     closeSettings,
     setSetting,
     start,
+    startFloating,
     refresh,
     send,
     undo,

@@ -52,6 +52,7 @@ const agentRows: FlagRow[] = [
 
 const windowRows: FlagRow[] = [
   { key: 'kitWindow', label: 'New window design', description: 'Takes effect next launch.', fallback: true },
+  { key: 'kitFloating', label: 'Kit floating panels', description: 'The pill, the project picker and the notices use the new design.', fallback: false },
 ]
 
 const languages = [

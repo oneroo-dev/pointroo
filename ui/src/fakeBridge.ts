@@ -125,6 +125,7 @@ export function createFakeBridge(): Bridge {
     listenAfterDone: false,
     autoSendSingle: true,
     kitWindow: true,
+    kitFloating: false,
     locale: '',
   }
   const languageIds = ['', 'en-US', 'de-DE', 'fr-FR', 'es-ES', 'it-IT', 'pt-BR', 'nl-NL', 'ja-JP', 'zh-CN']

@@ -148,7 +148,7 @@ import Foundation
 /// Question: {id, project, agent, text, choices: [string], asked: seconds since 1970}
 ///   A key with no value is left out (an empty choices list is an empty array).
 ///
-/// Settings keys: sounds, doubleControl, escCancels, redactSecrets, connectAgents, showNoSpeech, holdToTalk, listenAfterDone, kitWindow, autoSendSingle (all bool; autoSendSingle is on when never set);
+/// Settings keys: sounds, doubleControl, escCancels, redactSecrets, connectAgents, showNoSpeech, holdToTalk, listenAfterDone, kitWindow, kitFloating, autoSendSingle (all bool; autoSendSingle is on when never set, kitFloating is off);
 /// locale (string, one of the ids in Prefs.languages).
 final class WebBridge {
     struct Request {
@@ -180,6 +180,7 @@ final class WebBridge {
         ("holdToTalk", .flag(defaultValue: false)),
         ("listenAfterDone", .flag(defaultValue: false)),
         ("kitWindow", .flag(defaultValue: true)),
+        ("kitFloating", .flag(defaultValue: false)),
         ("autoSendSingle", .flag(defaultValue: true)),
         ("locale", .choice(allowed: Prefs.languages.map(\.id), defaultValue: "")),
     ]
