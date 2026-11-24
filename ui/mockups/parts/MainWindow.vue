@@ -34,6 +34,7 @@ export type Scenario =
   | 'settings'
   | 'settings-auto-start'
   | 'settings-auto-start-run'
+  | 'settings-auto-start-log'
 
 const props = withDefaults(defineProps<{ width?: number; height?: number; scenario?: Scenario; detailOpen?: boolean }>(), {
   width: 960,
@@ -53,7 +54,7 @@ const recordingView: RecordingView = {
 }
 const filter = ref('all')
 
-const autoStartScenario = props.scenario === 'settings-auto-start' || props.scenario === 'settings-auto-start-run'
+const autoStartScenario = props.scenario === 'settings-auto-start' || props.scenario === 'settings-auto-start-run' || props.scenario === 'settings-auto-start-log'
 const settingsValues = ref<SettingsValues>({
   sounds: true,
   doubleControl: true,
@@ -79,7 +80,16 @@ const lastAutoRun =
   props.scenario === 'settings-auto-start-run'
     ? { project: '/Users/sample/Workspace/pointroo', endedAt: '2026-11-24T10:34:00Z', exitCode: 0, cost: 0.42 }
     : undefined
-const settingsClock = Date.parse('2026-11-24T10:44:00Z')
+// Only the "log" frame has the log panel open, with the same three sample lines the fake bridge answers.
+const logLines =
+  props.scenario === 'settings-auto-start-log'
+    ? [
+        '2026-11-24T09:00:00Z started a run in /Users/sample/Workspace/tinkeroo',
+        '2026-11-24T09:04:12Z run in /Users/sample/Workspace/tinkeroo ended (exit 0, $0.42)',
+        '2026-11-24T09:30:00Z started a run in /Users/sample/Workspace/shoproo',
+      ]
+    : undefined
+const settingsClock =Date.parse('2026-11-24T10:44:00Z')
 
 function onSettingChange(key: SettingKey, value: SettingValue): void {
   settingsValues.value = { ...settingsValues.value, [key]: value }
@@ -197,6 +207,7 @@ const sessionsText = computed(() => (props.scenario === 'no-session' ? 'None lis
           :permissions="{ microphone: true, screenRecording: false, accessibility: true }"
           :auto-runs="autoRuns"
           :last-auto-run="lastAutoRun"
+          :log-lines="logLines"
           :now="settingsClock"
           @change="onSettingChange"
         />
