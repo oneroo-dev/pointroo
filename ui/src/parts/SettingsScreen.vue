@@ -2,11 +2,23 @@
 // Settings as a screen inside the main window (the old Settings dialog is gone). Every switch saves at once: one click
 // raises `change` and the store saves it and shows an Undo toast. The values come from the app; a key that is not there
 // yet shows the app's own default. The mockups pass sample values.
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RooButton, RooIconButton, RooSelect, RooSwitch } from '@roo/kit/controls'
 import { RooSettingRow, RooSettingsGroup, RooStateMark } from '@roo/kit'
-import type { AutoStartChoiceKey, BridgeAutoRun, PermissionName, SettingKey, SettingValue, SettingsValues } from '../types'
-import { autoStartChoices, autoStartOn, budgetLabel, budgetOptions, budgetValue, choiceValue, runsText } from './autoStart'
+import type { AutoStartChoiceKey, BridgeAutoRun, BridgeLastAutoRun, PermissionName, SettingKey, SettingValue, SettingsValues } from '../types'
+import {
+  autoStartChoices,
+  autoStartOn,
+  budgetLabel,
+  budgetOptions,
+  budgetValue,
+  choiceValue,
+  lastRunNote,
+  lastRunText,
+  projectShortName,
+  runLineText,
+  runsText,
+} from './autoStart'
 
 type FlagKey = Exclude<SettingKey, 'locale' | 'autoStartBudget' | AutoStartChoiceKey>
 
@@ -25,14 +37,35 @@ const props = withDefaults(
     permissions?: Record<PermissionName, boolean> | undefined
     /** The headless runs Auto-start has going now (status.get). Left out while the app has not answered yet. */
     autoRuns?: BridgeAutoRun[] | undefined
+    /** The last auto-start run that ended (status.get). Left out when there is none. */
+    lastAutoRun?: BridgeLastAutoRun | undefined
+    /** The project folders whose Stop button waits for the app's answer. */
+    stopping?: string[]
+    /** The time to count "ago" from, in milliseconds. Left out: the real time, updated every 30 seconds. The mockups fix it. */
+    now?: number | undefined
     loading?: boolean
   }>(),
-  { permissions: undefined, autoRuns: undefined, loading: false },
+  { permissions: undefined, autoRuns: undefined, lastAutoRun: undefined, stopping: () => [], now: undefined, loading: false },
 )
+
+const realNow = ref(Date.now())
+const clockNow = computed(() => props.now ?? realNow.value)
+let clockTimer: number | undefined
+
+onMounted(() => {
+  clockTimer = window.setInterval(() => {
+    realNow.value = Date.now()
+  }, 30000)
+})
+
+onBeforeUnmount(() => {
+  window.clearInterval(clockTimer)
+})
 
 const emit = defineEmits<{
   change: [key: SettingKey, value: SettingValue, message: string]
   allow: [which: PermissionName]
+  stopRun: [project: string]
   useAnotherPort: []
   checkUpdates: []
   back: []
@@ -182,7 +215,27 @@ function onLanguage(value: string | undefined): void {
           </RooSettingRow>
           <RooSettingRow label="Runs" description="Headless runs going now.">
             <RooStateMark v-if="autoRuns === undefined" state="muted" label="Checking" />
-            <RooStateMark v-else :state="autoRuns.length > 0 ? 'ok' : 'muted'" :label="runsText(autoRuns)" />
+            <div v-else class="runs">
+              <RooStateMark :state="autoRuns.length > 0 ? 'ok' : 'muted'" :label="runsText(autoRuns)" />
+              <div v-for="run in autoRuns" :key="run.project" class="run-line">
+                <span class="run-text">{{ runLineText(run, clockNow) }}</span>
+                <RooButton
+                  variant="secondary"
+                  size="sm"
+                  :disabled="stopping.includes(run.project)"
+                  :aria-label="`Stop the run in ${projectShortName(run.project)}`"
+                  @click="emit('stopRun', run.project)"
+                >
+                  Stop
+                </RooButton>
+              </div>
+            </div>
+          </RooSettingRow>
+          <RooSettingRow v-if="lastAutoRun !== undefined" label="Last run" description="The last headless run that ended.">
+            <div class="last-run">
+              <span class="run-text">{{ lastRunText(lastAutoRun, clockNow) }}</span>
+              <RooStateMark v-if="lastRunNote(lastAutoRun) !== undefined" state="muted" :label="lastRunNote(lastAutoRun) ?? ''" />
+            </div>
           </RooSettingRow>
         </template>
       </RooSettingsGroup>
@@ -237,6 +290,25 @@ function onLanguage(value: string | undefined): void {
   flex-direction: column;
   gap: var(--roo-space-section);
   margin-inline: auto;
+}
+
+.runs {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--roo-space-item);
+}
+
+.run-line,
+.last-run {
+  display: flex;
+  align-items: center;
+  gap: var(--roo-space-item);
+}
+
+.run-text {
+  font-size: var(--roo-p-size-13);
+  color: var(--roo-muted);
 }
 
 .head {

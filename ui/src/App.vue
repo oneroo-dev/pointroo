@@ -237,8 +237,14 @@ onBeforeUnmount(() => {
         <SettingsScreen
           :values="store.settings"
           :loading="!store.settingsLoaded"
-          v-bind="store.status === undefined ? {} : { permissions: store.status, autoRuns: store.status.autoRuns }"
+          :stopping="store.stoppingRuns"
+          v-bind="
+            store.status === undefined
+              ? {}
+              : { permissions: store.status, autoRuns: store.status.autoRuns, lastAutoRun: store.status.lastAutoRun }
+          "
           @change="store.setSetting"
+          @stop-run="store.stopAutoRun"
           @allow="store.allow"
           @use-another-port="store.useAnotherPort"
           @check-updates="store.checkUpdates"
