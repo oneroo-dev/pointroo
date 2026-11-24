@@ -335,6 +335,7 @@ enum Router {
         writeLogged(info, to: routeURL(directory))
         removeSuggest(in: directory)
         AutoStart.shared.routed(folder: info.path)
+        FloatingWatcher.openReadWindow()
     }
 
     static func suggestURL(_ directory: URL) -> URL { directory.appendingPathComponent("suggest.json") }
