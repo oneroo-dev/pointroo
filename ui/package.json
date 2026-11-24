@@ -10,7 +10,8 @@
     "mockups": "node --import ./scripts/register-resolve.mjs ./scripts/mockups.mjs serve",
     "mockups:build": "node --import ./scripts/register-resolve.mjs ./scripts/mockups.mjs build",
     "kit:strict": "node ${ONEROO_ROOT:-$HOME/Workspace/oneroo}/tools/kit-strict.mjs --app .",
-    "typecheck": "vue-tsc --noEmit"
+    "typecheck": "vue-tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@roo/kit": "file:vendor/roo-kit.tgz",
@@ -22,6 +23,7 @@
     "playwright-core": "^1.65.1",
     "typescript": "^6.0.3",
     "vite": "^8.3.6",
+    "vitest": "^5.1.1",
     "vue-tsc": "^3.3.14"
   }
 }

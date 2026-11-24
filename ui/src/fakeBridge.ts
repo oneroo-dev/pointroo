@@ -14,9 +14,18 @@ import type {
   BridgeMethods,
   BridgeProject,
   BridgeQuestion,
+  DoneNotice,
   ItemGroup,
   ItemsListParams,
+  ItemsSearchParams,
+  Notice,
   PermissionName,
+  PickerChoice,
+  PickerSnapshot,
+  QuestionNotice,
+  RecordingPhase,
+  SearchField,
+  SearchResult,
   SettingKey,
   SettingValue,
 } from './types'
@@ -159,6 +168,99 @@ export function createFakeBridge(): Bridge {
     item.routeHow = 'picked'
   }
 
+  let phase: RecordingPhase = 'idle'
+  let startedAt: string | undefined
+  let pointCount = 0
+  let pickerSession: string | undefined
+  const seenNoticeIds = new Set<string>()
+
+  function emitRecording(): void {
+    emit('recording.changed', { phase, pointCount })
+  }
+
+  function pickerChoices(): PickerChoice[] {
+    return projectList()
+      .filter((project) => project.live)
+      .slice(0, 9)
+      .map((project, index) => ({ name: project.name, path: project.path, key: index + 1, suggested: index === 0 }))
+  }
+
+  function pickerSnapshot(): PickerSnapshot {
+    if (phase !== 'picking') return { open: false }
+    return { open: true, ...(pickerSession === undefined ? {} : { session: pickerSession }), choices: pickerChoices(), countdown: 8 }
+  }
+
+  function closePicker(): void {
+    phase = 'idle'
+    pickerSession = undefined
+    emitRecording()
+    emit('picker.changed', { open: false })
+  }
+
+  function noticeList(): Notice[] {
+    const doneNotices = items
+      .filter((item) => item.status === 'done' && item.by !== undefined && item.by !== 'you' && item.by !== 'user' && !seenNoticeIds.has(item.id))
+      .map((item): DoneNotice => {
+        const notice: DoneNotice = { kind: 'done', id: item.id, agent: item.by ?? '' }
+        const project = projects.find((entry) => entry.name === item.project)
+        if (project !== undefined) notice.project = project.folder
+        if (item.project !== undefined) notice.projectName = item.project
+        if (item.note !== undefined) notice.note = item.note
+        const firstCrop = item.cropURLs[0]
+        if (firstCrop !== undefined) notice.cropURL = firstCrop
+        if (item.afterURL !== undefined) notice.afterURL = item.afterURL
+        if (item.at !== undefined) notice.at = item.at
+        return notice
+      })
+    const questionNotices = questions.map((question): QuestionNotice => ({ ...question, kind: 'question' }))
+    const when = (notice: Notice): number => (notice.kind === 'question' ? notice.asked * 1000 : Date.parse(notice.at ?? ''))
+    return [...doneNotices, ...questionNotices].sort((first, second) => (when(second) || 0) - (when(first) || 0))
+  }
+
+  function plain(text: string): string {
+    return text.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase()
+  }
+
+  function searchFields(item: BridgeItem): [SearchField, string][] {
+    return [
+      ['title', item.title],
+      ['said', item.said ?? ''],
+      ['body', item.body],
+      ['alsoSaid', item.alsoSaid.join(' ')],
+      ['note', item.note ?? ''],
+      ['project', item.project ?? ''],
+      ['firstElement', item.firstElement ?? ''],
+    ]
+  }
+
+  function snippetAround(text: string, word: string): string {
+    const oneLine = text.replace(/\s+/g, ' ').trim()
+    const at = Math.max(0, plain(oneLine).indexOf(word))
+    const start = Math.max(0, Math.min(at - 20, oneLine.length - 80))
+    return oneLine.slice(start, start + 80)
+  }
+
+  function searchItems(params: ItemsSearchParams): { items: SearchResult[] } {
+    if (typeof params.text !== 'string' || params.text.trim() === '' || params.text.length > 200) throw new BridgeError('bad_params', 'text is 1 to 200 characters.')
+    const allowed = ['open', 'in_progress', 'done', 'trashed', 'any']
+    if (params.status !== undefined && !allowed.includes(params.status)) throw new BridgeError('bad_params', 'status is not allowed.')
+    const limit = params.limit ?? 30
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new BridgeError('bad_params', 'limit is a whole number from 1 to 100.')
+    const words = plain(params.text).split(/\s+/).filter((word) => word !== '')
+    const found: { result: SearchResult; rank: number }[] = []
+    for (const item of items) {
+      if (params.status !== undefined && params.status !== 'any' && item.status !== params.status) continue
+      const fields = searchFields(item)
+      const joined = plain(fields.map(([, text]) => text).join('\n'))
+      if (!words.every((word) => joined.includes(word))) continue
+      const fallback: [SearchField, string] = ['title', item.title]
+      const [field, text] = fields.find(([, fieldText]) => plain(fieldText).includes(words[0] ?? '')) ?? fallback
+      found.push({ result: { ...item, match: { field, snippet: snippetAround(text, words[0] ?? '') } }, rank: field === 'title' ? 0 : field === 'said' || field === 'body' ? 1 : 2 })
+    }
+    found.sort((first, second) => first.rank - second.rank || Date.parse(second.result.at ?? '') - Date.parse(first.result.at ?? ''))
+    return { items: found.slice(0, limit).map((entry) => entry.result) }
+  }
+
   const handlers: { [Name in BridgeMethod]: (params: BridgeMethods[Name]['params']) => BridgeMethods[Name]['result'] } = {
     'items.list': (params) => listItems(params),
     'projects.list': () => ({ projects: projectList() }),
@@ -242,6 +344,61 @@ export function createFakeBridge(): Bridge {
       permissions[params.which] = true
       emit('status.changed', statusNow())
       return { asked: true }
+    },
+    'items.search': (params) => searchItems(params),
+    'recording.start': (params) => {
+      if (phase !== 'idle') throw new BridgeError('busy', 'A recording is running or being processed.')
+      if (params.followUp !== undefined) {
+        const target = items.find((item) => item.id === params.followUp)
+        if (target === undefined || target.status !== 'done' || target.project === undefined) throw new BridgeError('bad_params', 'followUp must be a done item that went to a project.')
+      }
+      phase = 'recording'
+      startedAt = new Date().toISOString()
+      pointCount = 0
+      emitRecording()
+      return params.followUp === undefined ? { started: true } : { started: true, followUp: params.followUp }
+    },
+    'recording.stop': () => {
+      if (phase !== 'recording') throw new BridgeError('busy', 'Not recording.')
+      startedAt = undefined
+      phase = 'picking'
+      pickerSession = new Date().toISOString().slice(0, 16).replace('T', '-').replace(':', '')
+      emitRecording()
+      emit('picker.changed', { open: true, session: pickerSession })
+      return { stopped: true }
+    },
+    'recording.cancel': () => {
+      if (phase !== 'recording') throw new BridgeError('busy', 'Not recording.')
+      startedAt = undefined
+      phase = 'idle'
+      pointCount = 0
+      emitRecording()
+      return { cancelled: true }
+    },
+    'recording.get': () => ({ phase, points: pointCount, ...(startedAt === undefined || phase !== 'recording' ? {} : { startedAt }) }),
+    'picker.get': () => pickerSnapshot(),
+    'picker.pick': (params) => {
+      if (phase !== 'picking') throw new BridgeError('not_found', 'No picker is open.')
+      if (typeof params.path !== 'string' || !pickerChoices().some((choice) => choice.path === params.path)) throw new BridgeError('bad_params', 'path is not one of the choices.')
+      closePicker()
+      return { picked: true }
+    },
+    'picker.skip': () => {
+      if (phase !== 'picking') throw new BridgeError('not_found', 'No picker is open.')
+      closePicker()
+      return { skipped: true }
+    },
+    'notices.list': (params) => {
+      const limit = params.limit ?? 20
+      if (!Number.isInteger(limit) || limit < 1 || limit > 50) throw new BridgeError('bad_params', 'limit is a whole number from 1 to 50.')
+      return { notices: noticeList().slice(0, limit) }
+    },
+    'notices.seen': (params) => {
+      if (!Array.isArray(params.ids) || params.ids.some((id) => typeof id !== 'string')) throw new BridgeError('bad_params', 'ids is a list of text.')
+      const doneIds = params.ids.filter((id) => items.some((item) => item.id === id && item.status === 'done'))
+      doneIds.forEach((id) => seenNoticeIds.add(id))
+      emit('notices.changed', { count: noticeList().length })
+      return { seen: doneIds.length }
     },
     'clipboard.copy': () => ({ copied: true }),
     'window.startDrag': () => ({ dragging: true }),

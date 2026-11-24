@@ -13,7 +13,8 @@ const store = createStore(bridge)
 const width = ref(window.innerWidth)
 
 const isNarrow = computed(() => width.value < 900)
-const recordState = computed(() => store.recording.phase)
+// The project picker is open: the bar still shows the busy Record button.
+const recordState = computed(() => (store.recording.phase === 'picking' ? 'processing' : store.recording.phase))
 const recordDisabled = computed(() => store.status !== undefined && !store.status.microphone)
 
 function onResize(): void {

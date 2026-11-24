@@ -4,13 +4,33 @@ import { computed, reactive, ref } from 'vue'
 import type { Bridge } from './bridge'
 import { errorText } from './bridge'
 import type { Item, MainBanner, MainTab, MainToast, Project, RecordingView } from './parts/types'
-import type { BridgeAppStatus, BridgeItem, BridgeProject, BridgeQuestion, PermissionName, RecordingPhase, SettingKey, SettingValue, SettingsValues } from './types'
+import type {
+  BridgeAppStatus,
+  BridgeItem,
+  BridgeProject,
+  BridgeQuestion,
+  Notice,
+  OpenPicker,
+  PermissionName,
+  RecordingPhase,
+  SearchResult,
+  SettingKey,
+  SettingValue,
+  SettingsValues,
+} from './types'
 import { matchQuestions, toRecordingView, toViewItem, toViewProjects } from './viewModel'
 
 const undoSeconds = 5
 const plainToastSeconds = 3
 const recentDoneLimit = 50
 const laterMinutes = 30
+const defaultSearchDelayMilliseconds = 200
+const searchTextLimit = 200
+
+export interface StoreOptions {
+  /** How long the search waits after the last key before it asks the app. Tests make it small. */
+  searchDelayMilliseconds?: number
+}
 
 interface UndoStep {
   itemId: string
@@ -18,7 +38,8 @@ interface UndoStep {
   previousName: string | null
 }
 
-export function createStore(bridge: Bridge) {
+export function createStore(bridge: Bridge, options: StoreOptions = {}) {
+  const searchDelayMilliseconds = options.searchDelayMilliseconds ?? defaultSearchDelayMilliseconds
   const bridgeItems = ref<BridgeItem[]>([])
   /** The newest done items from done.recent. Stays undefined while the app does not answer that method. */
   const recentDone = ref<BridgeItem[] | undefined>(undefined)
@@ -26,7 +47,16 @@ export function createStore(bridge: Bridge) {
   const bridgeProjects = ref<BridgeProject[]>([])
   const questions = ref<BridgeQuestion[]>([])
   const status = ref<BridgeAppStatus | undefined>(undefined)
-  const recording = reactive<{ phase: RecordingPhase; pointCount: number }>({ phase: 'idle', pointCount: 0 })
+  const recording = reactive<{ phase: RecordingPhase; pointCount: number; startedAt: string | undefined }>({ phase: 'idle', pointCount: 0, startedAt: undefined })
+  /** The open project picker, or null while it is closed. */
+  const picker = ref<OpenPicker | null>(null)
+  const notices = ref<Notice[]>([])
+  const searchState = reactive<{ query: string; results: SearchResult[]; loading: boolean; error: string | undefined }>({
+    query: '',
+    results: [],
+    loading: false,
+    error: undefined,
+  })
   const loading = ref(true)
   const tab = ref<MainTab>('now')
   const filter = ref('all')
@@ -42,6 +72,10 @@ export function createStore(bridge: Bridge) {
   let settingUndo: (() => Promise<void>) | undefined
   let refreshing: Promise<void> | undefined
   let refreshAgain = false
+  let searchTimer: ReturnType<typeof setTimeout> | undefined
+  /** Counts the searches. A reply whose number is no longer the latest is thrown away. */
+  let searchNumber = 0
+  let finishPendingSearch: (() => void) | undefined
 
   const projects = computed<Project[]>(() => toViewProjects(bridgeProjects.value))
   const matched = computed(() => matchQuestions(bridgeItems.value, questions.value))
@@ -182,10 +216,146 @@ export function createStore(bridge: Bridge) {
       bridge.on('recording.changed', (data) => {
         recording.phase = data.phase
         recording.pointCount = data.pointCount
+        if (data.phase === 'recording') void loadRecordingState().catch(() => undefined)
+        else recording.startedAt = undefined
       }),
+      bridge.on('picker.changed', () => void loadPicker().catch(() => undefined)),
+      bridge.on('notices.changed', () => void loadNotices().catch(() => undefined)),
     ]
     void refresh()
+    void loadRecordingState().catch(() => undefined)
+    void loadPicker().catch(() => undefined)
+    void loadNotices().catch(() => undefined)
     return () => stops.forEach((stop) => stop())
+  }
+
+  /** Asks the app what the recording is doing now (the phase, the points and when it started). */
+  async function loadRecordingState(): Promise<void> {
+    const snapshot = await bridge.call('recording.get', {})
+    recording.phase = snapshot.phase
+    recording.pointCount = snapshot.points
+    recording.startedAt = snapshot.startedAt
+  }
+
+  async function loadPicker(): Promise<void> {
+    const snapshot = await bridge.call('picker.get', {})
+    picker.value = snapshot.open ? snapshot : null
+  }
+
+  /** Loads the notices (done items the user has not seen, and the pending questions). */
+  async function loadNotices(): Promise<void> {
+    notices.value = (await bridge.call('notices.list', {})).notices
+  }
+
+  /** Starts a recording. With followUp it is the follow-up of that done item ("Say more"). */
+  async function startRecording(followUp?: string): Promise<void> {
+    try {
+      await bridge.call('recording.start', followUp === undefined ? {} : { followUp })
+    } catch (error) {
+      fail(error)
+    }
+  }
+
+  async function stopRecording(): Promise<void> {
+    try {
+      await bridge.call('recording.stop', {})
+    } catch (error) {
+      fail(error)
+    }
+  }
+
+  async function cancelRecording(): Promise<void> {
+    try {
+      await bridge.call('recording.cancel', {})
+    } catch (error) {
+      fail(error)
+    }
+  }
+
+  /** Answers the open picker with a project folder. If the app says no, the picker is read again. */
+  async function pickProject(path: string): Promise<void> {
+    try {
+      await bridge.call('picker.pick', { path })
+      picker.value = null
+    } catch (error) {
+      fail(error)
+      await loadPicker().catch(() => undefined)
+    }
+  }
+
+  /** Answers the open picker like Esc: the recording stays in the queue. */
+  async function skipPicker(): Promise<void> {
+    try {
+      await bridge.call('picker.skip', {})
+      picker.value = null
+    } catch (error) {
+      fail(error)
+      await loadPicker().catch(() => undefined)
+    }
+  }
+
+  /** Marks done notices as seen, then reads the list again. */
+  async function markNoticesSeen(ids: string[]): Promise<void> {
+    if (ids.length === 0) return
+    try {
+      await bridge.call('notices.seen', { ids })
+    } catch (error) {
+      fail(error)
+    }
+    await loadNotices().catch(() => undefined)
+  }
+
+  /** "Say more" on a done item: a new recording that follows up on it. */
+  function sayMore(itemId: string): Promise<void> {
+    return startRecording(itemId)
+  }
+
+  function cancelPendingSearch(): void {
+    clearTimeout(searchTimer)
+    searchTimer = undefined
+    finishPendingSearch?.()
+    finishPendingSearch = undefined
+  }
+
+  async function runSearch(number: number, text: string): Promise<void> {
+    try {
+      const reply = await bridge.call('items.search', { text })
+      if (number !== searchNumber) return
+      searchState.results = reply.items
+      searchState.error = undefined
+    } catch (error) {
+      if (number !== searchNumber) return
+      searchState.results = []
+      searchState.error = errorText(error)
+    }
+    searchState.loading = false
+  }
+
+  /**
+   * Searches the items for what the user typed. It waits for searchDelayMilliseconds after the last call, and a slower
+   * old reply never replaces a newer one. The returned promise is done when this search is answered or replaced.
+   */
+  function search(query: string): Promise<void> {
+    cancelPendingSearch()
+    searchNumber += 1
+    const number = searchNumber
+    searchState.query = query
+    const text = query.trim().slice(0, searchTextLimit)
+    if (text === '') {
+      searchState.results = []
+      searchState.error = undefined
+      searchState.loading = false
+      return Promise.resolve()
+    }
+    searchState.loading = true
+    return new Promise<void>((resolve) => {
+      finishPendingSearch = resolve
+      searchTimer = setTimeout(() => {
+        searchTimer = undefined
+        finishPendingSearch = undefined
+        void runSearch(number, text).then(resolve)
+      }, searchDelayMilliseconds)
+    })
   }
 
   function projectById(projectId: string): Project | undefined {
@@ -427,6 +597,21 @@ export function createStore(bridge: Bridge) {
     selectedId,
     toast,
     recording,
+    picker,
+    notices,
+    noticeCount: computed(() => notices.value.length),
+    searchState,
+    startRecording,
+    stopRecording,
+    cancelRecording,
+    loadRecordingState,
+    loadPicker,
+    pickProject,
+    skipPicker,
+    loadNotices,
+    markNoticesSeen,
+    sayMore,
+    search,
     status,
     projects,
     rows,
