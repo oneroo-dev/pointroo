@@ -32,7 +32,8 @@ enum ProjectPicker {
     }
 
     /// The open picker as the bridge reports it (choices in number-key order), or nil when none is open.
-    static func snapshot(now: Date = clock()) -> PickerSnapshot? {
+    static func snapshot(now givenNow: Date? = nil) -> PickerSnapshot? {
+        let now = givenNow ?? clock()
         guard waiting != nil, let open else { return nil }
         let choices = open.choices.enumerated().map { index, project in
             PickerSnapshot.Choice(name: project.name, path: project.path, key: index + 1,
