@@ -163,10 +163,13 @@ enum Router {
     /// How long after an agent finishes an item a new recording still counts as a follow-up to it.
     static let followUpWindow: TimeInterval = 180
 
-    /// Said name first, then what was on screen, then a follow-up to what an agent just finished, then the only live session.
+    /// Said name first, then a follow-up the user asked for (`asked`), then what was on screen, then a follow-up to what
+    /// an agent just finished, then the only live session.
     static func route(words: [String], points: [PointEvent], projects: [Project], live: [LiveSession] = [],
-                      lastDone: (path: String, id: String, at: Date)? = nil, recordingStarted: Date? = nil) -> Result? {
+                      lastDone: (path: String, id: String, at: Date)? = nil, recordingStarted: Date? = nil,
+                      asked: (path: String, id: String)? = nil) -> Result? {
         if let project = saidProject(words, projects) { return Result(path: project.path, how: "said") }
+        if let asked { return Result(path: asked.path, how: "followup", follows: asked.id) }
         if let project = screenProject(points, projects) { return Result(path: project.path, how: "screen") }
         if let recordingStarted, let follow = followUp(lastDone: lastDone, recordingStarted: recordingStarted, live: live) {
             return Result(path: follow.path, how: "followup", follows: follow.id)
@@ -412,13 +415,16 @@ enum Router {
                              knownProjects: [Project]? = nil,
                              items: [Item]? = nil,
                              autoSendSingle: Bool = Prefs.autoSendSingle,
-                             now: Date = Date()) {
+                             now: Date = Date(),
+                             followUpFolder: URL? = nil) {
+        let request = FollowUpStore(folder: followUpFolder).take(recordingStarted: events.started)
         if readRoute(directory)?.how == "picked" { return }
         let projects = knownProjects ?? Projects.known(live: live)
         let allItems = items ?? Items.all()
         let spoken = words.map(\.text)
+        let asked = request.map { (path: $0.path, id: $0.id) }
         if let result = route(words: spoken, points: events.points, projects: projects, live: live,
-                              lastDone: lastAgentDone(allItems), recordingStarted: events.started),
+                              lastDone: lastAgentDone(allItems), recordingStarted: events.started, asked: asked),
            shouldAutoSend(result, autoSendSingle: autoSendSingle) {
             let name = projects.first { samePath($0.path, result.path) }?.name ?? URL(fileURLWithPath: result.path).lastPathComponent
             writeRoute(RouteInfo(project: name, path: result.path, how: result.how, follows: result.follows), to: directory)
