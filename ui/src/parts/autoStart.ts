@@ -76,6 +76,26 @@ export function autoStartOn(values: SettingsValues): boolean {
   return choiceValue(values, 'autoStartAgent') !== 'off'
 }
 
+/** What the permission lets a run do, in a few words. */
+const permissionPhrases: Record<string, string> = {
+  acceptEdits: 'May edit files.',
+  dontAsk: 'Allowed tools only.',
+  auto: 'Decides by itself.',
+}
+
+/** The one line that sums up a run: "Sonnet, medium effort" with "Up to $2 a run. May edit files." under it. */
+export function runSummary(values: SettingsValues): { title: string; detail: string } {
+  const optionLabel = (key: AutoStartChoiceKey): string => {
+    const value = choiceValue(values, key)
+    return autoStartChoices[key].options.find((option) => option.value === value)?.label ?? value
+  }
+  const permission = permissionPhrases[choiceValue(values, 'autoStartPermission')] ?? ''
+  return {
+    title: `${optionLabel('autoStartModel')}, ${optionLabel('autoStartEffort').toLowerCase()} effort`,
+    detail: `Up to ${budgetLabel(budgetValue(values))} a run. ${permission}`.trim(),
+  }
+}
+
 /** The last folder of a project path: "/Users/sample/Workspace/tinkeroo/" gives "tinkeroo". */
 export function projectShortName(project: string): string {
   const parts = project.split('/').filter((part) => part !== '')

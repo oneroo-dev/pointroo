@@ -98,7 +98,7 @@ Panels: done banner (single, queued), question panel (NEW), picker (2 to 9 proje
 ## App (src/)
 
 The real main window, built from the same parts as the approved mockups (2026-11-24, W1).
-- `src/parts/` holds the shared screen parts: MainWindow, ItemList, ItemDetail, ProjectSidebar, ProjectTiles, QuestionControls, StatusBanner, AppGlyph, words.ts, projects.ts, types.ts. They take data as props and raise events (select, send, sendAll, move, done, trash, reopen, copy, reveal, answer, undo and more). The mockups import them from here and pass sample data (`mockups/parts/MainWindow.vue` is only a review frame with a scenario switch).
+- `src/parts/` holds the shared screen parts: MainWindow, ItemList, ItemDetail, ProjectTiles, QuestionControls, StatusBanner, AppGlyph, words.ts, projects.ts, types.ts. They take data as props and raise events (select, send, sendAll, move, done, trash, reopen, copy, reveal, answer, undo and more). The mockups import them from here and pass sample data (`mockups/parts/MainWindow.vue` is only a review frame with a scenario switch).
 - `src/bridge.ts` is `call(method, params)` and `on(event, handler)` over `window.webkit.messageHandlers.pointroo` and `window.pointroo.reply/emit`. A reply with an error rejects with a `BridgeError` (code, message). In a plain browser `src/fakeBridge.ts` answers from the mockup sample data.
 - `src/types.ts` has the shapes of every bridge reply and event (WebBridge.swift). `src/viewModel.ts` turns them into what the parts draw.
 - `src/store.ts` holds items (items.list grouped by project), projects, questions, status and the picks (tab, project filter, selected item, toast). It asks again on items.changed and questions.changed, takes status.changed and recording.changed as they come.

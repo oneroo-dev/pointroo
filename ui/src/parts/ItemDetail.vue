@@ -1,20 +1,25 @@
 <script setup lang="ts">
-// One recording in full. It draws the item it is given and raises an event for every click.
+// One recording. Top line: the way back (narrow only), where it stands, where it went and when, then Mark done and a "..." menu
+// that holds the rest (copy, move, the whole recording, show in Finder, Trash). Then the crop as big as the window allows, with
+// small crops to switch, and your words in full. It draws the item it is given and raises an event for every click.
 import { computed, ref, watch } from 'vue'
-import { RooButton } from '@roo/kit/controls'
-import { RooChip, RooCollapse, RooFormSection, RooIcon, RooListRow, RooStateMark, RooTooltip } from '@roo/kit'
+import { RooButton, RooIconButton, RooTooltip } from '@roo/kit/controls'
+import { RooIcon, RooListRow, RooSegmented, RooStateMark } from '@roo/kit'
+import { RooMenu, RooMenuItem, RooMenuSeparator } from '@roo/kit/overlays'
 import type { Item, Project, RecordingView } from './types'
 import { projectIdFor, tilesFor } from './projects'
-import { markFor, markOwnWords, pointsWord, sentToLine } from './words'
+import { isFinished, markFor, markOwnWords, plainWords, whereLine } from './words'
 import ProjectTiles from './ProjectTiles.vue'
 import QuestionControls from './QuestionControls.vue'
 
-const props = withDefaults(defineProps<{ item: Item; projects: Project[]; recording?: RecordingView | undefined; recordingOpen?: boolean }>(), {
+const props = withDefaults(defineProps<{ item: Item; projects: Project[]; recording?: RecordingView | undefined; recordingOpen?: boolean; back?: boolean }>(), {
   recording: undefined,
   recordingOpen: false,
+  back: false,
 })
 
 const emit = defineEmits<{
+  back: []
   later: [item: Item]
   loadRecording: [session: string]
   send: [itemId: string, projectId: string]
@@ -23,38 +28,56 @@ const emit = defineEmits<{
   trash: [itemId: string]
   reopen: [itemId: string]
   copy: [itemId: string]
+  reveal: [itemId: string]
   answer: [item: Item, text: string]
 }>()
 
 const mark = computed(() => markFor(props.item))
-const isDone = computed(() => props.item.state === 'done' || props.item.state === 'done-by-you')
+const isDone = computed(() => isFinished(props.item))
 const notSent = computed(() => props.item.state === 'not-sent')
-const headline = computed(() => [props.item.project ?? 'Not sent yet', mark.value.label, props.item.agent].filter(Boolean).join(' · '))
-const saidParts = computed(() => props.item.said.split(/(\[\d+\])/).filter((part) => part !== ''))
+const words = computed(() => plainWords(props.item.said))
+const ageTip = computed(() => props.item.atText ?? props.item.age)
 const currentId = computed(() => projectIdFor(props.projects, props.item.project))
 const choice = computed(() => tilesFor(props.projects, notSent.value ? props.item.suggested : currentId.value))
-const sentLine = computed(() => (props.item.state === 'working' && props.item.agent ? `${props.item.agent} is on it.` : sentToLine(props.item)))
-const ageTip = computed(() => props.item.atText ?? props.item.age)
+// Every project in the order the number keys use, for the Move menu.
+const moveTiles = computed(() => [...choice.value.tiles, ...choice.value.rest])
+const canMove = computed(() => !isDone.value && !notSent.value && props.projects.length > 0)
 
-const showAfter = computed(() => isDone.value && (!!props.item.note || props.item.afterUrl !== undefined))
-const beforeUrl = computed(() => props.item.crops[0]?.url)
+const shotIndex = ref(0)
+const side = ref('now')
+const sideOptions = [
+  { value: 'before', label: 'Before' },
+  { value: 'now', label: 'Now' },
+]
+const hasAfter = computed(() => isDone.value && props.item.afterUrl !== undefined)
+const heroUrl = computed(() => {
+  if (hasAfter.value && side.value === 'now') return props.item.afterUrl
+  return (props.item.crops[shotIndex.value] ?? props.item.crops[0])?.url
+})
 
 const recordingShown = ref(props.recordingOpen)
 const enlargedFrame = ref<string | undefined>(undefined)
 const saidPieces = computed(() => markOwnWords(props.recording?.said ?? [], props.item.said))
+const menuOpen = ref(false)
 
-// A new item starts with the Recording section closed.
+// A new item starts on its first crop, with the whole recording closed.
 watch(
   () => props.item.id,
   () => {
+    shotIndex.value = 0
+    side.value = 'now'
     recordingShown.value = false
     enlargedFrame.value = undefined
   },
 )
 
-watch(recordingShown, (shown) => {
-  if (shown && props.item.session !== undefined) emit('loadRecording', props.item.session)
-})
+watch(
+  recordingShown,
+  (shown) => {
+    if (shown && props.item.session !== undefined) emit('loadRecording', props.item.session)
+  },
+  { immediate: true },
+)
 
 function toggleFrame(url: string): void {
   enlargedFrame.value = enlargedFrame.value === url ? undefined : url
@@ -67,258 +90,296 @@ function pick(projectId: string): void {
 </script>
 
 <template>
-  <article class="detail" :aria-label="item.title">
-    <header class="detail-head">
-      <h2 class="detail-title">{{ item.title }}</h2>
-      <p class="detail-line">
+  <article class="detail" aria-label="Recording">
+    <header class="top">
+      <RooButton v-if="back" variant="ghost" size="sm" flush @click="emit('back')">
+        <template #icon><RooIcon name="arrow-left" :size="16" /></template>
+        Queue
+      </RooButton>
+      <span class="status">
         <RooStateMark :state="mark.state" :label="mark.label" />
-        <span>{{ headline.replace(`${mark.label} · `, '').replace(` · ${mark.label}`, '') }}</span>
-        <RooTooltip :text="ageTip"><span class="detail-age">{{ item.age }}</span></RooTooltip>
-      </p>
+        <RooTooltip :text="ageTip"><span class="where">{{ whereLine(item) }}</span></RooTooltip>
+      </span>
+      <span class="spacer" />
+      <RooIconButton v-if="isDone" icon="rotate-ccw" variant="ghost" size="sm" label="Open again" tooltip="Open again" @click="emit('reopen', item.id)" />
+      <RooIconButton v-else icon="check" variant="ghost" size="sm" label="Mark done" tooltip="Mark done" shortcut="D" @click="emit('done', item.id)" />
+      <RooMenu v-model:open="menuOpen" align="end">
+        <template #trigger>
+          <RooIconButton icon="more" variant="ghost" size="sm" label="More" tooltip="Copy, move, whole recording, Trash" :pressed="menuOpen" />
+        </template>
+        <RooMenuItem icon="copy" @select="emit('copy', item.id)">Copy for an agent</RooMenuItem>
+        <RooMenuItem v-if="canMove" icon="folder">
+          Move to another project
+          <template #submenu>
+            <RooMenuItem v-for="(tile, index) in moveTiles" :key="tile.id" :checked="tile.id === currentId" :hint="index < 5 ? String(index + 1) : ''" @select="pick(tile.id)">{{ tile.name }}</RooMenuItem>
+          </template>
+        </RooMenuItem>
+        <RooMenuItem v-if="item.session !== undefined" icon="list" @select="recordingShown = true">The whole recording</RooMenuItem>
+        <RooMenuItem icon="folder-open" @select="emit('reveal', item.id)">Show in Finder</RooMenuItem>
+        <RooMenuSeparator />
+        <RooMenuItem icon="trash" destructive shortcut="Delete" @select="emit('trash', item.id)">Move to Trash</RooMenuItem>
+      </RooMenu>
     </header>
 
-    <RooFormSection v-if="item.question" title="The agent asks">
+    <section v-if="item.question" class="ask" aria-label="The agent asks">
       <QuestionControls :question="item.question.text" :choices="item.question.choices" show-later @answer="(text) => emit('answer', item, text)" @later="emit('later', item)" />
-    </RooFormSection>
+    </section>
 
-    <RooFormSection title="What you said">
-      <p class="detail-said roo-selectable">
-        <template v-if="item.said === ''">No speech.</template>
-        <template v-else>
-          <template v-for="(part, index) in saidParts" :key="index">
-            <RooChip v-if="/^\[\d+\]$/.test(part)" size="small" mono :label="part.slice(1, -1)" />
-            <template v-else>{{ part }}</template>
-          </template>
-        </template>
-      </p>
-    </RooFormSection>
-
-    <RooFormSection v-if="item.crops.length > 0" :title="`What you pointed at (${pointsWord(item.points)})`">
-      <ul class="detail-crops" aria-label="Crops">
-        <li v-for="crop in item.crops" :key="crop.number">
-          <RooListRow size="dense" :title="crop.caption" tabindex="0">
-            <template #tile>
-              <img v-if="crop.url" class="thumb" :src="crop.url" alt="" />
-              <RooIcon v-else name="image" :size="16" />
-            </template>
-            <template #title-prefix><RooChip size="small" mono :label="String(crop.number)" /></template>
-          </RooListRow>
-        </li>
-      </ul>
-    </RooFormSection>
-
-    <RooFormSection v-if="showAfter" title="Agent's note">
-      <div class="detail-sent">
-        <p v-if="item.note" class="detail-said roo-selectable">{{ item.note }}</p>
-        <div v-if="item.afterUrl" class="detail-compare" aria-label="Before and now">
-          <figure class="detail-shot">
-            <img v-if="beforeUrl" class="detail-shot-image" :src="beforeUrl" alt="Before: cropped when you pointed" />
-            <div v-else class="detail-shot-image detail-shot-empty"><RooIcon name="image" :size="16" /></div>
-            <figcaption class="detail-shot-caption">Before</figcaption>
-          </figure>
-          <figure class="detail-shot">
-            <img class="detail-shot-image" :src="item.afterUrl" alt="Screen now: taken when the agent finished" />
-            <figcaption class="detail-shot-caption">Screen now</figcaption>
-          </figure>
-        </div>
-        <ul v-else class="detail-crops" aria-label="Before and now">
-          <li>
-            <RooListRow size="dense" title="Before" subtitle="Cropped when you pointed" tabindex="0">
-              <template #tile>
-                <img v-if="item.crops[0]?.url" class="thumb" :src="item.crops[0]?.url" alt="" />
-                <RooIcon v-else name="image" :size="16" />
-              </template>
-            </RooListRow>
-          </li>
-          <li>
-            <RooListRow size="dense" title="Screen now" subtitle="Taken when the agent finished" tabindex="0">
-              <template #tile>
-                <img v-if="item.afterUrl" class="thumb" :src="item.afterUrl" alt="" />
-                <RooIcon v-else name="image" :size="16" />
-              </template>
-            </RooListRow>
-          </li>
-        </ul>
+    <figure class="hero">
+      <img v-if="heroUrl" class="hero-image" :src="heroUrl" :alt="hasAfter && side === 'now' ? 'The screen now' : 'Where you pointed'" />
+      <span v-else class="hero-empty"><RooIcon name="image" :size="16" /></span>
+      <div v-if="hasAfter" class="hero-switch">
+        <RooSegmented v-model="side" label="Picture" :options="sideOptions" />
       </div>
-    </RooFormSection>
+    </figure>
 
-    <RooFormSection v-if="item.session !== undefined" title="Recording" description="Everything said and shown in the whole recording.">
-      <div class="detail-sent">
-        <div class="detail-toggle">
-          <RooButton variant="secondary" size="sm" :aria-expanded="recordingShown" @click="recordingShown = !recordingShown">{{ recordingShown ? 'Hide the recording' : 'Show the whole recording' }}</RooButton>
-          <span v-if="recordingShown && recording?.summary" class="detail-muted">{{ recording?.summary }}</span>
-        </div>
-        <RooCollapse v-model:open="recordingShown">
-          <div class="detail-sent detail-recording">
-            <p v-if="!recording || recording.state === 'loading'" class="detail-muted">Loading the recording…</p>
-            <p v-else-if="recording.state === 'error'" class="detail-muted">{{ recording.message || 'The recording could not be loaded.' }}</p>
-            <template v-else>
-              <p v-if="saidPieces.length === 0" class="detail-muted">No speech.</p>
-              <p v-else class="detail-said roo-selectable">
-                <template v-for="(piece, index) in saidPieces" :key="index"><mark v-if="piece.own" class="detail-own">{{ piece.text }}</mark><template v-else>{{ piece.text }}</template>{{ ' ' }}</template>
-              </p>
-              <div v-if="recording.frames.length > 0" class="detail-frames">
-                <img v-if="enlargedFrame" class="detail-frame-big" :src="enlargedFrame" alt="Frame, enlarged. Click to shrink." role="button" tabindex="0" @click="enlargedFrame = undefined" @keydown.enter.prevent="enlargedFrame = undefined" @keydown.space.prevent="enlargedFrame = undefined" />
-                <div class="detail-strip">
-                  <img
-                    v-for="(frame, index) in recording.frames"
-                    :key="frame"
-                    class="detail-frame"
-                    :class="{ 'detail-frame-on': frame === enlargedFrame }"
-                    :src="frame"
-                    :alt="`Frame ${index + 1}. Click to enlarge.`"
-                    role="button"
-                    tabindex="0"
-                    @click="toggleFrame(frame)"
-                    @keydown.enter.prevent="toggleFrame(frame)"
-                    @keydown.space.prevent="toggleFrame(frame)"
-                  />
-                </div>
-              </div>
-              <ul v-if="recording.points.length > 0" class="detail-crops" aria-label="Points">
-                <li v-for="(point, index) in recording.points" :key="index">
-                  <RooListRow size="dense" :title="point">
-                    <template #tile><RooIcon name="mouse-pointer-click" :size="16" /></template>
-                  </RooListRow>
-                </li>
-              </ul>
-            </template>
-          </div>
-        </RooCollapse>
+    <div v-if="item.crops.length > 1 && !hasAfter" class="strip" aria-label="Crops">
+      <span
+        v-for="(crop, index) in item.crops"
+        :key="crop.number"
+        class="thumb"
+        role="button"
+        tabindex="0"
+        :aria-label="`Crop ${index + 1}`"
+        :aria-pressed="index === shotIndex"
+        :data-on="index === shotIndex ? 'true' : undefined"
+        @click="shotIndex = index"
+        @keydown.enter.prevent="shotIndex = index"
+        @keydown.space.prevent="shotIndex = index"
+      >
+        <img v-if="crop.url" class="thumb-image" :src="crop.url" alt="" />
+      </span>
+    </div>
+
+    <p class="said roo-selectable">{{ words === '' ? 'No speech.' : words }}</p>
+
+    <p v-if="item.note" class="note">
+      <span class="note-icon"><RooIcon name="check" :size="16" /></span>
+      <span class="roo-selectable">{{ item.note }}</span>
+    </p>
+
+    <section v-if="notSent" class="send" aria-label="Send to">
+      <p class="send-title">Send to</p>
+      <ProjectTiles size="large" layout="list" :tiles="choice.tiles" :more-rows="choice.rest" label="Send to" show-keys show-more @pick="pick" />
+    </section>
+
+    <section v-if="recordingShown" class="whole" aria-label="The whole recording">
+      <div class="whole-head">
+        <span class="whole-title">The whole recording</span>
+        <span v-if="recording?.summary" class="muted">{{ recording.summary }}</span>
+        <span class="spacer" />
+        <RooButton variant="ghost" size="sm" @click="recordingShown = false">Hide</RooButton>
       </div>
-    </RooFormSection>
-
-    <RooFormSection :title="notSent ? 'Send to' : 'Sent to'">
-      <div class="detail-sent">
-        <p class="detail-said">
-          <template v-if="notSent">Not sent yet. One click on a project sends it.</template>
-          <template v-else><strong>{{ item.project }}</strong>. {{ sentLine }}</template>
-        </p>
-        <ProjectTiles
-          v-if="!isDone"
-          :size="notSent ? 'large' : 'small'"
-          layout="list"
-          :tiles="choice.tiles"
-          :more-rows="choice.rest"
-          :selected-id="notSent ? undefined : currentId"
-          :label="notSent ? 'Send to' : 'Move to'"
-          show-keys
-          show-more
-          @pick="pick"
-        />
-      </div>
-    </RooFormSection>
-
-    <footer class="detail-actions">
-      <RooButton v-if="isDone" variant="secondary" size="sm" @click="emit('reopen', item.id)">Open again</RooButton>
+      <p v-if="!recording || recording.state === 'loading'" class="muted">Loading the recording…</p>
+      <p v-else-if="recording.state === 'error'" class="muted">{{ recording.message || 'The recording could not be loaded.' }}</p>
       <template v-else>
-        <RooButton variant="secondary" size="sm" @click="emit('copy', item.id)">Copy for an agent</RooButton>
-        <RooTooltip v-if="item.state === 'waiting' || notSent" text="Mark done" shortcut="D"><RooButton variant="ghost" size="sm" @click="emit('done', item.id)">Mark done</RooButton></RooTooltip>
+        <p v-if="saidPieces.length === 0" class="muted">No speech.</p>
+        <p v-else class="whole-said roo-selectable">
+          <template v-for="(piece, index) in saidPieces" :key="index"><mark v-if="piece.own" class="own">{{ piece.text }}</mark><template v-else>{{ piece.text }}</template>{{ ' ' }}</template>
+        </p>
+        <div v-if="recording.frames.length > 0" class="frames">
+          <img v-if="enlargedFrame" class="frame-big" :src="enlargedFrame" alt="Frame, enlarged. Click to shrink." role="button" tabindex="0" @click="enlargedFrame = undefined" @keydown.enter.prevent="enlargedFrame = undefined" @keydown.space.prevent="enlargedFrame = undefined" />
+          <div class="frame-strip">
+            <img
+              v-for="(frame, index) in recording.frames"
+              :key="frame"
+              class="frame"
+              :data-on="frame === enlargedFrame ? 'true' : undefined"
+              :src="frame"
+              :alt="`Frame ${index + 1}. Click to enlarge.`"
+              role="button"
+              tabindex="0"
+              @click="toggleFrame(frame)"
+              @keydown.enter.prevent="toggleFrame(frame)"
+              @keydown.space.prevent="toggleFrame(frame)"
+            />
+          </div>
+        </div>
+        <div v-if="recording.points.length > 0" class="points" aria-label="Points">
+          <RooListRow v-for="(point, index) in recording.points" :key="index" size="dense" :title="point">
+            <template #tile><RooIcon name="mouse-pointer-click" :size="16" /></template>
+          </RooListRow>
+        </div>
       </template>
-      <span class="detail-spacer" />
-      <RooTooltip text="Move to Trash" shortcut="Delete"><RooButton variant="ghost" size="sm" @click="emit('trash', item.id)">Move to Trash</RooButton></RooTooltip>
-    </footer>
+    </section>
   </article>
 </template>
 
 <style scoped>
 .detail {
   display: flex;
-  min-height: 100%;
   box-sizing: border-box;
   flex-direction: column;
   gap: var(--roo-space-group);
   padding: var(--roo-space-group);
 }
 
-.detail-title {
-  margin: 0;
-  display: -webkit-box;
-  overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  font-size: var(--roo-p-size-15);
-  font-weight: 600;
-  line-height: 1.3;
-}
-
-.detail-line {
+.top {
   display: flex;
+  min-width: 0;
   align-items: center;
   gap: var(--roo-space-item);
-  margin: var(--roo-space-item) 0 0;
+}
+
+.status {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--roo-space-item);
   color: var(--roo-muted);
   font-size: var(--roo-p-size-12);
 }
 
-.detail-said {
-  margin: 0;
-  font-size: var(--roo-p-size-13);
-  line-height: 1.5;
-}
-
-.detail-crops {
-  display: flex;
-  flex-direction: column;
-  gap: var(--roo-space-item);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.detail-sent {
-  display: flex;
-  flex-direction: column;
-  gap: var(--roo-space-group);
-}
-
-.detail-compare {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--roo-space-item);
-}
-
-.detail-shot {
-  display: flex;
+.where {
   min-width: 0;
-  flex-direction: column;
-  gap: var(--roo-space-item);
-  margin: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
-.detail-shot-image {
-  display: block;
-  width: 100%;
-  aspect-ratio: 4 / 3;
-  box-sizing: border-box;
+.spacer {
+  flex: 1 1 auto;
+}
+
+.ask {
+  padding: var(--roo-space-group);
+  border-radius: var(--roo-p-radius-card);
+  background: var(--roo-raised);
+}
+
+.hero {
+  position: relative;
+  margin: 0;
+  overflow: hidden;
   border: 1px solid var(--roo-border);
   border-radius: var(--roo-p-radius-card);
+  background: var(--roo-raised);
+  aspect-ratio: 16 / 10;
+}
+
+.hero-image {
+  display: block;
+  width: 100%;
+  height: 100%;
   object-fit: cover;
 }
 
-.detail-shot-empty {
+.hero-empty {
   display: flex;
+  width: 100%;
+  height: 100%;
   align-items: center;
   justify-content: center;
   color: var(--roo-muted);
 }
 
-.detail-shot-caption {
-  overflow: hidden;
-  color: var(--roo-muted);
-  font-size: var(--roo-p-size-12);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.hero-switch {
+  position: absolute;
+  inset-block-end: var(--roo-space-item);
+  inset-inline-start: var(--roo-space-item);
+  border-radius: var(--roo-p-radius-medium);
+  background: var(--roo-surface);
 }
 
-.detail-toggle {
+.strip {
+  display: flex;
+  gap: var(--roo-space-item);
+}
+
+.thumb {
+  display: block;
+  width: 72px;
+  height: 46px;
+  flex: none;
+  box-sizing: border-box;
+  overflow: hidden;
+  border: 1px solid var(--roo-border);
+  border-radius: var(--roo-p-radius-small);
+  background: var(--roo-raised);
+  opacity: 0.6;
+  cursor: default;
+}
+
+.thumb[data-on] {
+  border-color: var(--roo-accent-ring);
+  outline: 1px solid var(--roo-accent-ring);
+  opacity: 1;
+}
+
+.thumb:focus-visible {
+  outline: 2px solid var(--roo-focus);
+}
+
+.thumb-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.said {
+  margin: 0;
+  font-size: var(--roo-p-size-16);
+  line-height: 1.5;
+}
+
+.note {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--roo-space-item);
+  margin: 0;
+  padding: var(--roo-space-group);
+  border-radius: var(--roo-p-radius-card);
+  background: var(--roo-ok-bg);
+  font-size: var(--roo-p-size-13);
+  line-height: 1.5;
+}
+
+.note-icon {
+  display: flex;
+  flex: none;
+  color: var(--roo-ok);
+}
+
+.send {
+  display: flex;
+  flex-direction: column;
+  gap: var(--roo-space-item);
+}
+
+.send-title {
+  margin: 0;
+  color: var(--roo-muted);
+  font-size: var(--roo-p-size-12);
+}
+
+.whole {
+  display: flex;
+  flex-direction: column;
+  gap: var(--roo-space-group);
+  padding-block-start: var(--roo-space-group);
+  border-block-start: 1px solid var(--roo-border);
+}
+
+.whole-head {
   display: flex;
   min-width: 0;
   align-items: center;
   gap: var(--roo-space-item);
 }
 
-.detail-muted {
+.whole-title {
+  font-size: var(--roo-p-size-13);
+  font-weight: 600;
+}
+
+.whole-said {
+  margin: 0;
+  font-size: var(--roo-p-size-13);
+  line-height: 1.5;
+}
+
+.muted {
   min-width: 0;
   margin: 0;
   overflow: hidden;
@@ -327,23 +388,19 @@ function pick(projectId: string): void {
   text-overflow: ellipsis;
 }
 
-.detail-recording {
-  padding-block-start: var(--roo-space-item);
-}
-
-.detail-own {
+.own {
   border-radius: var(--roo-p-radius-card);
   background: var(--roo-accent-bg);
   color: var(--roo-accent-text);
 }
 
-.detail-frames {
+.frames {
   display: flex;
   flex-direction: column;
   gap: var(--roo-space-item);
 }
 
-.detail-frame-big {
+.frame-big {
   display: block;
   width: 100%;
   box-sizing: border-box;
@@ -352,13 +409,13 @@ function pick(projectId: string): void {
   cursor: zoom-out;
 }
 
-.detail-strip {
+.frame-strip {
   display: flex;
   gap: var(--roo-space-item);
   overflow-x: auto;
 }
 
-.detail-frame {
+.frame {
   display: block;
   width: 64px;
   height: 48px;
@@ -370,26 +427,13 @@ function pick(projectId: string): void {
   object-fit: cover;
 }
 
-.detail-frame-on {
+.frame[data-on] {
   border-color: var(--roo-accent-ring);
 }
 
-.detail-actions {
+.points {
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: var(--roo-space-item);
-  margin-top: auto;
-}
-
-.detail-spacer {
-  flex: 1 1 auto;
-}
-
-.thumb {
-  display: block;
-  width: 100%;
-  height: 100%;
-  border-radius: inherit;
-  object-fit: cover;
 }
 </style>

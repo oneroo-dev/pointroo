@@ -18,6 +18,7 @@ import {
   pickerEndsAt,
   pickerTiles,
   pillView,
+  secondsLeft,
   sentSeconds,
   sentView,
   sizeToReport,
@@ -118,6 +119,13 @@ describe('picker', () => {
     expect(pickerEndsAt(picker, 1000)).toBe(9000)
     const { countdown: _countdown, ...withoutCountdown } = picker
     expect(pickerEndsAt(withoutCountdown, 1000)).toBeUndefined()
+  })
+
+  it('it_counts_whole_seconds_left_and_never_goes_below_zero', () => {
+    expect(secondsLeft(9000, 1000)).toBe(8)
+    expect(secondsLeft(9000, 1001)).toBe(8)
+    expect(secondsLeft(9000, 8999)).toBe(1)
+    expect(secondsLeft(9000, 12000)).toBe(0)
   })
 })
 
