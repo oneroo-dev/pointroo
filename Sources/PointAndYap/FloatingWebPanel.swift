@@ -2,8 +2,8 @@ import AppKit
 import WebKit
 
 extension Prefs {
-    /// The recording pill, the project picker and the done notice are the kit screens (small web panels). Off until the user turns it on.
-    static var kitFloating: Bool { UserDefaults.standard.object(forKey: "kitFloating") as? Bool ?? false }
+    /// The recording pill, the project picker and the done notice are the kit screens (small web panels). On unless the user turned it off.
+    static var kitFloating: Bool { UserDefaults.standard.object(forKey: "kitFloating") as? Bool ?? true }
 }
 
 /// Whether the floating surfaces are the kit panels or the old SwiftUI ones. One pure decision, used by every surface.

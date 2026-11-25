@@ -19,7 +19,7 @@ const sections = [
   { title: 'Just sent', note: 'The new recording is on top, with its own Undo.' },
   { title: 'Nothing waiting', note: 'Nothing is in the queue.' },
   { title: 'Settings', note: 'The settings screen at 640 wide.' },
-  { title: 'Recording pill', note: 'Recording, writing it up, sent.' },
+  { title: 'Recording pill', note: 'Recording, writing it up, sent (with Change and Undo).' },
   { title: 'Project picker', note: 'The first row is the guess. Press its number or click it; when time runs out it stays in the queue.' },
   { title: 'Done notice', note: 'The agent says it is done.' },
 ]

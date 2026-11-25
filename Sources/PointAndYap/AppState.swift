@@ -219,14 +219,41 @@ final class AppState: ObservableObject {
         let live = Projects.liveProjects()
         guard live.count >= 2 else { return }
         let suggested = Items.items(in: dir, state: nil).items.first?.suggested
-        guard let project = await ProjectPicker.ask(live, session: dir.lastPathComponent, suggested: suggested) else {
+        if await routeByPicking(dir, among: live, suggested: suggested) == nil {
             say("Not sent - kept in the queue")
-            return
         }
+    }
+
+    /// Opens the project picker for a recording. A pick writes the route with how "picked", the router learns it, and the app says
+    /// "Sent to <name>". Returns the project that was picked, or nil when the picker was skipped (nothing is changed then).
+    func routeByPicking(_ dir: URL, among projects: [Project], suggested: String?) async -> Project? {
+        guard let project = await ProjectPicker.ask(projects, session: dir.lastPathComponent, suggested: suggested) else { return nil }
         Router.writeRoute(RouteInfo(project: project.name, path: project.path, how: "picked"), to: dir)
         Projects.learn(from: dir, project: project)
         say("Sent to \(project.name)")
         loadSessions()
+        return project
+    }
+
+    /// The projects the "Change" picker offers: every known project, the ones with a running agent session first. The order inside
+    /// each group is kept.
+    static func changeChoices(known: [Project], live: [LiveSession]) -> [Project] {
+        let listening = known.filter { project in live.contains { Router.samePath($0.cwd, project.path) } }
+        let others = known.filter { project in !listening.contains { $0.path == project.path } }
+        return listening + others
+    }
+
+    /// The "Change" button on "Sent to X": opens the picker for a recording that already has a route (or none), with the current
+    /// project marked as the suggestion. It answers at once; the pick is handled in the background.
+    func changeProject(session: String) -> WebBridge.ChangeRouteResult {
+        let dir = Paths.root.appendingPathComponent(session)
+        guard !Items.items(in: dir, state: nil).items.isEmpty else { return .missing }
+        guard ProjectPicker.snapshot() == nil else { return .busy }
+        let choices = Self.changeChoices(known: Projects.known(), live: LiveSessions.all())
+        guard !choices.isEmpty else { return .missing }
+        let current = Router.readRoute(dir)?.path
+        Task { _ = await routeByPicking(dir, among: choices, suggested: current) }
+        return .opened
     }
 
     /// Two lines an agent can act on: what is new, and how to get it.

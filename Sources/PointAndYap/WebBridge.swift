@@ -70,6 +70,12 @@ import Foundation
 ///   items.unroute   params {id: string}   undoes a send: removes the route of the item's recording (route.json is per recording, so
 ///                   every item of that recording is then unrouted). A recording that has no route answers unrouted too.
 ///                   result {unrouted: true}   error not_found, refused (an agent took the item or it is done), not_available, bad_params
+///   route.change   params {session: string}   the "Change" button on "Sent to X": opens the project picker for that recording (the known
+///                   projects, the ones that listen first, the current one marked suggested). It answers at once; the pick comes later through
+///                   picker.get, picker.pick and picker.skip. A pick writes the route with how "picked", the router learns it, and the app says
+///                   "Sent to <name>". A skip changes nothing.
+///                   result {opened: true}   error bad_params (session is missing, empty, or has a "/" or ".." in it), not_found (no such
+///                   recording, or it has no items), busy (a project picker is already open), not_available
 ///   clipboard.copy  params {text: string}   puts the text on the clipboard
 ///                   result {copied: true}   error bad_params when text is not a non-empty string
 ///   window.startDrag no params   the page calls this from a mousedown on its own drag area; the window then follows the mouse
@@ -165,7 +171,7 @@ import Foundation
 /// Question: {id, project, agent, text, choices: [string], asked: seconds since 1970}
 ///   A key with no value is left out (an empty choices list is an empty array).
 ///
-/// Settings keys: sounds, doubleControl, escCancels, redactSecrets, connectAgents, showNoSpeech, holdToTalk, listenAfterDone, kitWindow, kitFloating, autoSendSingle (all bool; autoSendSingle is on when never set, kitFloating is off);
+/// Settings keys: sounds, doubleControl, escCancels, redactSecrets, connectAgents, showNoSpeech, holdToTalk, listenAfterDone, kitWindow, kitFloating, autoSendSingle (all bool; autoSendSingle and kitFloating are on when never set);
 /// locale (string, one of the ids in Prefs.languages).
 /// Auto-start (A1; see AutoStart): autoStartAgent (string "off" | "claude", default "off"), autoStartModel ("sonnet" | "opus" | "fable", default "sonnet"),
 /// autoStartEffort ("low" | "medium" | "high" | "xhigh" | "max", default "medium"), autoStartBudget (number of dollars per run, 0.5 to 20, default 2),
@@ -201,7 +207,7 @@ final class WebBridge {
         ("holdToTalk", .flag(defaultValue: false)),
         ("listenAfterDone", .flag(defaultValue: false)),
         ("kitWindow", .flag(defaultValue: true)),
-        ("kitFloating", .flag(defaultValue: false)),
+        ("kitFloating", .flag(defaultValue: true)),
         ("autoSendSingle", .flag(defaultValue: true)),
         ("locale", .choice(allowed: Prefs.languages.map(\.id), defaultValue: "")),
         ("autoStartAgent", .choice(allowed: AutoStart.agents, defaultValue: AutoStart.defaultAgent)),
@@ -222,6 +228,7 @@ final class WebBridge {
         "items.reopen": { bridge, params in try bridge.itemsChangeStatus(params, status: "open", key: "reopened") },
         "items.trash": { bridge, params in try bridge.itemsChangeStatus(params, status: "trashed", key: "trashed") },
         "items.unroute": { bridge, params in try bridge.itemsUnroute(params) },
+        "route.change": { bridge, params in try bridge.routeChange(params) },
         "clipboard.copy": { bridge, params in try bridge.clipboardCopy(params) },
         "window.startDrag": { bridge, params in try bridge.windowStartDrag(params) },
         "questions.list": { bridge, params in try bridge.questionsList(params) },
@@ -264,6 +271,7 @@ final class WebBridge {
     private let loadRecording: (() -> RecordingSnapshot)?
     private let loadPicker: (() -> PickerSnapshot?)?
     private let answerPicker: ((String?) -> Bool)?
+    private let changeRoute: ((String) -> ChangeRouteResult)?
     private let useAnotherPort: (() -> Void)?
     private let checkUpdates: (() -> Void)?
     private let now: () -> Date
@@ -278,6 +286,13 @@ final class WebBridge {
         case start
         case stop
         case cancel
+    }
+
+    /// What route.change asked the app to do: the picker is opening, there is no such recording, or a picker is already open.
+    enum ChangeRouteResult: Equatable {
+        case opened
+        case missing
+        case busy
     }
 
     /// What changing one item's status did.
@@ -311,6 +326,7 @@ final class WebBridge {
     /// (the same one recording.changed uses); both nil means recording.* answers not_available (recording.get needs `loadRecording`).
     /// `loadPicker` gives the open project picker or nil; `answerPicker` answers it with a folder path (nil = skip) the way a click or
     /// Esc does, and returns false when no picker was open any more. Either one nil means picker.* answers not_available.
+    /// `changeRoute` serves route.change: it gets the recording's session id and opens the picker (nil means not_available).
     /// `useAnotherPort` serves server.useAnotherPort and `checkUpdates` serves app.checkUpdates; when one is nil, its method answers not_available.
     /// `now` is the clock for the question snooze (tests set it).
     /// `loadQuestions` (given `now`) gives the pending questions for notices.list; `noticeStore` is where notices.seen keeps the seen ids.
@@ -333,6 +349,7 @@ final class WebBridge {
          loadRecording: (() -> RecordingSnapshot)? = nil,
          loadPicker: (() -> PickerSnapshot?)? = nil,
          answerPicker: ((String?) -> Bool)? = nil,
+         changeRoute: ((String) -> ChangeRouteResult)? = nil,
          useAnotherPort: (() -> Void)? = nil,
          checkUpdates: (() -> Void)? = nil,
          now: @escaping () -> Date = { Date() },
@@ -357,6 +374,7 @@ final class WebBridge {
         self.loadRecording = loadRecording
         self.loadPicker = loadPicker
         self.answerPicker = answerPicker
+        self.changeRoute = changeRoute
         self.useAnotherPort = useAnotherPort
         self.checkUpdates = checkUpdates
         self.now = now
@@ -627,6 +645,18 @@ final class WebBridge {
         case .missing: throw Failure(code: "not_found", message: "No item \(id).")
         case .taken: throw Failure(code: "refused", message: "An agent already took this item, so it cannot be unsent.")
         case .saveFailed: throw Failure(code: "not_available", message: "Could not remove the route.")
+        }
+    }
+
+    private func routeChange(_ params: [String: Any]) throws -> Any {
+        guard let session = params["session"] as? String, !session.isEmpty, !session.contains("/"), !session.contains("..") else {
+            throw Failure(code: "bad_params", message: "session must be a recording id.")
+        }
+        guard let changeRoute else { throw Failure(code: "not_available", message: "Changing the project is not available.") }
+        switch changeRoute(session) {
+        case .opened: return ["opened": true]
+        case .missing: throw Failure(code: "not_found", message: "No recording \(session).")
+        case .busy: throw Failure(code: "busy", message: "A project picker is already open.")
         }
     }
 

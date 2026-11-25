@@ -326,6 +326,38 @@ describe('automatic send', () => {
     stop()
   })
 
+  it('it_calls_route_change_with_the_session_on_change_and_hides_the_pill', async () => {
+    const stub = createStubBridge({ 'route.change': () => ({ opened: true }) })
+    const store = createStore(stub.bridge)
+    const stop = store.startFloating()
+    stub.emit('route.sent', sent)
+    await store.changeSent()
+    expect(stub.callsTo('route.change')).toEqual([{ method: 'route.change', params: { session: 's1' } }])
+    expect(store.lastSent).toBeUndefined()
+    stop()
+  })
+
+  it('it_does_nothing_on_change_when_nothing_was_sent', async () => {
+    const stub = createStubBridge()
+    const store = createStore(stub.bridge)
+    await store.changeSent()
+    expect(stub.callsTo('route.change')).toEqual([])
+  })
+
+  it('it_shows_the_error_when_change_is_refused', async () => {
+    const stub = createStubBridge({
+      'route.change': () => {
+        throw new BridgeError('busy', 'A project picker is already open.')
+      },
+    })
+    const store = createStore(stub.bridge)
+    const stop = store.startFloating()
+    stub.emit('route.sent', sent)
+    await store.changeSent()
+    expect(store.toast?.message).toBe('A project picker is already open.')
+    stop()
+  })
+
   it('it_does_nothing_on_undo_when_nothing_was_sent', async () => {
     const stub = createStubBridge()
     const store = createStore(stub.bridge)
@@ -646,6 +678,61 @@ describe('item.focus', () => {
     expect(store.selectedId).toBeUndefined()
     expect(store.toast).toBeUndefined()
     stop()
+  })
+})
+
+describe('choosing a project from the menu', () => {
+  const pointroo = { name: 'pointroo', path: '/work/pointroo', aliases: [], live: true, agents: [], open: 1, inProgress: 0 }
+  const shellroo = { name: 'shellroo', path: '/work/shellroo', aliases: [], live: false, agents: [], open: 0, inProgress: 0 }
+
+  function routedItem(project: string | undefined): BridgeItem {
+    const item: BridgeItem = { id: 'a#1', session: 'sample', n: 1, title: 'Item a', body: 'body', crops: [], cropURLs: [], status: 'open', alsoSaid: [] }
+    if (project !== undefined) item.project = project
+    return item
+  }
+
+  function setup(project: string | undefined) {
+    const stub = createStubBridge({
+      'items.list': () => ({ groups: [{ project: null, items: [routedItem(project)] }] }),
+      'projects.list': () => ({ projects: [pointroo, shellroo] }),
+      'items.reroute': () => ({ moved: true }),
+      'items.unroute': () => ({ unrouted: true }),
+    })
+    return { stub, store: createStore(stub.bridge) }
+  }
+
+  it('it_moves_an_item_that_holds_a_folder_path_to_the_picked_project', async () => {
+    const { stub, store } = setup('/work/pointroo')
+    await store.refresh()
+    await store.send(['a#1'], '/work/shellroo')
+    expect(stub.callsTo('items.reroute')).toEqual([{ method: 'items.reroute', params: { id: 'a#1', project: '/work/shellroo' } }])
+    expect(store.toast?.message).toBe('Moved to shellroo')
+  })
+
+  it('it_sends_a_not_sent_item_and_undo_unroutes_it', async () => {
+    const { stub, store } = setup(undefined)
+    await store.refresh()
+    await store.send(['a#1'], '/work/pointroo')
+    expect(store.toast?.message).toBe('Sent to pointroo')
+    await store.undo()
+    expect(stub.callsTo('items.unroute')).toEqual([{ method: 'items.unroute', params: { id: 'a#1' } }])
+  })
+
+  it('it_puts_a_moved_item_back_on_undo_even_when_the_old_project_was_a_folder_path', async () => {
+    const { stub, store } = setup('/work/pointroo')
+    await store.refresh()
+    await store.send(['a#1'], '/work/shellroo')
+    await store.undo()
+    expect(stub.callsTo('items.reroute')[1]).toEqual({ method: 'items.reroute', params: { id: 'a#1', project: '/work/pointroo' } })
+  })
+
+  it('it_keeps_the_rows_of_the_project_filter_when_items_hold_folder_paths', async () => {
+    const { store } = setup('/work/pointroo')
+    await store.refresh()
+    store.filter = '/work/pointroo'
+    expect(store.rows.map((row) => row.id)).toEqual(['a#1'])
+    store.filter = '/work/shellroo'
+    expect(store.rows).toEqual([])
   })
 })
 

@@ -140,7 +140,7 @@ export function createFakeBridge(): Bridge {
     listenAfterDone: false,
     autoSendSingle: true,
     kitWindow: true,
-    kitFloating: false,
+    kitFloating: true,
     locale: '',
     autoStartAgent: 'off',
     autoStartModel: 'sonnet',
