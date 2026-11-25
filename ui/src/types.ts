@@ -181,6 +181,8 @@ export interface BridgeMethods {
   'items.reopen': { params: { id: string }; result: { reopened: true } }
   'items.trash': { params: { id: string }; result: { trashed: true } }
   'items.unroute': { params: { id: string }; result: { unrouted: true } }
+  // Added by K2: the "Change" button on "Sent to X". Opens the project picker for that recording.
+  'route.change': { params: { session: string }; result: { opened: true } }
   // Added by R25 (the Swift side).
   'done.recent': { params: { limit?: number }; result: { items: BridgeItem[] } }
   'session.get': { params: { session: string }; result: BridgeSession }

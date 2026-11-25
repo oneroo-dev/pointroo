@@ -112,10 +112,12 @@ function onKey(event: KeyboardEvent): void {
   if (event.defaultPrevented || event.isComposing || event.metaKey || event.ctrlKey || event.altKey) return
   if (typingInField(event.target)) return
   if (props.route === 'pill') {
-    if (event.key.toLowerCase() === 'u' && sent.value !== undefined) {
-      void store.undoSent()
-      event.preventDefault()
-    }
+    if (sent.value === undefined) return
+    const sentKey = event.key.toLowerCase()
+    if (sentKey === 'u') void store.undoSent()
+    else if (sentKey === 'c') void store.changeSent()
+    else return
+    event.preventDefault()
     return
   }
   if (props.route !== 'notice') return
@@ -169,7 +171,7 @@ onBeforeUnmount(() => {
     <div ref="root" class="float-root">
       <template v-if="route === 'pill'">
         <FloatPill v-if="pill !== undefined" :phase="pill.phase" :elapsed="pill.elapsed" :points="pill.points" @stop="store.stopRecording" @cancel="store.cancelRecording" />
-        <FloatSent v-else-if="sent !== undefined" :label="sent.label" :note="sent.note" @undo="store.undoSent" />
+        <FloatSent v-else-if="sent !== undefined" :label="sent.label" :note="sent.note" @undo="store.undoSent" @change="store.changeSent" />
       </template>
       <template v-else-if="route === 'picker'">
         <FloatPicker v-if="store.picker !== null" :tiles="tiles" :ends-at="endsAt" @pick="onPick" @skip="onSkip" />

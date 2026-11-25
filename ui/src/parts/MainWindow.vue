@@ -300,6 +300,8 @@ function onBarPress(event: MouseEvent): void {
                 :fresh-ids="freshIds"
                 @select="(itemId) => emit('select', itemId)"
                 @send-all="(itemIds, projectId) => emit('sendAll', itemIds, projectId)"
+                @send="(itemId, projectId) => emit('send', itemId, projectId)"
+                @move="(itemId, projectId) => emit('move', itemId, projectId)"
                 @undo-sent="emit('undoSent')"
               />
             </div>

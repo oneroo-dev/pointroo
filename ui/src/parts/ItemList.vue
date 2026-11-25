@@ -4,10 +4,12 @@
 // A recording the app just sent is tinted and carries its own Undo, so no toast covers the list.
 import { computed } from 'vue'
 import { RooButton } from '@roo/kit/controls'
-import { RooIcon, RooProgressLine, RooStateMark } from '@roo/kit'
+import { RooChip, RooIcon, RooProgressLine, RooStateMark } from '@roo/kit'
 import type { Item, Project } from './types'
-import { markFor, plainWords, whereLine } from './words'
+import { projectIdFor, projectNameFor } from './projects'
+import { isFinished, markFor, plainWords } from './words'
 import type { Mark } from './words'
+import ProjectMenu from './ProjectMenu.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -23,6 +25,8 @@ const props = withDefaults(
 const emit = defineEmits<{
   select: [itemId: string]
   sendAll: [itemIds: string[], projectId: string]
+  send: [itemId: string, projectId: string]
+  move: [itemId: string, projectId: string]
   undoSent: []
 }>()
 
@@ -54,6 +58,24 @@ function wordsFor(item: Item): string {
 
 function markOf(item: Item): Mark {
   return isFresh(item) ? { state: 'ok', label: 'Sent' } : markFor(item)
+}
+
+function nameOf(item: Item): string {
+  return projectNameFor(props.projects, item.project) ?? 'Not sent'
+}
+
+function currentIdOf(item: Item): string | undefined {
+  return projectIdFor(props.projects, item.project)
+}
+
+/** The name in the meta line is a menu for every open item (not done, not still being written up). */
+function canChoose(item: Item): boolean {
+  return !isFinished(item) && item.state !== 'processing' && props.projects.length > 0
+}
+
+function pickFor(item: Item, projectId: string): void {
+  if (item.state === 'not-sent') emit('send', item.id, projectId)
+  else emit('move', item.id, projectId)
 }
 
 function sendAll(): void {
@@ -96,14 +118,18 @@ function onRowKey(event: KeyboardEvent, itemId: string): void {
         <span class="shot">
           <img v-if="thumbFor(item)" class="shot-image" :src="thumbFor(item)" alt="" />
           <span v-else class="shot-empty"><RooIcon name="image" :size="16" /></span>
-          <span v-if="item.crops.length > 1" class="shot-count">{{ item.crops.length }}</span>
+          <span v-if="item.crops.length > 1" class="shot-count"><RooChip size="small" shape="pill" :label="String(item.crops.length)" /></span>
         </span>
         <span class="text">
           <span class="said">{{ wordsFor(item) }}</span>
           <RooProgressLine v-if="item.state === 'processing'" busy :delay="0" />
           <span v-else class="meta">
             <RooStateMark :state="markOf(item).state" :label="markOf(item).label" />
-            <span class="where">{{ whereLine(item) }}</span>
+            <span class="where">
+              <ProjectMenu v-if="canChoose(item)" :name="nameOf(item)" :projects="projects" :current-id="currentIdOf(item)" @pick="(projectId) => pickFor(item, projectId)" />
+              <template v-else>{{ nameOf(item) }}</template>
+              <span class="age">{{ ` · ${item.age}` }}</span>
+            </span>
           </span>
         </span>
         <RooButton v-if="item.id === undoId" variant="ghost" size="sm" @click.stop="emit('undoSent')">Undo</RooButton>
@@ -190,14 +216,9 @@ function onRowKey(event: KeyboardEvent, itemId: string): void {
   position: absolute;
   inset-block-end: var(--roo-p-space-1);
   inset-inline-end: var(--roo-p-space-1);
-  padding: 0 var(--roo-p-space-2);
+  display: flex;
   border-radius: var(--roo-p-radius-pill);
   background: var(--roo-surface);
-  color: var(--roo-text);
-  font-size: var(--roo-p-size-11);
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
-  line-height: 1.6;
 }
 
 .text {
@@ -228,9 +249,13 @@ function onRowKey(event: KeyboardEvent, itemId: string): void {
 }
 
 .where {
+  display: flex;
   min-width: 0;
-  overflow: hidden;
+  align-items: center;
   white-space: nowrap;
-  text-overflow: ellipsis;
+}
+
+.age {
+  flex: none;
 }
 </style>

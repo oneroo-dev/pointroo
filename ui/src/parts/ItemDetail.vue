@@ -1,14 +1,15 @@
 <script setup lang="ts">
-// One recording. Top line: the way back (narrow only), where it stands, where it went and when, then Mark done and a "..." menu
-// that holds the rest (copy, move, the whole recording, show in Finder, Trash). Then the crop as big as the window allows, with
+// One recording. Top line: the way back (narrow only), where it stands, where it went (the project name is a menu to choose
+// another one) and when, then Mark done and a "..." menu that holds the rest (copy, the whole recording, show in Finder, Trash). Then the crop as big as the window allows, with
 // small crops to switch, and your words in full. It draws the item it is given and raises an event for every click.
 import { computed, ref, watch } from 'vue'
 import { RooButton, RooIconButton, RooTooltip } from '@roo/kit/controls'
 import { RooIcon, RooListRow, RooSegmented, RooStateMark } from '@roo/kit'
 import { RooMenu, RooMenuItem, RooMenuSeparator } from '@roo/kit/overlays'
 import type { Item, Project, RecordingView } from './types'
-import { projectIdFor, tilesFor } from './projects'
-import { isFinished, markFor, markOwnWords, plainWords, whereLine } from './words'
+import { projectIdFor, projectNameFor, tilesFor } from './projects'
+import { isFinished, markFor, markOwnWords, plainWords } from './words'
+import ProjectMenu from './ProjectMenu.vue'
 import ProjectTiles from './ProjectTiles.vue'
 import QuestionControls from './QuestionControls.vue'
 
@@ -39,9 +40,9 @@ const words = computed(() => plainWords(props.item.said))
 const ageTip = computed(() => props.item.atText ?? props.item.age)
 const currentId = computed(() => projectIdFor(props.projects, props.item.project))
 const choice = computed(() => tilesFor(props.projects, notSent.value ? props.item.suggested : currentId.value))
-// Every project in the order the number keys use, for the Move menu.
-const moveTiles = computed(() => [...choice.value.tiles, ...choice.value.rest])
-const canMove = computed(() => !isDone.value && !notSent.value && props.projects.length > 0)
+const projectName = computed(() => projectNameFor(props.projects, props.item.project) ?? 'Not sent')
+// The project name is a menu for every item that is still open (waiting, working, asking, not sent).
+const canChoose = computed(() => !isDone.value && props.item.state !== 'processing' && props.projects.length > 0)
 
 const shotIndex = ref(0)
 const side = ref('now')
@@ -98,22 +99,20 @@ function pick(projectId: string): void {
       </RooButton>
       <span class="status">
         <RooStateMark :state="mark.state" :label="mark.label" />
-        <RooTooltip :text="ageTip"><span class="where">{{ whereLine(item) }}</span></RooTooltip>
+        <span class="where">
+          <ProjectMenu v-if="canChoose" :name="projectName" :projects="projects" :current-id="currentId" @pick="pick" />
+          <template v-else>{{ projectName }}</template>
+          <RooTooltip :text="ageTip"><span class="age">{{ ` · ${item.age}` }}</span></RooTooltip>
+        </span>
       </span>
       <span class="spacer" />
       <RooIconButton v-if="isDone" icon="rotate-ccw" variant="ghost" size="sm" label="Open again" tooltip="Open again" @click="emit('reopen', item.id)" />
       <RooIconButton v-else icon="check" variant="ghost" size="sm" label="Mark done" tooltip="Mark done" shortcut="D" @click="emit('done', item.id)" />
       <RooMenu v-model:open="menuOpen" align="end">
         <template #trigger>
-          <RooIconButton icon="more" variant="ghost" size="sm" label="More" tooltip="Copy, move, whole recording, Trash" :pressed="menuOpen" />
+          <RooIconButton icon="more" variant="ghost" size="sm" label="More" tooltip="Copy, whole recording, Trash" :pressed="menuOpen" />
         </template>
         <RooMenuItem icon="copy" @select="emit('copy', item.id)">Copy for an agent</RooMenuItem>
-        <RooMenuItem v-if="canMove" icon="folder">
-          Move to another project
-          <template #submenu>
-            <RooMenuItem v-for="(tile, index) in moveTiles" :key="tile.id" :checked="tile.id === currentId" :hint="index < 5 ? String(index + 1) : ''" @select="pick(tile.id)">{{ tile.name }}</RooMenuItem>
-          </template>
-        </RooMenuItem>
         <RooMenuItem v-if="item.session !== undefined" icon="list" @select="recordingShown = true">The whole recording</RooMenuItem>
         <RooMenuItem icon="folder-open" @select="emit('reveal', item.id)">Show in Finder</RooMenuItem>
         <RooMenuSeparator />
@@ -231,10 +230,14 @@ function pick(projectId: string): void {
 }
 
 .where {
+  display: flex;
   min-width: 0;
-  overflow: hidden;
+  align-items: center;
   white-space: nowrap;
-  text-overflow: ellipsis;
+}
+
+.age {
+  flex: none;
 }
 
 .spacer {
