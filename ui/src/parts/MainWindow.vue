@@ -281,6 +281,12 @@ function onSheetChange(open: boolean): void {
                 @reveal="(itemId) => emit('reveal', itemId)"
               />
             </template>
+            <template #head>
+              <RooButton variant="ghost" size="sm" @click="emit('closeDetail')">
+                <template #icon><RooIcon name="arrow-left" :size="14" /></template>
+                All recordings
+              </RooButton>
+            </template>
             <template #second>
               <ItemDetail
                 v-if="selectedItem"

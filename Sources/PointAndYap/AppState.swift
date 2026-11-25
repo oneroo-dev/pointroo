@@ -135,6 +135,7 @@ final class AppState: ObservableObject {
         stopListenTimer()
         recorder = nil
         phase = .processing
+        Sounds.play("done")
         pointCount = 0
         onRecordingChanged?(false)
         let practice = practiceNext
@@ -148,7 +149,6 @@ final class AppState: ObservableObject {
             // The short pointer goes on the clipboard as soon as the timeline exists; the MCP and the folder fill in after.
             _ = await Process.run(dir: dir, onTimeline: {
                 self.copyPointer(dir)
-                Sounds.play("done")
                 if let route = Router.readRoute(dir) { self.say("Sent to \(route.project)") }
                 else { self.say("Copied. Paste it into your agent") }
             })

@@ -183,6 +183,24 @@ export function createStore(bridge: Bridge, options: StoreOptions = {}) {
     const routed = groups.filter((group) => group.project !== null).flatMap((group) => group.items)
     bridgeItems.value = [...unrouted, ...routed]
     now.value = new Date()
+    showNewRecording()
+  }
+
+  /** The ids of every item seen so far. Stays undefined until the first load, so the start never jumps. */
+  let seenItemIds: Set<string> | undefined
+
+  /** A new open item that arrives while the user looks at the queue is selected, so the detail shows it at any width. */
+  function showNewRecording(): void {
+    const previous = seenItemIds
+    seenItemIds = new Set(bridgeItems.value.map((item) => item.id))
+    if (previous === undefined) return
+    if (view.value !== 'queue' || searchOpen.value) return
+    let newest: BridgeItem | undefined
+    for (const item of bridgeItems.value) {
+      if (item.status !== 'open' || previous.has(item.id)) continue
+      if (newest === undefined || (item.at ?? '') >= (newest.at ?? '')) newest = item
+    }
+    if (newest !== undefined) selectedId.value = newest.id
   }
 
   /** An app without done.recent is fine: the Done tab then shows the done items of items.list. */
