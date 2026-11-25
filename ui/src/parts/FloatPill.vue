@@ -1,73 +1,68 @@
 <script setup lang="ts">
-// The live pill, 360 by 56 (the D3 frames PillRecording and PillProcessing). Recording shows a dot, the time and the points, with
-// Stop and Cancel as icon buttons. Processing shows "Making items" and nothing to click.
-import { computed } from 'vue'
+// The live pill (the D4 frames D4Pill): 44 high and only as wide as it needs. Recording shows a red dot, the time, how many points,
+// Stop and a small x (Cancel). While the items are made it shows a ring and "Writing it up".
 import { RooIconButton } from '@roo/kit/controls'
-import { RooProgressRing, RooStateMark } from '@roo/kit'
+import { RooIcon, RooProgressRing } from '@roo/kit'
 import FloatingSurface from './FloatingSurface.vue'
 
-const props = defineProps<{ phase: 'recording' | 'processing'; elapsed: string; points: number }>()
+defineProps<{ phase: 'recording' | 'processing'; elapsed: string; points: number }>()
 
 const emit = defineEmits<{ stop: []; cancel: [] }>()
-
-const pointsText = computed(() => `${props.points} ${props.points === 1 ? 'point' : 'points'}`)
 </script>
 
 <template>
-  <FloatingSurface class="pill" role="status" :aria-label="phase === 'recording' ? 'Recording' : 'Making items'">
+  <FloatingSurface pill class="pill" role="status" :aria-label="phase === 'recording' ? 'Recording' : 'Writing it up'">
     <template v-if="phase === 'recording'">
-      <RooStateMark state="err" label="Recording" class="pill-dot" />
-      <span class="pill-time">{{ elapsed }}</span>
-      <span class="pill-note">{{ pointsText }}</span>
-      <span class="pill-spacer" />
-      <RooIconButton icon="stop" variant="primary" size="sm" label="Stop" tooltip="Stop and make items" shortcut="Control Control" @click="emit('stop')" />
-      <RooIconButton icon="x" variant="ghost" size="sm" label="Cancel" tooltip="Cancel and keep nothing" shortcut="Escape" @click="emit('cancel')" />
+      <span class="dot roo-move-breathe" aria-hidden="true" />
+      <span class="roo-visually-hidden">Recording</span>
+      <span class="time">{{ elapsed }}</span>
+      <span class="points"><RooIcon name="mouse-pointer-click" :size="14" />{{ points }}</span>
+      <RooIconButton icon="stop" variant="primary" size="xs" shape="round" label="Stop" tooltip="Stop and send" shortcut="Control Control" @click="emit('stop')" />
+      <RooIconButton icon="x" variant="ghost" size="xxs" shape="round" label="Cancel" tooltip="Cancel and keep nothing" shortcut="Escape" @click="emit('cancel')" />
     </template>
     <template v-else>
-      <RooProgressRing :size="16" label="Making items" />
-      <span class="pill-text">Making items</span>
-      <span class="pill-spacer" />
-      <span class="pill-note">{{ pointsText }}</span>
+      <RooProgressRing :size="16" label="Writing it up" />
+      <span class="text">Writing it up</span>
     </template>
   </FloatingSurface>
 </template>
 
 <style scoped>
 .pill {
-  display: flex;
-  width: 360px;
-  height: 56px;
-  box-sizing: border-box;
+  display: inline-flex;
+  height: 44px;
+  flex: none;
   align-items: center;
   gap: var(--roo-space-item);
   padding-inline: var(--roo-space-group);
-  font-size: var(--roo-p-size-13);
+  white-space: nowrap;
 }
 
-.pill-dot :deep(.roo-state-mark-label) {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
+.dot {
+  display: block;
+  width: 10px;
+  height: 10px;
+  flex: none;
+  border-radius: var(--roo-p-radius-pill);
+  background: var(--roo-danger);
 }
 
-.pill-time {
+.time {
   font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+.text {
   white-space: nowrap;
 }
 
-.pill-text {
-  white-space: nowrap;
-}
-
-.pill-note {
-  white-space: nowrap;
+.points {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--roo-p-space-1);
+  margin-inline-end: var(--roo-space-item);
   color: var(--roo-muted);
   font-size: var(--roo-p-size-12);
-}
-
-.pill-spacer {
-  flex: 1 1 auto;
+  font-variant-numeric: tabular-nums;
 }
 </style>

@@ -165,10 +165,8 @@ const banner = computed<MainBanner | undefined>(() => {
   }
 })
 
-const problem = computed(() => ['permission', 'port-busy', 'mcp-error'].includes(props.scenario))
 const update = computed(() => (props.scenario === 'update' ? 'ready' : props.scenario === 'updating' ? 'updating' : undefined))
 const setupStep = computed(() => (props.scenario === 'setup-done' ? 'done' : 'accessibility'))
-const sessionsText = computed(() => (props.scenario === 'no-session' ? 'None listening' : '2 listening'))
 </script>
 
 <template>
@@ -192,13 +190,8 @@ const sessionsText = computed(() => (props.scenario === 'no-session' ? 'None lis
       :update="update"
       :setup="isSetup"
       :settings-open="settingsOpen"
-      :sessions-text="sessionsText"
-      :sessions-warn="scenario === 'no-session'"
-      agents-text="Claude Code, Codex"
-      speech-text="English"
-      :needs-you="problem"
+      :fresh-ids="scenario === 'just-sent' ? [justSent.id] : []"
       v-bind="scenario === 'recording' ? { recording: recordingView, recordingOpen: true } : {}"
-      :toast="scenario === 'just-sent' ? { message: 'Sent to Tinkeroo', tone: 'ok', undo: true } : undefined"
     >
       <template #setup><SetupView :step="setupStep" /></template>
       <template #settings>

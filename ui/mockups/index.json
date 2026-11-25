@@ -2,6 +2,7 @@
   "title": "Pointroo mockups",
   "brand": "oneroo",
   "order": [
+    "RealReview",
     "MainQueue",
     "MainAsks",
     "MainDone",
@@ -67,6 +68,7 @@
     "HowItWorks"
   ],
   "titles": {
+    "RealReview": "Redesign, every real screen on one page",
     "MainQueue": "Main 960: queue",
     "MainAsks": "Main 960: asks you",
     "MainDone": "Main 960: done tab",

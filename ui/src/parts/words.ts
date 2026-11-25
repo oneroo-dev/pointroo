@@ -35,6 +35,46 @@ function squash(text: string): string {
   return text.replace(/\[\d+\]/g, ' ').replace(/\s+/g, ' ').trim()
 }
 
+/** What the user said without the [n] point marks, on one line. */
+export function plainWords(text: string): string {
+  return squash(text)
+}
+
+/** The quiet part of a row: where it went and when. An item with no project says "Not sent". */
+export function whereLine(item: Item): string {
+  return `${item.project ?? 'Not sent'} · ${item.age}`
+}
+
+export function isFinished(item: Item): boolean {
+  return item.state === 'done' || item.state === 'done-by-you'
+}
+
+/** How soon an item needs the user: new arrivals, then questions, then not sent, then working, then waiting, then done. */
+function queueRank(item: Item, freshIds: string[]): number {
+  if (freshIds.includes(item.id)) return 0
+  switch (item.state) {
+    case 'asks':
+      return 1
+    case 'not-sent':
+    case 'processing':
+      return 2
+    case 'working':
+      return 3
+    case 'waiting':
+      return 4
+    default:
+      return 5
+  }
+}
+
+/** The queue in the order of the design: what needs you first. Items of the same rank keep the order they came in. */
+export function orderQueue(items: Item[], freshIds: string[] = []): Item[] {
+  return items
+    .map((item, index) => ({ item, index, rank: queueRank(item, freshIds) }))
+    .sort((first, second) => first.rank - second.rank || first.index - second.index)
+    .map((entry) => entry.item)
+}
+
 export interface SaidPiece {
   text: string
   /** True when the item's own words include this piece. */

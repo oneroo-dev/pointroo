@@ -49,8 +49,6 @@ const shown = computed(() => (status.value === 'all' ? props.results : props.res
       :search-hits="shown"
       :search-loading="loading"
       :search-error="error"
-      sessions-text="2 listening"
-      agents-text="Claude Code, Codex"
     />
   </div>
 </template>

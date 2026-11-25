@@ -1,80 +1,70 @@
 <script setup lang="ts">
-// The queue. It draws the items it is given and raises an event for every click; it holds no data of its own.
+// The queue. One row is one recording: a big crop, your words on two lines, then one quiet line that says where it stands, where
+// it went and when. It draws the items it is given and raises an event for every click; it holds no data of its own.
+// A recording the app just sent is tinted and carries its own Undo, so no toast covers the list.
 import { computed } from 'vue'
 import { RooButton } from '@roo/kit/controls'
-import { RooIcon, RooIconButton, RooListRow, RooProgressLine, RooSegmented, RooSidebarGroup, RooStateMark } from '@roo/kit'
-import type { Item, MainTab, Project } from './types'
-import { tilesFor } from './projects'
-import { markFor, subtitleFor } from './words'
-import ProjectTiles from './ProjectTiles.vue'
+import { RooIcon, RooProgressLine, RooStateMark } from '@roo/kit'
+import type { Item, Project } from './types'
+import { markFor, plainWords, whereLine } from './words'
+import type { Mark } from './words'
 
-const props = defineProps<{
-  items: Item[]
-  projects: Project[]
-  tab: MainTab
-  nowCount: number
-  doneCount: number
-  selectedId?: string | undefined
-  grouped?: boolean | undefined
-}>()
+const props = withDefaults(
+  defineProps<{
+    items: Item[]
+    projects: Project[]
+    selectedId?: string | undefined
+    /** The ids of the recordings the app just sent. Their rows are tinted; the first one carries Undo. */
+    freshIds?: string[]
+  }>(),
+  { selectedId: undefined, freshIds: () => [] },
+)
 
 const emit = defineEmits<{
   select: [itemId: string]
-  send: [itemId: string, projectId: string]
   sendAll: [itemIds: string[], projectId: string]
-  done: [itemId: string]
-  trash: [itemId: string]
-  reopen: [itemId: string]
-  copy: [itemId: string]
-  reveal: [itemId: string]
+  undoSent: []
 }>()
 
-const tabModel = defineModel<MainTab>('tab', { default: 'now' })
+const undoId = computed(() => props.items.find((item) => props.freshIds.includes(item.id))?.id)
+const notSentRows = computed(() => props.items.filter((item) => item.state === 'not-sent'))
 
-const options = computed(() => [
-  { value: 'now', label: 'Now', count: props.nowCount },
-  { value: 'done', label: 'Done', count: props.doneCount },
-])
-
-const groups = computed(() => {
-  if (!props.grouped) return [{ name: '', rows: props.items }]
-  const names: string[] = []
-  for (const item of props.items) {
-    const name = item.project ?? 'Not sent'
-    if (!names.includes(name)) names.push(name)
-  }
-  return names.map((name) => ({ name, rows: props.items.filter((item) => (item.project ?? 'Not sent') === name) }))
-})
-
-function chipsFor(item: Item) {
-  return tilesFor(props.projects, item.suggested, 3).tiles
-}
-
-// "Send all" shows only when one guess fits every item of the Not sent group.
-function sendAllTarget(groupName: string, rows: Item[]): Project | undefined {
-  if (groupName !== 'Not sent' || rows.length === 0) return undefined
+// "Send all" shows only when there are two or more recordings with no project and one guess fits every one of them.
+const sendAllTarget = computed<Project | undefined>(() => {
+  const rows = notSentRows.value
+  if (rows.length < 2) return undefined
   const guess = rows[0]?.suggested
   if (guess === undefined || rows.some((row) => row.suggested !== guess)) return undefined
   return props.projects.find((project) => project.id === guess)
+})
+
+function isFresh(item: Item): boolean {
+  return props.freshIds.includes(item.id)
 }
 
 function thumbFor(item: Item): string | undefined {
   return item.crops[0]?.url
 }
 
-function isDoneState(item: Item): boolean {
-  return item.state === 'done' || item.state === 'done-by-you'
-}
-
-function titleFor(item: Item): string {
+function wordsFor(item: Item): string {
   if (item.state === 'processing') return 'Writing it up…'
-  return item.said === '' ? 'No speech' : item.title
+  const words = plainWords(item.said)
+  return words === '' ? 'No speech' : words
 }
 
-// A click on a button inside the row belongs to that button, not to the row.
-function onRowClick(event: MouseEvent, itemId: string): void {
-  if (event.target instanceof Element && event.target.closest('button, [role="button"]') !== null) return
-  emit('select', itemId)
+function markOf(item: Item): Mark {
+  return isFresh(item) ? { state: 'ok', label: 'Sent' } : markFor(item)
+}
+
+function sendAll(): void {
+  const target = sendAllTarget.value
+  if (target !== undefined) {
+    emit(
+      'sendAll',
+      notSentRows.value.map((row) => row.id),
+      target.id,
+    )
+  }
 }
 
 function onRowKey(event: KeyboardEvent, itemId: string): void {
@@ -86,60 +76,38 @@ function onRowKey(event: KeyboardEvent, itemId: string): void {
 
 <template>
   <section class="list" aria-label="Recordings">
-    <div class="list-head">
-      <RooSegmented v-model="tabModel" label="Show" size="md" :options="options" />
+    <div v-if="sendAllTarget" class="list-bulk">
+      <RooButton variant="ghost" size="sm" @click="sendAll">Send all {{ notSentRows.length }} to {{ sendAllTarget.name }}</RooButton>
     </div>
-    <div class="list-body" role="listbox" aria-label="Recordings">
-      <component :is="grouped ? RooSidebarGroup : 'div'" v-for="group in groups" :key="group.name" v-bind="grouped ? { label: group.name, count: group.rows.length, collapsible: true, placement: 'sidebar' } : {}">
-        <template v-if="sendAllTarget(group.name, group.rows)" #actions>
-          <RooButton
-            variant="ghost"
-            size="compact"
-            @click="emit('sendAll', group.rows.map((row) => row.id), sendAllTarget(group.name, group.rows)?.id ?? '')"
-          >Send all to {{ sendAllTarget(group.name, group.rows)?.name }}</RooButton>
-        </template>
-        <RooListRow
-          v-for="item in group.rows"
-          :key="item.id"
-          role="option"
-          tabindex="0"
-          :selected="item.id === selectedId"
-          :aria-selected="item.id === selectedId"
-          :title="titleFor(item)"
-          :subtitle="item.state === 'processing' ? '' : subtitleFor(item, tab === 'done')"
-          @click="onRowClick($event, item.id)"
-          @keydown.enter="onRowKey($event, item.id)"
-        >
-          <template #tile>
-            <img v-if="thumbFor(item)" class="thumb" :src="thumbFor(item)" alt="" />
-            <RooIcon v-else name="image" :size="16" />
-          </template>
-          <template #title-trailing>
-            <RooStateMark v-if="item.state !== 'processing'" :state="markFor(item).state" :label="markFor(item).label" />
-          </template>
-          <template v-if="item.state === 'processing'" #subtitle><RooProgressLine busy :delay="0" /></template>
-          <template v-if="item.state === 'not-sent'" #actions>
-            <ProjectTiles size="small" :tiles="chipsFor(item)" label="Send to" @pick="(projectId) => emit('send', item.id, projectId)" />
-          </template>
-          <template v-else-if="item.state === 'waiting'" #actions>
-            <RooIconButton icon="check" size="xs" variant="ghost" label="Mark done" tooltip="Mark done" shortcut="D" @click="emit('done', item.id)" />
-            <RooIconButton icon="trash" size="xs" variant="ghost" label="Move to Trash" tooltip="Move to Trash" shortcut="Delete" @click="emit('trash', item.id)" />
-            <RooIconButton icon="copy" size="xs" variant="ghost" label="Copy for an agent" tooltip="Copy for an agent" @click="emit('copy', item.id)" />
-          </template>
-          <template v-else-if="item.state !== 'processing'" #actions>
-            <RooIconButton icon="copy" size="xs" variant="ghost" label="Copy for an agent" tooltip="Copy for an agent" @click="emit('copy', item.id)" />
-            <RooIconButton
-              :icon="isDoneState(item) ? 'rotate-ccw' : 'check'"
-              size="xs"
-              variant="ghost"
-              :label="isDoneState(item) ? 'Open again' : 'Mark done'"
-              :tooltip="isDoneState(item) ? 'Open again' : 'Mark done'"
-              @click="isDoneState(item) ? emit('reopen', item.id) : emit('done', item.id)"
-            />
-            <RooIconButton icon="folder-open" size="xs" variant="ghost" label="Show in Finder" tooltip="Show in Finder" @click="emit('reveal', item.id)" />
-          </template>
-        </RooListRow>
-      </component>
+    <div class="queue" role="listbox" aria-label="Recordings">
+      <div
+        v-for="item in items"
+        :key="item.id"
+        class="row"
+        role="option"
+        tabindex="0"
+        :aria-selected="item.id === selectedId"
+        :data-selected="item.id === selectedId ? 'true' : undefined"
+        :data-fresh="isFresh(item) ? 'true' : undefined"
+        @click="emit('select', item.id)"
+        @keydown.enter="onRowKey($event, item.id)"
+        @keydown.space="onRowKey($event, item.id)"
+      >
+        <span class="shot">
+          <img v-if="thumbFor(item)" class="shot-image" :src="thumbFor(item)" alt="" />
+          <span v-else class="shot-empty"><RooIcon name="image" :size="16" /></span>
+          <span v-if="item.crops.length > 1" class="shot-count">{{ item.crops.length }}</span>
+        </span>
+        <span class="text">
+          <span class="said">{{ wordsFor(item) }}</span>
+          <RooProgressLine v-if="item.state === 'processing'" busy :delay="0" />
+          <span v-else class="meta">
+            <RooStateMark :state="markOf(item).state" :label="markOf(item).label" />
+            <span class="where">{{ whereLine(item) }}</span>
+          </span>
+        </span>
+        <RooButton v-if="item.id === undoId" variant="ghost" size="sm" @click.stop="emit('undoSent')">Undo</RooButton>
+      </div>
     </div>
   </section>
 </template>
@@ -147,31 +115,122 @@ function onRowKey(event: KeyboardEvent, itemId: string): void {
 <style scoped>
 .list {
   display: flex;
-  height: 100%;
   min-height: 0;
   flex-direction: column;
-  gap: var(--roo-space-item);
 }
 
-.list-head {
-  padding: var(--roo-space-group);
+.list-bulk {
+  padding: var(--roo-space-item) var(--roo-space-group) 0;
 }
 
-.list-body {
+.queue {
   display: flex;
-  min-height: 0;
-  flex: 1 1 auto;
   flex-direction: column;
-  gap: var(--roo-space-item);
-  overflow-y: auto;
-  padding-inline: var(--roo-space-item);
+  gap: var(--roo-p-space-1);
+  padding: var(--roo-space-item);
 }
 
-.thumb {
+.row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--roo-space-group);
+  padding: var(--roo-space-item);
+  border-radius: var(--roo-p-radius-card);
+  cursor: default;
+}
+
+.row:hover {
+  background: var(--roo-raised-hover);
+}
+
+.row[data-selected] {
+  background: var(--roo-select);
+}
+
+.row[data-fresh] {
+  background: var(--roo-accent-bg);
+}
+
+.row:focus-visible {
+  outline: 2px solid var(--roo-focus);
+  outline-offset: -2px;
+}
+
+.shot {
+  position: relative;
+  display: block;
+  width: 112px;
+  height: 72px;
+  flex: none;
+  box-sizing: border-box;
+  overflow: hidden;
+  border: 1px solid var(--roo-border);
+  border-radius: var(--roo-p-radius-medium);
+  background: var(--roo-raised);
+}
+
+.shot-image {
   display: block;
   width: 100%;
   height: 100%;
-  border-radius: inherit;
   object-fit: cover;
+}
+
+.shot-empty {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  color: var(--roo-muted);
+}
+
+.shot-count {
+  position: absolute;
+  inset-block-end: var(--roo-p-space-1);
+  inset-inline-end: var(--roo-p-space-1);
+  padding: 0 var(--roo-p-space-2);
+  border-radius: var(--roo-p-radius-pill);
+  background: var(--roo-surface);
+  color: var(--roo-text);
+  font-size: var(--roo-p-size-11);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  line-height: 1.6;
+}
+
+.text {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--roo-space-item);
+}
+
+.said {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  font-size: var(--roo-p-size-14);
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.meta {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--roo-space-item);
+  color: var(--roo-muted);
+  font-size: var(--roo-p-size-12);
+}
+
+.where {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 </style>

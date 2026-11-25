@@ -8,7 +8,7 @@ vi.hoisted(() => {
 })
 
 import { createFakeBridge } from './fakeBridge'
-import { autoStartChoices, autoStartOn, budgetOptions, budgetValue, choiceValue, runsText } from './parts/autoStart'
+import { autoStartChoices, autoStartOn, budgetOptions, budgetValue, choiceValue, runSummary, runsText } from './parts/autoStart'
 import { createStore } from './store'
 
 beforeEach(() => {
@@ -63,6 +63,17 @@ describe('reading the auto-start values', () => {
         { project: '/work/b', startedAt: '2026-11-24T10:01:00Z' },
       ]),
     ).toBe('2 runs going')
+  })
+})
+
+describe('the one-line run summary', () => {
+  it('it_sums_up_the_defaults', () => {
+    expect(runSummary({})).toEqual({ title: 'Sonnet, medium effort', detail: 'Up to $2 a run. May edit files.' })
+  })
+
+  it('it_follows_the_saved_choices', () => {
+    const values = { autoStartModel: 'opus', autoStartEffort: 'xhigh', autoStartBudget: 5, autoStartPermission: 'dontAsk' }
+    expect(runSummary(values)).toEqual({ title: 'Opus, extra high effort', detail: 'Up to $5 a run. Allowed tools only.' })
   })
 })
 

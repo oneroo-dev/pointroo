@@ -77,6 +77,11 @@ export function pickerEndsAt(picker: OpenPicker, nowMilliseconds: number): numbe
   return picker.countdown === undefined ? undefined : nowMilliseconds + picker.countdown * 1000
 }
 
+/** Whole seconds left until the picker skips (never below 0). */
+export function secondsLeft(endsAt: number, nowMilliseconds: number): number {
+  return Math.max(0, Math.ceil((endsAt - nowMilliseconds) / 1000))
+}
+
 /** The notice the card shows now: the newest one (the app sends them newest first). */
 export function currentNotice(notices: Notice[]): Notice | undefined {
   return notices[0]

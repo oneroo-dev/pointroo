@@ -29,7 +29,7 @@ enum FloatingRoute: String {
     /// The size before the page has said how big it is (the page's own margin for the shadow is part of it). The page's size replaces it.
     var defaultSize: NSSize {
         switch self {
-        case .pill: return NSSize(width: 392, height: 88)
+        case .pill: return NSSize(width: 320, height: 76)   // the 44 high pill plus the page's 16 margin on each side
         case .picker: return NSSize(width: 392, height: 300)
         case .notice: return NSSize(width: 392, height: 240)
         }

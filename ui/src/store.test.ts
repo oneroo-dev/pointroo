@@ -648,3 +648,64 @@ describe('item.focus', () => {
     stop()
   })
 })
+
+describe('new recordings', () => {
+  function bridgeItem(id: string, at?: string): BridgeItem {
+    const item: BridgeItem = { id, session: 'sample', n: 1, title: `Item ${id}`, body: 'body', crops: [], cropURLs: [], status: 'open', alsoSaid: [] }
+    if (at !== undefined) item.at = at
+    return item
+  }
+
+  function setup() {
+    let current = [bridgeItem('a#1', '2026-11-24T10:00:00Z')]
+    const stub = createStubBridge({ 'items.list': () => ({ groups: [{ project: null, items: current }] }) })
+    const store = createStore(stub.bridge)
+    return {
+      store,
+      setItems(items: BridgeItem[]) {
+        current = items
+      },
+    }
+  }
+
+  it('it_selects_nothing_on_the_first_load', async () => {
+    const { store } = setup()
+    const stop = store.start()
+    await flush()
+    expect(store.selectedId).toBeUndefined()
+    stop()
+  })
+
+  it('it_selects_a_new_open_item_that_a_refresh_brings', async () => {
+    const { store, setItems } = setup()
+    const stop = store.start()
+    await flush()
+    setItems([bridgeItem('a#1', '2026-11-24T10:00:00Z'), bridgeItem('b#1', '2026-11-26T09:31:00Z')])
+    await settle(store.refresh())
+    expect(store.selectedId).toBe('b#1')
+    stop()
+  })
+
+  it('it_keeps_the_selection_when_a_refresh_has_only_known_items', async () => {
+    const { store, setItems } = setup()
+    const stop = store.start()
+    await flush()
+    store.select('a#1')
+    setItems([bridgeItem('a#1', '2026-11-24T10:00:00Z')])
+    await settle(store.refresh())
+    expect(store.selectedId).toBe('a#1')
+    stop()
+  })
+
+  it('it_does_not_change_the_selection_while_settings_are_open', async () => {
+    const { store, setItems } = setup()
+    const stop = store.start()
+    await flush()
+    store.select('a#1')
+    await store.openSettings()
+    setItems([bridgeItem('a#1', '2026-11-24T10:00:00Z'), bridgeItem('b#1', '2026-11-26T09:31:00Z')])
+    await settle(store.refresh())
+    expect(store.selectedId).toBe('a#1')
+    stop()
+  })
+})

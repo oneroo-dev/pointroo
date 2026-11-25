@@ -1,10 +1,11 @@
 <script setup lang="ts">
-// Settings as a screen inside the main window (the old Settings dialog is gone). Every switch saves at once: one click
-// raises `change` and the store saves it and shows an Undo toast. The values come from the app; a key that is not there
-// yet shows the app's own default. The mockups pass sample values.
+// Settings as a screen inside the main window (the D4 frame D4Settings). Three short groups hold what people change: Recording,
+// Agents and Permissions. What is set once and left alone sits behind "More settings". Every switch saves at once: one click raises
+// `change` and the store saves it and shows an Undo toast. The values come from the app; a key that is not there yet shows the
+// app's own default. The mockups pass sample values.
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RooButton, RooIconButton, RooSelect, RooSwitch } from '@roo/kit/controls'
-import { RooSettingRow, RooSettingsGroup, RooStateMark } from '@roo/kit'
+import { RooCollapse, RooIcon, RooSettingRow, RooSettingsGroup, RooStateMark } from '@roo/kit'
 import type { AutoStartChoiceKey, BridgeAutoRun, BridgeLastAutoRun, PermissionName, SettingKey, SettingValue, SettingsValues } from '../types'
 import {
   autoStartChoices,
@@ -16,8 +17,8 @@ import {
   lastRunNote,
   lastRunText,
   projectShortName,
-  runLineText,
-  runsText,
+  relativeTime,
+  runSummary,
 } from './autoStart'
 
 type FlagKey = Exclude<SettingKey, 'locale' | 'autoStartBudget' | AutoStartChoiceKey>
@@ -25,7 +26,7 @@ type FlagKey = Exclude<SettingKey, 'locale' | 'autoStartBudget' | AutoStartChoic
 interface FlagRow {
   key: FlagKey
   label: string
-  description: string
+  description?: string
   /** What the app uses when it has no saved value (WebBridge.allowedSettings). */
   fallback: boolean
 }
@@ -48,12 +49,16 @@ const props = withDefaults(
     /** The log is being read now. */
     logLoading?: boolean
     loading?: boolean
+    /** "More settings" starts open (the mockups). */
+    moreOpen?: boolean
   }>(),
-  { permissions: undefined, autoRuns: undefined, lastAutoRun: undefined, stopping: () => [], now: undefined, logLines: undefined, logLoading: false, loading: false },
+  { permissions: undefined, autoRuns: undefined, lastAutoRun: undefined, stopping: () => [], now: undefined, logLines: undefined, logLoading: false, loading: false, moreOpen: false },
 )
 
 const logOpen = computed(() => props.logLines !== undefined || props.logLoading)
 const logBox = ref<HTMLElement | null>(null)
+const more = ref(props.moreOpen)
+const changeOpen = ref(false)
 
 // The newest line is at the bottom, so the box starts scrolled down.
 function scrollLogToBottom(): void {
@@ -92,23 +97,22 @@ const emit = defineEmits<{
 }>()
 
 const recordingRows: FlagRow[] = [
-  { key: 'doubleControl', label: 'Control twice', description: 'Starts and stops from any app.', fallback: true },
-  { key: 'holdToTalk', label: 'Hold to talk', description: 'Records only while you hold the key.', fallback: false },
-  { key: 'escCancels', label: 'Esc cancels', description: 'Stops and moves it to the Trash.', fallback: true },
-  { key: 'showNoSpeech', label: 'Show recordings with no speech', description: 'Keeps silent ones in the list.', fallback: false },
-  { key: 'sounds', label: 'Sounds', description: 'A soft sound at start and when sent.', fallback: true },
+  { key: 'doubleControl', label: 'Control twice starts and stops', fallback: true },
+  { key: 'holdToTalk', label: 'Hold to talk', fallback: false },
+  { key: 'sounds', label: 'Sounds', fallback: true },
 ]
 
-const agentRows: FlagRow[] = [
-  { key: 'connectAgents', label: 'Connect agents by themselves', description: 'Adds Pointroo to new coding agents.', fallback: false },
-  { key: 'autoSendSingle', label: 'Send to the only listening session', description: 'With one session listening, recordings go there without asking.', fallback: true },
-  { key: 'listenAfterDone', label: 'Keep listening after done', description: 'Agents wait for the next recording.', fallback: false },
-  { key: 'redactSecrets', label: 'Blur secrets in screenshots', description: 'Hides keys and tokens before saving.', fallback: true },
-]
+const sendRow: FlagRow = { key: 'autoSendSingle', label: 'Send without asking', description: 'When only one session listens.', fallback: true }
 
-const windowRows: FlagRow[] = [
-  { key: 'kitWindow', label: 'New window design', description: 'Takes effect next launch.', fallback: true },
-  { key: 'kitFloating', label: 'Kit floating panels', description: 'The pill, the project picker and the notices use the new design.', fallback: false },
+/** Set once and left alone: every setting that is not in the three short groups. */
+const moreRows: FlagRow[] = [
+  { key: 'escCancels', label: 'Esc cancels a recording', fallback: true },
+  { key: 'showNoSpeech', label: 'Keep recordings with no speech', fallback: false },
+  { key: 'connectAgents', label: 'Add Pointroo to new agents', fallback: false },
+  { key: 'listenAfterDone', label: 'Agents keep listening after done', fallback: false },
+  { key: 'redactSecrets', label: 'Blur secrets in pictures', description: 'Hides keys and tokens before saving.', fallback: true },
+  { key: 'kitWindow', label: 'New window design', description: 'From the next launch.', fallback: true },
+  { key: 'kitFloating', label: 'New floating panels', fallback: false },
 ]
 
 const languages = [
@@ -125,11 +129,26 @@ const languages = [
 ]
 const languageOptions = languages.map((language) => ({ value: language.value, label: language.label }))
 
-const permissionRows: { which: PermissionName; label: string; description: string }[] = [
-  { which: 'microphone', label: 'Microphone', description: 'Needed to hear you.' },
-  { which: 'screenRecording', label: 'Screen recording', description: 'Needed for screenshots.' },
-  { which: 'accessibility', label: 'Accessibility', description: 'Needed for button and field names.' },
+const permissionRows: { which: PermissionName; label: string; description?: string }[] = [
+  { which: 'microphone', label: 'Microphone' },
+  { which: 'screenRecording', label: 'Screen recording', description: 'Needed for the pictures.' },
+  { which: 'accessibility', label: 'Accessibility' },
 ]
+
+/** The permissions that are off, each with its own Allow button. */
+const missingPermissions = computed(() => {
+  const answer = props.permissions
+  return answer === undefined ? [] : permissionRows.filter((row) => !answer[row.which])
+})
+
+/** The permissions that are fine share one row: "Microphone and Accessibility". */
+const allowedNames = computed(() => {
+  const answer = props.permissions
+  if (answer === undefined) return ''
+  const names = permissionRows.filter((row) => answer[row.which]).map((row) => row.label)
+  if (names.length < 2) return names.join('')
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1] ?? ''}`
+})
 
 const languageValue = computed(() => {
   const saved = props.values.locale
@@ -146,10 +165,23 @@ function onFlag(row: FlagRow, value: boolean): void {
   emit('change', row.key, value, `${row.label} ${value ? 'on' : 'off'}`)
 }
 
-const modelAndEffortKeys: AutoStartChoiceKey[] = ['autoStartModel', 'autoStartEffort']
+const changeKeys: AutoStartChoiceKey[] = ['autoStartModel', 'autoStartEffort']
 const autoStartIsOn = computed(() => autoStartOn(props.values))
+const summary = computed(() => runSummary(props.values))
 const budgetNow = computed(() => budgetValue(props.values))
 const budgetChoices = computed(() => budgetOptions(budgetNow.value))
+
+const historyText = computed(() => {
+  const last = props.lastAutoRun
+  if (last === undefined) return 'No run yet.'
+  const note = lastRunNote(last)
+  return `Last run: ${lastRunText(last, clockNow.value)}${note === undefined ? '' : `, ${note}`}.`
+})
+
+function startedText(run: BridgeAutoRun): string {
+  const ago = relativeTime(run.startedAt, clockNow.value)
+  return ago === '' ? '' : `Started ${ago}.`
+}
 
 function choiceOptions(key: AutoStartChoiceKey): { value: string; label: string }[] {
   return autoStartChoices[key].options
@@ -160,6 +192,13 @@ function onChoice(key: AutoStartChoiceKey, value: string | undefined): void {
   const option = entry.options.find((candidate) => candidate.value === value)
   if (option === undefined) return
   emit('change', key, option.value, `${entry.label}: ${option.label}`)
+}
+
+function onAutoStart(value: string | undefined): void {
+  const entry = autoStartChoices.autoStartAgent
+  const option = entry.options.find((candidate) => candidate.value === value)
+  if (option === undefined) return
+  emit('change', 'autoStartAgent', option.value, `Auto-start: ${option.label}`)
 }
 
 function onBudget(value: string | undefined): void {
@@ -184,83 +223,77 @@ function onLanguage(value: string | undefined): void {
       </header>
 
       <RooSettingsGroup title="Recording">
-        <RooSettingRow v-for="row in recordingRows" :key="row.key" :label="row.label" :description="row.description">
+        <RooSettingRow v-for="row in recordingRows" :key="row.key" :label="row.label">
           <RooSwitch :model-value="flagValue(row)" :disabled="loading" :aria-label="row.label" @update:model-value="(value) => onFlag(row, value)" />
+        </RooSettingRow>
+        <RooSettingRow label="Language">
+          <RooSelect :model-value="languageValue" label="Language" hide-label size="md" :disabled="loading" :options="languageOptions" @update:model-value="onLanguage" />
         </RooSettingRow>
       </RooSettingsGroup>
 
       <RooSettingsGroup title="Agents">
-        <RooSettingRow v-for="row in agentRows" :key="row.key" :label="row.label" :description="row.description">
-          <RooSwitch :model-value="flagValue(row)" :disabled="loading" :aria-label="row.label" @update:model-value="(value) => onFlag(row, value)" />
+        <RooSettingRow :label="sendRow.label" :description="sendRow.description">
+          <RooSwitch :model-value="flagValue(sendRow)" :disabled="loading" :aria-label="sendRow.label" @update:model-value="(value) => onFlag(sendRow, value)" />
         </RooSettingRow>
-      </RooSettingsGroup>
-
-      <RooSettingsGroup title="Auto-start agent">
-        <RooSettingRow label="Agent" description="Starts a headless run when an item goes to a project with no listening session.">
+        <RooSettingRow label="Auto-start" description="Starts an agent when no session listens.">
           <RooSelect
             :model-value="choiceValue(values, 'autoStartAgent')"
-            label="Agent"
+            label="Auto-start"
             hide-label
             size="md"
             :disabled="loading"
             :options="choiceOptions('autoStartAgent')"
-            @update:model-value="(value) => onChoice('autoStartAgent', value)"
+            @update:model-value="onAutoStart"
           />
         </RooSettingRow>
         <template v-if="autoStartIsOn">
-          <RooSettingRow v-for="key in modelAndEffortKeys" :key="key" :label="autoStartChoices[key].label">
-            <RooSelect
-              :model-value="choiceValue(values, key)"
-              :label="autoStartChoices[key].label"
-              hide-label
-              size="md"
-              :disabled="loading"
-              :options="choiceOptions(key)"
-              @update:model-value="(value) => onChoice(key, value)"
-            />
+          <RooSettingRow :label="summary.title" :description="summary.detail">
+            <RooButton variant="secondary" size="sm" aria-label="Change how a run works" :aria-expanded="changeOpen" @click="changeOpen = !changeOpen">
+              {{ changeOpen ? 'Done' : 'Change' }}
+            </RooButton>
           </RooSettingRow>
-          <RooSettingRow label="Budget" description="The most one run may spend.">
-            <RooSelect :model-value="String(budgetNow)" label="Budget" hide-label size="md" :disabled="loading" :options="budgetChoices" @update:model-value="onBudget" />
+          <template v-if="changeOpen">
+            <RooSettingRow v-for="key in changeKeys" :key="key" :label="autoStartChoices[key].label">
+              <RooSelect
+                :model-value="choiceValue(values, key)"
+                :label="autoStartChoices[key].label"
+                hide-label
+                size="md"
+                :disabled="loading"
+                :options="choiceOptions(key)"
+                @update:model-value="(value) => onChoice(key, value)"
+              />
+            </RooSettingRow>
+            <RooSettingRow label="Budget" description="The most one run may spend.">
+              <RooSelect :model-value="String(budgetNow)" label="Budget" hide-label size="md" :disabled="loading" :options="budgetChoices" @update:model-value="onBudget" />
+            </RooSettingRow>
+            <RooSettingRow label="Permission" description="What the run may do without asking. Anything else is refused.">
+              <RooSelect
+                :model-value="choiceValue(values, 'autoStartPermission')"
+                label="Permission"
+                hide-label
+                size="md"
+                :disabled="loading"
+                :options="choiceOptions('autoStartPermission')"
+                @update:model-value="(value) => onChoice('autoStartPermission', value)"
+              />
+            </RooSettingRow>
+          </template>
+          <RooSettingRow v-for="run in autoRuns ?? []" :key="run.project" :label="`Running in ${projectShortName(run.project)}`" :description="startedText(run)">
+            <RooButton
+              variant="secondary"
+              size="sm"
+              :disabled="stopping.includes(run.project)"
+              :aria-label="`Stop the run in ${projectShortName(run.project)}`"
+              @click="emit('stopRun', run.project)"
+            >
+              Stop
+            </RooButton>
           </RooSettingRow>
-          <RooSettingRow label="Permission" description="What the run may do without asking. Anything else is refused.">
-            <RooSelect
-              :model-value="choiceValue(values, 'autoStartPermission')"
-              label="Permission"
-              hide-label
-              size="md"
-              :disabled="loading"
-              :options="choiceOptions('autoStartPermission')"
-              @update:model-value="(value) => onChoice('autoStartPermission', value)"
-            />
+          <RooSettingRow label="History" :description="historyText">
+            <RooButton v-if="!logOpen" variant="ghost" size="sm" aria-label="Show the log" @click="emit('loadLog')">Log</RooButton>
           </RooSettingRow>
-          <RooSettingRow label="Runs" description="Headless runs going now.">
-            <RooStateMark v-if="autoRuns === undefined" state="muted" label="Checking" />
-            <div v-else class="runs">
-              <RooStateMark :state="autoRuns.length > 0 ? 'ok' : 'muted'" :label="runsText(autoRuns)" />
-              <div v-for="run in autoRuns" :key="run.project" class="run-line">
-                <span class="run-text">{{ runLineText(run, clockNow) }}</span>
-                <RooButton
-                  variant="secondary"
-                  size="sm"
-                  :disabled="stopping.includes(run.project)"
-                  :aria-label="`Stop the run in ${projectShortName(run.project)}`"
-                  @click="emit('stopRun', run.project)"
-                >
-                  Stop
-                </RooButton>
-              </div>
-            </div>
-          </RooSettingRow>
-          <RooSettingRow v-if="lastAutoRun !== undefined" label="Last run" description="The last headless run that ended.">
-            <div class="last-run">
-              <span class="run-text">{{ lastRunText(lastAutoRun, clockNow) }}</span>
-              <RooStateMark v-if="lastRunNote(lastAutoRun) !== undefined" state="muted" :label="lastRunNote(lastAutoRun) ?? ''" />
-            </div>
-          </RooSettingRow>
-          <RooSettingRow v-if="!logOpen" label="Log" description="What Auto-start did, newest last.">
-            <RooButton variant="secondary" size="sm" aria-label="Show log" @click="emit('loadLog')">Show log</RooButton>
-          </RooSettingRow>
-          <RooSettingRow v-else label="Log" description="What Auto-start did, newest last." stack>
+          <RooSettingRow v-if="logOpen" label="Log" description="What Auto-start did, newest last." stack>
             <div class="log">
               <div ref="logBox" class="log-box" tabindex="0" role="log" aria-label="Auto-start log">
                 <span v-if="logLines === undefined" class="log-note">Loading...</span>
@@ -276,37 +309,41 @@ function onLanguage(value: string | undefined): void {
         </template>
       </RooSettingsGroup>
 
-      <RooSettingsGroup title="Agents server">
-        <RooSettingRow label="Use another port" description="When another app has port 6742.">
-          <RooButton variant="secondary" size="sm" aria-label="Use another port" @click="emit('useAnotherPort')">Use another port</RooButton>
-        </RooSettingRow>
-      </RooSettingsGroup>
-
-      <RooSettingsGroup title="Window">
-        <RooSettingRow v-for="row in windowRows" :key="row.key" :label="row.label" :description="row.description">
-          <RooSwitch :model-value="flagValue(row)" :disabled="loading" :aria-label="row.label" @update:model-value="(value) => onFlag(row, value)" />
-        </RooSettingRow>
-      </RooSettingsGroup>
-
-      <RooSettingsGroup title="Language">
-        <RooSettingRow label="Speech language" description="Turned into text on this Mac.">
-          <RooSelect :model-value="languageValue" label="Speech language" hide-label size="md" :disabled="loading" :options="languageOptions" @update:model-value="onLanguage" />
-        </RooSettingRow>
-      </RooSettingsGroup>
-
       <RooSettingsGroup title="Permissions">
-        <RooSettingRow v-for="row in permissionRows" :key="row.which" :label="row.label" :description="row.description">
-          <RooStateMark v-if="permissions === undefined" state="muted" label="Checking" />
-          <RooStateMark v-else-if="permissions[row.which]" state="ok" label="Allowed" />
-          <RooButton v-else variant="secondary" size="sm" :aria-label="`Allow ${row.label}`" @click="emit('allow', row.which)">Allow</RooButton>
+        <RooSettingRow v-if="permissions === undefined" label="Permissions">
+          <RooStateMark state="muted" label="Checking" />
         </RooSettingRow>
+        <template v-else>
+          <RooSettingRow v-for="row in missingPermissions" :key="row.which" :label="row.label" :description="row.description">
+            <RooButton variant="primary" size="sm" :aria-label="`Allow ${row.label}`" @click="emit('allow', row.which)">Allow</RooButton>
+          </RooSettingRow>
+          <RooSettingRow v-if="allowedNames !== ''" :label="allowedNames">
+            <RooStateMark state="ok" label="Allowed" />
+          </RooSettingRow>
+        </template>
       </RooSettingsGroup>
 
-      <RooSettingsGroup title="About">
-        <RooSettingRow label="Check for updates" description="Looks for a new version of Pointroo.">
-          <RooButton variant="secondary" size="sm" aria-label="Check for updates" @click="emit('checkUpdates')">Check for updates</RooButton>
-        </RooSettingRow>
-      </RooSettingsGroup>
+      <div class="more">
+        <div class="more-toggle">
+          <RooButton variant="ghost" size="sm" flush :aria-expanded="more" @click="more = !more">
+            <template #icon><RooIcon :name="more ? 'chevron-down' : 'chevron'" :size="16" /></template>
+            More settings
+          </RooButton>
+        </div>
+        <RooCollapse v-model:open="more">
+          <RooSettingsGroup>
+            <RooSettingRow v-for="row in moreRows" :key="row.key" :label="row.label" :description="row.description">
+              <RooSwitch :model-value="flagValue(row)" :disabled="loading" :aria-label="row.label" @update:model-value="(value) => onFlag(row, value)" />
+            </RooSettingRow>
+            <RooSettingRow label="Agents server port" description="Change it when another app has 6742.">
+              <RooButton variant="secondary" size="sm" aria-label="Use another port" @click="emit('useAnotherPort')">Change</RooButton>
+            </RooSettingRow>
+            <RooSettingRow label="Updates">
+              <RooButton variant="secondary" size="sm" aria-label="Check for updates" @click="emit('checkUpdates')">Check</RooButton>
+            </RooSettingRow>
+          </RooSettingsGroup>
+        </RooCollapse>
+      </div>
     </div>
   </div>
 </template>
@@ -328,23 +365,14 @@ function onLanguage(value: string | undefined): void {
   margin-inline: auto;
 }
 
-.runs {
+.more {
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
   gap: var(--roo-space-item);
 }
 
-.run-line,
-.last-run {
+.more-toggle {
   display: flex;
-  align-items: center;
-  gap: var(--roo-space-item);
-}
-
-.run-text {
-  font-size: var(--roo-p-size-13);
-  color: var(--roo-muted);
 }
 
 .log {

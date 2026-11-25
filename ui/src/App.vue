@@ -7,12 +7,17 @@ import MainWindow from './parts/MainWindow.vue'
 import { projectIdFor, tilesFor } from './parts/projects'
 import SettingsScreen from './parts/SettingsScreen.vue'
 import type { Item } from './parts/types'
+import { orderQueue } from './parts/words'
 import { createStore } from './store'
 
 const store = createStore(bridge)
 const width = ref(window.innerWidth)
 
 const isNarrow = computed(() => width.value < 900)
+// The recordings the app just sent by itself: their rows are tinted, the first one carries Undo.
+const freshIds = computed(() => store.lastSent?.ids ?? [])
+// The queue in the order of the design (what needs you first). Enter opens the first row of this same order.
+const queueRows = computed(() => orderQueue(store.rows, freshIds.value))
 // The project picker is open: the bar still shows the busy Record button.
 const recordState = computed(() => (store.recording.phase === 'picking' ? 'processing' : store.recording.phase))
 const recordDisabled = computed(() => store.status !== undefined && !store.status.microphone)
@@ -131,7 +136,7 @@ function onKey(event: KeyboardEvent): void {
 
   if (event.key === 'Enter') {
     if (event.target instanceof HTMLElement && event.target.closest('button, a, [role="option"]') !== null) return
-    const first = store.rows[0]
+    const first = queueRows.value[0]
     if (store.selectedItem === undefined && first !== undefined) {
       event.preventDefault()
       store.select(first.id)
@@ -188,7 +193,8 @@ onBeforeUnmount(() => {
       :search-error="store.searchState.error"
       :width="width"
       :projects="store.projects"
-      :items="store.rows"
+      :items="queueRows"
+      :fresh-ids="freshIds"
       :selected-item="store.selectedItem"
       :now-count="store.nowCount"
       :done-count="store.doneCount"
@@ -197,10 +203,6 @@ onBeforeUnmount(() => {
       :banner="store.banner"
       :record-state="recordState"
       :record-disabled="recordDisabled"
-      :sessions-text="store.sessionsText"
-      :sessions-warn="store.sessionsText === 'None listening'"
-      :agents-text="store.agentsText"
-      :needs-you="store.banner !== undefined && store.banner.kind !== 'no-session'"
       :settings-open="store.view === 'settings'"
       :toast="store.toast"
       :recording="selectedRecording"
@@ -231,6 +233,7 @@ onBeforeUnmount(() => {
       @retry="store.refresh"
       @copy-hint="onCopyHint"
       @undo="store.undo"
+      @undo-sent="store.undoSent"
       @dismiss-toast="store.dismissToast"
     >
       <template #settings>
