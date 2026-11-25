@@ -326,7 +326,7 @@ function onLanguage(value: string | undefined): void {
       <div class="more">
         <div class="more-toggle">
           <RooButton variant="ghost" size="sm" flush :aria-expanded="more" @click="more = !more">
-            <template #icon><RooIcon :name="more ? 'chevron-down' : 'chevron-right'" :size="16" /></template>
+            <template #icon><RooIcon :name="more ? 'chevron-down' : 'chevron'" :size="16" /></template>
             More settings
           </RooButton>
         </div>
