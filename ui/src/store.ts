@@ -146,7 +146,7 @@ export function createStore(bridge: Bridge, options: StoreOptions = {}) {
       const busy = /in use|busy/i.test(current.mcpText)
       return { kind: busy ? 'port-busy' : 'mcp-error', description: current.mcpText }
     }
-    if (current.sessions === 0) return { kind: 'no-session' }
+    if (!projects.value.some((project) => project.listening)) return { kind: 'no-session' }
     return undefined
   })
 

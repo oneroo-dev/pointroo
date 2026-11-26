@@ -60,7 +60,10 @@ export interface Project {
   id: string
   name: string
   count: number
+  /** An agent session there listens (it called wait_for_next lately). */
   listening: boolean
+  /** A session runs there but does not listen. Left out in the mockups. */
+  sessionOpen?: boolean | undefined
   folder: string
   /** 1 is the project that got an item most recently. */
   recentRank: number

@@ -27,7 +27,7 @@ function onSelect(projectId: string): void {
         <RooIcon name="chevron-down" :size="12" />
       </RooChip>
     </template>
-    <RooMenuItem v-for="project in choices" :key="project.id" :checked="project.id === currentId" :hint="project.listening ? 'listening' : ''" @select="onSelect(project.id)">{{ project.name }}</RooMenuItem>
+    <RooMenuItem v-for="project in choices" :key="project.id" :checked="project.id === currentId" :hint="project.listening ? 'listening' : project.sessionOpen === true ? 'open' : ''" @select="onSelect(project.id)">{{ project.name }}</RooMenuItem>
   </RooMenu>
 </template>
 

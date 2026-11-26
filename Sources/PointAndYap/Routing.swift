@@ -29,6 +29,8 @@ struct LiveSession: Codable, Equatable {
     var agent: String
     var started: Date
     var lastSeen: Date
+    /// When the session last called wait_for_next. Nil for a session that never did (and for files from older versions).
+    var lastWaited: Date? = nil
 }
 
 /// Where an item was sent: written to `route.json` in the session folder.
@@ -61,6 +63,30 @@ enum LiveSessions {
         session.lastSeen = Date()
         write(session)
     }
+
+    /// Records that the session of `pid` is inside wait_for_next right now.
+    static func markWaiting(pid: Int32 = getpid(), now: Date = Date()) {
+        guard var session = read(file(pid)) else { return }
+        session.lastWaited = now
+        session.lastSeen = now
+        write(session)
+    }
+
+    /// How recently a session must have called wait_for_next to count as listening. One wait is up to 55 s and the agent
+    /// calls it again after each item, so 5 minutes also covers a short item.
+    static let listeningWindow: TimeInterval = 5 * 60
+
+    /// The sessions that listen: waited within `within` seconds of `now`. A session that never waited does not listen.
+    static func listening(from sessions: [LiveSession], now: Date = Date(),
+                          within: TimeInterval = listeningWindow) -> [LiveSession] {
+        sessions.filter { session in
+            guard let waited = session.lastWaited else { return false }
+            return now.timeIntervalSince(waited) <= within
+        }
+    }
+
+    /// Alive sessions that listen (see `listening(from:now:within:)`).
+    static func listening(now: Date = Date()) -> [LiveSession] { listening(from: all(), now: now) }
 
     static func unregister(pid: Int32 = getpid()) { try? FileManager.default.removeItem(at: file(pid)) }
 
@@ -165,7 +191,10 @@ enum Router {
 
     /// Said name first, then a follow-up the user asked for (`asked`), then what was on screen, then a follow-up to what
     /// an agent just finished, then the only live session.
+    /// `live` is every running session (a follow-up only needs one to run); `listening` is the ones that call wait_for_next,
+    /// and only those make the "only" fallback. When `listening` is nil, `live` is used for both.
     static func route(words: [String], points: [PointEvent], projects: [Project], live: [LiveSession] = [],
+                      listening: [LiveSession]? = nil,
                       lastDone: (path: String, id: String, at: Date)? = nil, recordingStarted: Date? = nil,
                       asked: (path: String, id: String)? = nil) -> Result? {
         if let project = saidProject(words, projects) { return Result(path: project.path, how: "said") }
@@ -175,7 +204,7 @@ enum Router {
             return Result(path: follow.path, how: "followup", follows: follow.id)
         }
         var folders: [String] = []
-        for session in live where !folders.contains(where: { samePath($0, session.cwd) }) { folders.append(session.cwd) }
+        for session in listening ?? live where !folders.contains(where: { samePath($0, session.cwd) }) { folders.append(session.cwd) }
         if folders.count == 1 { return Result(path: folders[0], how: "only") }
         return nil
     }
@@ -360,6 +389,7 @@ enum Router {
     /// most 30 minutes ago; the only listening project; otherwise nil. Two projects equally close on the screen give no
     /// screen guess, and the next rule is tried.
     static func suggest(words: [String], points: [PointEvent], projects: [Project], live: [LiveSession] = [],
+                        listening: [LiveSession]? = nil,
                         lastSent: (path: String, at: Date)? = nil, now: Date = Date()) -> Result? {
         if let project = relatedProject(points, projects) { return Result(path: project.path, how: "related") }
         if let lastSent {
@@ -367,7 +397,7 @@ enum Router {
             if age >= 0, age <= lastSentWindow { return Result(path: lastSent.path, how: "lastsent") }
         }
         var folders: [String] = []
-        for session in live where !folders.contains(where: { samePath($0, session.cwd) }) { folders.append(session.cwd) }
+        for session in listening ?? live where !folders.contains(where: { samePath($0, session.cwd) }) { folders.append(session.cwd) }
         if folders.count == 1 { return Result(path: folders[0], how: "only") }
         return nil
     }
@@ -415,6 +445,7 @@ enum Router {
     /// The inputs have defaults that read the real world; tests give their own.
     static func routeSession(_ directory: URL, events: SessionEvents, words: [Word],
                              live: [LiveSession] = LiveSessions.all(),
+                             listening: [LiveSession]? = nil,
                              knownProjects: [Project]? = nil,
                              items: [Item]? = nil,
                              autoSendSingle: Bool = Prefs.autoSendSingle,
@@ -423,10 +454,12 @@ enum Router {
         let request = FollowUpStore(folder: followUpFolder).take(recordingStarted: events.started)
         if readRoute(directory)?.how == "picked" { return }
         let projects = knownProjects ?? Projects.known(live: live)
+        let listeningSessions = listening ?? LiveSessions.listening(from: live, now: now)
         let allItems = items ?? Items.all()
         let spoken = words.map(\.text)
         let asked = request.map { (path: $0.path, id: $0.id) }
         if let result = route(words: spoken, points: events.points, projects: projects, live: live,
+                              listening: listeningSessions,
                               lastDone: lastAgentDone(allItems), recordingStarted: events.started, asked: asked),
            shouldAutoSend(result, autoSendSingle: autoSendSingle) {
             let name = projects.first { samePath($0.path, result.path) }?.name ?? URL(fileURLWithPath: result.path).lastPathComponent
@@ -434,6 +467,7 @@ enum Router {
             return
         }
         if let guess = suggest(words: spoken, points: events.points, projects: projects, live: live,
+                               listening: listeningSessions,
                                lastSent: lastSent(allItems), now: now) {
             writeSuggest(SuggestInfo(path: guess.path, how: guess.how), to: directory)
         } else {

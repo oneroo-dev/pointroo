@@ -43,8 +43,10 @@ import Foundation
 ///                   projects, and the group with no project (project null) last; inside a group the newest item comes first
 ///                   (items with no date last, ties keep the queue order). Groups with no items are left out.
 ///   projects.list   no params
-///                   result {projects: [{name, path, aliases: [string], live: bool, agents: [string], key?: 1...9, open, inProgress, lastUsed?}]}
+///                   result {projects: [{name, path, aliases: [string], live: bool, sessionOpen: bool, agents: [string], key?: 1...9, open, inProgress, lastUsed?}]}
 ///                   live projects come first (in picker order), then the others, newest lastUsed first, then by name ignoring case.
+///                   `live` means an agent session there is listening (called wait_for_next in the last 5 minutes). `sessionOpen` is true
+///                   when a session runs there but does not listen (never true together with live).
 ///                   `key` is the picker's number key, given to the first nine live projects only. `open` and `inProgress` count the
 ///                   items routed to that folder. `lastUsed` is the ISO date of the newest item routed there (its `at`, else the time
 ///                   of its recording); left out when there is none.
@@ -518,14 +520,18 @@ final class WebBridge {
         }.map(\.element)
     }
 
-    /// The known projects in picker order: the live ones first (order of first appearance of each live folder), then the
-    /// others by name ignoring case. `liveCount` is how many come first; `agents` has the agent names of each live one.
-    private func orderedProjects() -> (projects: [Project], liveCount: Int, agents: [[String]]) {
-        let live = loadLive()
+    /// The known projects in picker order: the listening ones first (order of first appearance of each listening folder), then
+    /// the others by name ignoring case. `liveCount` is how many come first; `agents` has the agent names of each listening one.
+    /// `openFolders` are the folders of sessions that run but do not listen. Every running session still makes its folder a
+    /// known project.
+    private func orderedProjects() -> (projects: [Project], liveCount: Int, agents: [[String]], openFolders: [String]) {
+        let running = loadLive()
+        let live = LiveSessions.listening(from: running, now: now())
         var all: [Project] = []
-        for project in Projects.known(file: loadProjects(), live: live) where !all.contains(where: { Router.samePath($0.path, project.path) }) {
+        for project in Projects.known(file: loadProjects(), live: running) where !all.contains(where: { Router.samePath($0.path, project.path) }) {
             all.append(project)
         }
+        let openFolders = running.map(\.cwd).filter { folder in !live.contains { Router.samePath($0.cwd, folder) } }
         var liveOnes: [Project] = []
         var agents: [[String]] = []
         for session in live {
@@ -553,7 +559,7 @@ final class WebBridge {
                 return order != .orderedSame ? order == .orderedAscending : first.offset < second.offset
             }
             .map(\.project)
-        return (liveOnes + others, liveOnes.count, agents)
+        return (liveOnes + others, liveOnes.count, agents, openFolders)
     }
 
     /// The newest time among the items routed to this folder: the item's date, else the time its recording started.
@@ -569,10 +575,12 @@ final class WebBridge {
         var entries: [[String: Any]] = []
         for (index, project) in order.projects.enumerated() {
             let isLive = index < order.liveCount
+            let sessionOpen = !isLive && order.openFolders.contains(where: { Router.samePath($0, project.path) })
             let own = items.filter { item in item.project.map { Router.samePath($0, project.path) } ?? false }
             var entry: [String: Any] = [
                 "name": project.name, "path": project.path, "aliases": project.aliases,
                 "live": isLive,
+                "sessionOpen": sessionOpen,
                 "agents": isLive ? order.agents[index] : [String](),
                 "open": own.filter { $0.status == "open" }.count,
                 "inProgress": own.filter { $0.status == "in_progress" }.count,

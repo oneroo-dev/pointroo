@@ -146,7 +146,9 @@ function chipTone(project: Project): 'accent' | 'ok' | 'neutral' {
 }
 
 function chipTip(project: Project): string {
-  return project.listening ? `Listening in ${project.folder}` : `${project.folder}. No agent is listening.`
+  if (project.listening) return `Listening in ${project.folder}`
+  if (project.sessionOpen === true) return `${project.folder}. A session is open but not listening.`
+  return `${project.folder}. No agent is listening.`
 }
 
 // A new choice on the chips shows the queue again, also from an open recording on a narrow window.

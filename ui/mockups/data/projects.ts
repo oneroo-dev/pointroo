@@ -4,7 +4,7 @@ import type { Project, ProjectTile } from '../../src/parts/types'
 export const projects: Project[] = [
   { id: 'tinkeroo', name: 'Tinkeroo', count: 3, listening: true, folder: '~/Workspace/tinkeroo', recentRank: 1 },
   { id: 'pointroo', name: 'Pointroo', count: 1, listening: true, folder: '~/Workspace/pointroo', recentRank: 2 },
-  { id: 'tableroo', name: 'Tableroo', count: 0, listening: false, folder: '~/Workspace/tableroo', recentRank: 3 },
+  { id: 'tableroo', name: 'Tableroo', count: 0, listening: false, sessionOpen: true, folder: '~/Workspace/tableroo', recentRank: 3 },
   { id: 'bellroo', name: 'Bellroo', count: 0, listening: false, folder: '~/Workspace/bellroo', recentRank: 4 },
   { id: 'fileroo', name: 'Fileroo', count: 0, listening: false, folder: '~/Workspace/fileroo', recentRank: 5 },
   { id: 'shellroo', name: 'Shellroo', count: 0, listening: false, folder: '~/Workspace/shellroo', recentRank: 6 },
