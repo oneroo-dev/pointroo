@@ -27,6 +27,10 @@ import Foundation
 ///                      the timer; if the page has not loaded yet it is sent right after the load.
 ///   status.changed     {mcpRunning, mcpPort, mcpText, sessions, agents, microphone, screenRecording, accessibility, autoRuns, lastAutoRun?}
 ///                      the same object status.get returns inside `status`; sent when any part of it changed
+///   setup.changed      {rows}                      the same list setup.status returns; sent when any Setup row changed (the first is sent at start)
+///   hint.show          {message, tone, actionLabel?, action?}   a short message for the page's toast (tone is "ok", "muted" or "warn").
+///                      action is a setup.action id the button runs (the speech Retry). Sent to the kit main window's page by the app
+///                      (WebHost.showHint), not by the timer; if the page has not loaded yet it is sent right after the load.
 ///
 /// Error codes: bad_request (not valid JSON, or no method), unknown_method, bad_params, not_found, not_available, refused,
 /// busy (a recording call that does not fit the phase now).
@@ -150,9 +154,28 @@ import Foundation
 ///   autoRuns.log    params {lines?: whole number 1...200 (default 50)}
 ///                   result {lines: [string]} (the newest lines of the auto-start log, newest last; empty when there is no log yet)
 ///                   error bad_params when lines is not a whole number from 1 to 200
+///   setup.status    no params
+///                   result {rows: [{id, state: "done" | "todo" | "busy", detail?: "denied" | "failed", action?: string}]}
+///                   rows in this order: applications, microphone, screenRecording, accessibility, claudeCode, tool, stopHook, speech,
+///                   wake (left out when no Claude session is open). action is the setup.action id the row's button runs (only on "todo").
+///                   detail "denied": the permission was asked for before and is still off; "failed": the speech download failed.
+///   setup.action    params {id: string}   one of: move (shows the app in Finder), allowMicrophone, allowScreenRecording, allowAccessibility,
+///                   openMicrophoneSettings, openScreenRecordingSettings, openAccessibilitySettings (System Settings), install (opens the
+///                   Claude Code install page), connect (adds the tool to the agents), addHook (adds the Stop hook), retrySpeech, updateClaude
+///                   result {rows}   the setup.status list read again (a permission answer may still be on its way: setup.changed follows)
+///                   error bad_params (id missing or unknown), not_available
+///   wake.get        no params
+///                   result {enabled: bool, owners: [{project: name, owner: "auto" | session id}] (every known project),
+///                   sessions: [{id, name}] (open Claude sessions that can be woken), last?: {project, name?, at: ISO date} (the newest wake that was sent)}
+///   wake.set        params {enabled?: bool, owners?: [{project: name, owner: "auto" | session id}]}
+///                   enabled is the wakeSessions switch. owners change who owns each named project in owners.json ("auto" removes the entry);
+///                   the file is written atomically and its first version is kept as owners.json.bak. Projects not named stay as they are.
+///                   result the same as wake.get   error bad_params (wrong shape), not_found (a project that is not known)
 ///
 /// Item: {id, session, n, title, body, crops: [path], status, alsoSaid: [string], at?: ISO date, by?, note?, project?, routeHow?,
-///        suggested?, suggestedName?, priority?, commit?, branch?, duplicateOf?, said?, firstElement?, duration?}
+///        suggested?, suggestedName?, priority?, commit?, branch?, duplicateOf?, said?, firstElement?, duration?, wake?}
+///   wake          {result, name?}  what the app did to wake the project's Claude session for this recording (wake.json): result is
+///                 "sent", "listening", "no owner", "claude code too old for wake ..." or "failed: ..."; name is the session that was woken
 ///   suggested     the folder the router guesses for a recording it did not send (only while the item has no project)
 ///   suggestedName that project's name
 ///   A key marked ? is left out when it has no value (never null).
@@ -255,6 +278,10 @@ final class WebBridge {
         "autoRuns.log": { bridge, params in try bridge.autoRunsLog(params) },
         "server.useAnotherPort": { bridge, params in try bridge.serverUseAnotherPort(params) },
         "app.checkUpdates": { bridge, params in try bridge.appCheckUpdates(params) },
+        "setup.status": { bridge, params in try bridge.setupStatus(params) },
+        "setup.action": { bridge, params in try bridge.setupAction(params) },
+        "wake.get": { bridge, params in try bridge.wakeGet(params) },
+        "wake.set": { bridge, params in try bridge.wakeSet(params) },
     ]
 
     private let defaults: UserDefaults
@@ -282,6 +309,10 @@ final class WebBridge {
     private let followUpStore: FollowUpStore
     private let stopAutoRun: (String) -> Bool
     private let readAutoRunLog: (Int) -> [String]
+    private let loadSetup: () -> [[String: Any]]
+    private let runSetupAction: ((String) -> Void)?
+    private let supportFolder: URL
+    private let sessionsFolder: URL
 
     /// What recording.start, recording.stop and recording.cancel ask the app to do.
     enum RecordingAction {
@@ -335,6 +366,8 @@ final class WebBridge {
     /// `followUpStore` is where recording.start keeps a follow-up request (recording.cancel removes it).
     /// `stopAutoRun` serves autoRuns.stop: it gets the folder and says whether a run was going there (the default asks the shared runner).
     /// `readAutoRunLog` serves autoRuns.log: it gets how many lines to give and returns the newest ones, oldest first (the default reads autostart.log).
+    /// `loadSetup` gives the Setup rows (the default reads the real Mac). `runSetupAction` runs one setup.action id (nil = not_available).
+    /// `supportFolder` holds owners.json and `sessionsFolder` is the Claude session registry; wake.get and wake.set use them (tests give temp folders).
     init(defaults: UserDefaults = .standard,
          loadItems: @escaping () -> [Item] = { Items.all() },
          findProject: @escaping (String) -> Project? = { WebBridge.knownProject($0) },
@@ -359,7 +392,11 @@ final class WebBridge {
          noticeStore: NoticeStore = NoticeStore(),
          followUpStore: FollowUpStore = FollowUpStore(),
          stopAutoRun: @escaping (String) -> Bool = { AutoStart.shared.stop(project: $0) },
-         readAutoRunLog: @escaping (Int) -> [String] = { AutoStart.readLog(lines: $0) }) {
+         readAutoRunLog: @escaping (Int) -> [String] = { AutoStart.readLog(lines: $0) },
+         loadSetup: @escaping () -> [[String: Any]] = { SetupStatus.read() },
+         runSetupAction: ((String) -> Void)? = nil,
+         supportFolder: URL = Paths.support,
+         sessionsFolder: URL = SessionWake.defaultFolder) {
         self.defaults = defaults
         self.loadItems = loadItems
         self.findProject = findProject
@@ -385,6 +422,10 @@ final class WebBridge {
         self.followUpStore = followUpStore
         self.stopAutoRun = stopAutoRun
         self.readAutoRunLog = readAutoRunLog
+        self.loadSetup = loadSetup
+        self.runSetupAction = runSetupAction
+        self.supportFolder = supportFolder
+        self.sessionsFolder = sessionsFolder
     }
 
     /// A known project whose folder is this path, or whose name is this text (ignoring case).
@@ -954,6 +995,101 @@ final class WebBridge {
         return ["lines": readAutoRunLog(count)]
     }
 
+    private func setupStatus(_ params: [String: Any]) throws -> Any {
+        ["rows": loadSetup()]
+    }
+
+    private func setupAction(_ params: [String: Any]) throws -> Any {
+        guard let id = params["id"] as? String, SetupStatus.actions.contains(id) else {
+            throw Failure(code: "bad_params", message: "id must be one of the setup actions.")
+        }
+        guard let runSetupAction else { throw Failure(code: "not_available", message: "Setup actions are not available.") }
+        runSetupAction(id)
+        return ["rows": loadSetup()]
+    }
+
+    private var ownersFile: URL { supportFolder.appendingPathComponent("owners.json") }
+
+    private func wakeResult() -> [String: Any] {
+        var seen: Set<String> = []
+        var sessions: [[String: Any]] = []
+        for entry in SessionWake.entries(in: sessionsFolder) where entry.messagingSocketPath != nil {
+            let id = entry.hostSessionId ?? entry.sessionId
+            guard seen.insert(id).inserted else { continue }
+            let folderName = entry.cwd.map { URL(fileURLWithPath: $0).lastPathComponent } ?? ""
+            let name = entry.name ?? (folderName.isEmpty ? "Claude session" : folderName)
+            sessions.append(["id": id, "name": name])
+        }
+        let owners = SessionWake.loadOwners(from: ownersFile)
+        var names: [String] = []
+        for project in Projects.known(file: loadProjects(), live: loadLive()) where !names.contains(where: { $0.lowercased() == project.name.lowercased() }) {
+            names.append(project.name)
+        }
+        var out: [String: Any] = [
+            "enabled": defaults.object(forKey: "wakeSessions") as? Bool ?? true,
+            "owners": names.map { ["project": $0, "owner": owners[$0.lowercased()] ?? "auto"] as [String: Any] },
+            "sessions": sessions,
+        ]
+        let sent = loadItems().compactMap(\.wake).filter { $0.result == "sent" }
+        if let newest = sent.max(by: { $0.at < $1.at }) {
+            var last: [String: Any] = ["project": newest.project, "at": ISO8601DateFormatter().string(from: newest.at)]
+            if let name = newest.name { last["name"] = name }
+            out["last"] = last
+        }
+        return out
+    }
+
+    private func wakeGet(_ params: [String: Any]) throws -> Any {
+        wakeResult()
+    }
+
+    private func wakeSet(_ params: [String: Any]) throws -> Any {
+        var enabled: Bool?
+        if let value = params["enabled"] {
+            guard let number = value as? NSNumber, CFGetTypeID(number) == CFBooleanGetTypeID() else {
+                throw Failure(code: "bad_params", message: "enabled is on or off (true or false).")
+            }
+            enabled = number.boolValue
+        }
+        var changes: [(project: String, owner: String)] = []
+        if let value = params["owners"] {
+            guard let list = value as? [[String: Any]] else { throw Failure(code: "bad_params", message: "owners must be a list of {project, owner}.") }
+            let known = Projects.known(file: loadProjects(), live: loadLive())
+            for entry in list {
+                guard let project = entry["project"] as? String, !project.isEmpty,
+                      let owner = entry["owner"] as? String, !owner.isEmpty else {
+                    throw Failure(code: "bad_params", message: "Each owner needs a project and an owner.")
+                }
+                guard let found = known.first(where: { $0.name.lowercased() == project.lowercased() }) else {
+                    throw Failure(code: "not_found", message: "No project \(project).")
+                }
+                changes.append((found.name, owner))
+            }
+        }
+        if !changes.isEmpty {
+            var map = (try? Data(contentsOf: ownersFile)).flatMap { try? JSONDecoder().decode([String: String].self, from: $0) } ?? [:]
+            for change in changes {
+                for key in map.keys where key.lowercased() == change.project.lowercased() { map.removeValue(forKey: key) }
+                if change.owner != "auto" { map[change.project] = change.owner }
+            }
+            guard writeOwners(map) else { throw Failure(code: "not_available", message: "Could not save the owners.") }
+        }
+        if let enabled { defaults.set(enabled, forKey: "wakeSessions") }
+        return wakeResult()
+    }
+
+    /// Writes owners.json atomically. The first version that already exists is copied to owners.json.bak once.
+    private func writeOwners(_ map: [String: String]) -> Bool {
+        let fileManager = FileManager.default
+        try? fileManager.createDirectory(at: supportFolder, withIntermediateDirectories: true)
+        let backup = supportFolder.appendingPathComponent("owners.json.bak")
+        if fileManager.fileExists(atPath: ownersFile.path), !fileManager.fileExists(atPath: backup.path) {
+            try? fileManager.copyItem(at: ownersFile, to: backup)
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: map, options: [.prettyPrinted, .sortedKeys]) else { return false }
+        return (try? data.write(to: ownersFile, options: .atomic)) != nil
+    }
+
     private static func kind(of key: String) -> SettingKind? {
         allowedSettings.first { $0.key == key }?.kind
     }
@@ -1001,6 +1137,11 @@ final class WebBridge {
         if !item.said.isEmpty { out["said"] = item.said }
         if let firstElement = item.firstElement { out["firstElement"] = firstElement }
         if item.duration > 0 { out["duration"] = item.duration }
+        if let wake = item.wake {
+            var entry: [String: Any] = ["result": wake.result]
+            if let name = wake.name { entry["name"] = name }
+            out["wake"] = entry
+        }
         return out
     }
 }

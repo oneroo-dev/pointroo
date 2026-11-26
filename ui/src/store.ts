@@ -3,9 +3,12 @@
 import { computed, reactive, ref } from 'vue'
 import type { Bridge } from './bridge'
 import { errorText } from './bridge'
-import type { Item, MainBanner, MainTab, MainToast, Project, RecordingView, SearchHit } from './parts/types'
+import type { Item, MainBanner, MainTab, MainToast, Project, RecordingView, SearchHit, SetupRow, WakeSettingsView } from './parts/types'
 import type {
   BridgeAppStatus,
+  BridgeHint,
+  BridgeSetupRow,
+  BridgeWakeSettings,
   BridgeItem,
   BridgeProject,
   BridgeQuestion,
@@ -22,10 +25,11 @@ import type {
 } from './types'
 import { projectFor } from './parts/projects'
 import { sentSeconds } from './floatModel'
-import { matchQuestions, toRecordingView, toViewItem, toViewProjects } from './viewModel'
+import { matchQuestions, toRecordingView, toSetupRows, toViewItem, toViewProjects, toWakeSettings } from './viewModel'
 
 const undoSeconds = 5
 const plainToastSeconds = 3
+const hintSeconds = 8
 const recentDoneLimit = 50
 const laterMinutes = 30
 const defaultSearchDelayMilliseconds = 200
@@ -81,6 +85,13 @@ export function createStore(bridge: Bridge, options: StoreOptions = {}) {
   const view = ref<'queue' | 'settings'>('queue')
   const settings = ref<SettingsValues>({})
   const settingsLoaded = ref(false)
+  /** The Setup rows from the app. Empty while the app does not answer setup.status (an older app). */
+  const setupBridgeRows = ref<BridgeSetupRow[]>([])
+  const setupLoaded = ref(false)
+  /** Who wakes for each project (wake.get). Undefined until the app answers. */
+  const wakeBridge = ref<BridgeWakeSettings | undefined>(undefined)
+  /** The setup.action id of the hint that is on screen (its button runs it). */
+  let hintAction: BridgeHint['action']
 
   let toastTimer: number | undefined
   let sentTimer: number | undefined
@@ -150,6 +161,12 @@ export function createStore(bridge: Bridge, options: StoreOptions = {}) {
     return undefined
   })
 
+  const setupRows = computed<SetupRow[]>(() => toSetupRows(setupBridgeRows.value))
+  const setupComplete = computed(() => setupBridgeRows.value.every((row) => row.state === 'done'))
+  /** The first-run Setup card replaces the queue while something is not done and nothing was recorded yet. Later it lives in Settings. */
+  const showSetup = computed(() => setupLoaded.value && setupBridgeRows.value.length > 0 && !setupComplete.value && !loading.value && allItems.value.length === 0 && view.value === 'queue')
+  const wake = computed<WakeSettingsView | undefined>(() => (wakeBridge.value === undefined ? undefined : toWakeSettings(wakeBridge.value, now.value)))
+
   const sessionsText = computed(() => {
     const count = status.value?.sessions ?? 0
     return count === 0 ? 'None listening' : `${count} listening`
@@ -162,6 +179,7 @@ export function createStore(bridge: Bridge, options: StoreOptions = {}) {
   function showToast(message: string, tone: MainToast['tone'], undo: boolean): void {
     window.clearTimeout(toastTimer)
     settingUndo = undefined
+    hintAction = undefined
     toast.value = { message, tone, undo }
     toastTimer = window.setTimeout(dismissToast, (undo ? undoSeconds : plainToastSeconds) * 1000)
   }
@@ -171,6 +189,30 @@ export function createStore(bridge: Bridge, options: StoreOptions = {}) {
     toast.value = undefined
     undoSteps = []
     settingUndo = undefined
+    hintAction = undefined
+  }
+
+  /** A hint from the app (hint.show): a toast, with a button when the hint has one. */
+  function showHint(hint: BridgeHint): void {
+    showToast(hint.message, hint.tone, false)
+    window.clearTimeout(toastTimer)
+    if (hint.actionLabel !== undefined && hint.action !== undefined) {
+      toast.value = { message: hint.message, tone: hint.tone, undo: false, actionLabel: hint.actionLabel }
+      hintAction = hint.action
+    }
+    toastTimer = window.setTimeout(dismissToast, hintSeconds * 1000)
+  }
+
+  /** The button on a hint's toast: runs the app action the hint names, then the toast goes. */
+  async function runHintAction(): Promise<void> {
+    const action = hintAction
+    dismissToast()
+    if (action === undefined) return
+    try {
+      setupBridgeRows.value = (await bridge.call('setup.action', { id: action })).rows
+    } catch (error) {
+      fail(error)
+    }
   }
 
   function fail(error: unknown): void {
@@ -223,6 +265,53 @@ export function createStore(bridge: Bridge, options: StoreOptions = {}) {
 
   async function loadStatus(): Promise<void> {
     status.value = (await bridge.call('status.get', {})).status
+  }
+
+  /** An app without setup.status is fine: there are no rows, so nothing shows. */
+  async function loadSetup(): Promise<void> {
+    try {
+      setupBridgeRows.value = (await bridge.call('setup.status', {})).rows
+    } catch {
+      setupBridgeRows.value = []
+    }
+    setupLoaded.value = true
+  }
+
+  /** A button on a Setup row: runs the action the app named for that row, then takes the rows it answers with. */
+  async function runSetup(rowId: string): Promise<void> {
+    const action = setupBridgeRows.value.find((row) => row.id === rowId)?.action
+    if (action === undefined) return
+    try {
+      setupBridgeRows.value = (await bridge.call('setup.action', { id: action })).rows
+    } catch (error) {
+      fail(error)
+    }
+  }
+
+  /** An app without wake.get is fine: the Wake group stays out. */
+  async function loadWake(): Promise<void> {
+    try {
+      wakeBridge.value = await bridge.call('wake.get', {})
+    } catch {
+      wakeBridge.value = undefined
+    }
+  }
+
+  async function changeWake(params: { enabled?: boolean; owners?: { project: string; owner: string }[] }): Promise<void> {
+    try {
+      wakeBridge.value = await bridge.call('wake.set', params)
+    } catch (error) {
+      fail(error)
+      await loadWake()
+    }
+  }
+
+  function setWakeEnabled(enabled: boolean): Promise<void> {
+    return changeWake({ enabled })
+  }
+
+  function setWakeOwner(projectId: string, owner: string): Promise<void> {
+    return changeWake({ owners: [{ project: projectId, owner }] })
   }
 
   async function runRefresh(): Promise<void> {
@@ -324,9 +413,15 @@ export function createStore(bridge: Bridge, options: StoreOptions = {}) {
         status.value = data
       }),
       bridge.on('item.focus', (data) => void focusItem(data.id)),
+      bridge.on('setup.changed', (data) => {
+        setupBridgeRows.value = data.rows
+        setupLoaded.value = true
+      }),
+      bridge.on('hint.show', showHint),
       ...listenToFloatingEvents(),
     ]
     void refresh()
+    void loadSetup()
     loadFloatingState()
     return () => stops.forEach((stop) => stop())
   }
@@ -729,7 +824,7 @@ export function createStore(bridge: Bridge, options: StoreOptions = {}) {
   async function openSettings(): Promise<void> {
     view.value = 'settings'
     try {
-      await Promise.all([loadSettings(), loadStatus()])
+      await Promise.all([loadSettings(), loadStatus(), loadSetup(), loadWake()])
     } catch (error) {
       fail(error)
     }
@@ -827,6 +922,13 @@ export function createStore(bridge: Bridge, options: StoreOptions = {}) {
     openSettings,
     closeSettings,
     setSetting,
+    setupRows,
+    showSetup,
+    runSetup,
+    wake,
+    setWakeEnabled,
+    setWakeOwner,
+    runHintAction,
     start,
     startFloating,
     refresh,

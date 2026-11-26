@@ -3,6 +3,7 @@
   "brand": "oneroo",
   "order": [
     "RealReview",
+    "FreshSetupReview",
     "MainQueue",
     "MainAsks",
     "MainDone",
@@ -69,6 +70,7 @@
   ],
   "titles": {
     "RealReview": "Redesign, every real screen on one page",
+    "FreshSetupReview": "Setup and waking Claude, on one page",
     "MainQueue": "Main 960: queue",
     "MainAsks": "Main 960: asks you",
     "MainDone": "Main 960: done tab",

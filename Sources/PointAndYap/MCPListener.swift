@@ -97,13 +97,17 @@ enum MCPListener {
     }
 
     /// Called once at launch: a busy port becomes a toast (and shows in Settings), never a crash.
-    @MainActor static func startAtLaunch(toast: @escaping @MainActor (String?) -> Void) {
+    /// `moved` is told the busy port and the one now used when the listener moved to another port.
+    @MainActor static func startAtLaunch(toast: @escaping @MainActor (String?) -> Void,
+                                         moved: @escaping @MainActor (Int, Int) -> Void = { _, _ in }) {
         let port = mcpPort
         guard start(port: port) != nil else { return }
         // Busy at launch: try the next free port once (it is saved and the agent install runs again). Only a failure shows.
         DispatchQueue.global(qos: .utility).async {
             switch MCPPort.useAnother(current: Int(port)) {
-            case .success(let other): NSLog("pointroo: port \(port) was busy, now using \(other)")
+            case .success(let other):
+                NSLog("pointroo: port \(port) was busy, now using \(other)")
+                DispatchQueue.main.async { MainActor.assumeIsolated { moved(Int(port), other) } }
             case .failure(let error):
                 DispatchQueue.main.async {
                     MainActor.assumeIsolated {

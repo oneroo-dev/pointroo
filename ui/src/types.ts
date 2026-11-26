@@ -36,6 +36,61 @@ export interface BridgeItem {
   suggestedName?: string
   /** ISO date when the item was marked done. Only on items from done.recent (R25). */
   doneAt?: string
+  /** What the app did to wake the project's Claude session for this recording. Left out when it did not try. */
+  wake?: BridgeWake
+}
+
+/** The result is "sent", "listening", "no owner", "claude code too old for wake ..." or "failed: ...". `name` is the session that was woken. */
+export interface BridgeWake {
+  result: string
+  name?: string
+}
+
+/** The setup.action ids (WebBridge: SetupStatus.actions). */
+export type SetupActionId =
+  | 'move'
+  | 'allowMicrophone'
+  | 'allowScreenRecording'
+  | 'allowAccessibility'
+  | 'openMicrophoneSettings'
+  | 'openScreenRecordingSettings'
+  | 'openAccessibilitySettings'
+  | 'install'
+  | 'connect'
+  | 'addHook'
+  | 'retrySpeech'
+  | 'updateClaude'
+
+/** One Setup row from the app. The page owns the words. `detail` is "denied" (asked before, still off) or "failed" (the speech download). */
+export interface BridgeSetupRow {
+  id: string
+  state: 'done' | 'todo' | 'busy'
+  detail?: 'denied' | 'failed'
+  /** The setup.action id the row's button runs. Only on a todo row. */
+  action?: SetupActionId
+}
+
+export interface BridgeWakeOwner {
+  /** The project's name. */
+  project: string
+  /** "auto" or a session id. */
+  owner: string
+}
+
+export interface BridgeWakeSettings {
+  enabled: boolean
+  owners: BridgeWakeOwner[]
+  sessions: { id: string; name: string }[]
+  /** The newest wake that was sent. Left out when none was. */
+  last?: { project: string; name?: string; at: string }
+}
+
+/** A short message for the page's toast. `action` is a setup.action id. */
+export interface BridgeHint {
+  message: string
+  tone: 'ok' | 'muted' | 'warn'
+  actionLabel?: string
+  action?: SetupActionId
 }
 
 export interface BridgeSessionWord {
@@ -209,6 +264,11 @@ export interface BridgeMethods {
   'autoRuns.stop': { params: { project: string }; result: { stopped: boolean } }
   // Added by R37 (the Swift side): the newest lines of the auto-start log, newest last.
   'autoRuns.log': { params: { lines?: number }; result: { lines: string[] } }
+  // Added by F2 (the Swift side): the Setup checklist and who wakes for each project.
+  'setup.status': { params: Record<string, never>; result: { rows: BridgeSetupRow[] } }
+  'setup.action': { params: { id: SetupActionId }; result: { rows: BridgeSetupRow[] } }
+  'wake.get': { params: Record<string, never>; result: BridgeWakeSettings }
+  'wake.set': { params: { enabled?: boolean; owners?: BridgeWakeOwner[] }; result: BridgeWakeSettings }
 }
 
 export type BridgeMethod = keyof BridgeMethods
@@ -315,6 +375,8 @@ export interface BridgeEvents {
   'route.sent': RouteSent
   'item.focus': { id: string }
   'status.changed': BridgeAppStatus
+  'setup.changed': { rows: BridgeSetupRow[] }
+  'hint.show': BridgeHint
 }
 
 export type BridgeEventName = keyof BridgeEvents

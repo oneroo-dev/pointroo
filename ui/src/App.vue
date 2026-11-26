@@ -6,6 +6,7 @@ import { bridge } from './bridge'
 import MainWindow from './parts/MainWindow.vue'
 import { projectIdFor, tilesFor } from './parts/projects'
 import SettingsScreen from './parts/SettingsScreen.vue'
+import SetupChecklist from './parts/SetupChecklist.vue'
 import type { Item } from './parts/types'
 import { orderQueue } from './parts/words'
 import { createStore } from './store'
@@ -204,6 +205,7 @@ onBeforeUnmount(() => {
       :record-state="recordState"
       :record-disabled="recordDisabled"
       :settings-open="store.view === 'settings'"
+      :setup="store.showSetup"
       :toast="store.toast"
       :recording="selectedRecording"
       @update:search-query="(text) => void store.search(text)"
@@ -234,8 +236,14 @@ onBeforeUnmount(() => {
       @copy-hint="onCopyHint"
       @undo="store.undo"
       @undo-sent="store.undoSent"
+      @toast-action="store.runHintAction"
       @dismiss-toast="store.dismissToast"
     >
+      <template #setup>
+        <div class="setup">
+          <SetupChecklist :rows="store.setupRows" @action="store.runSetup" />
+        </div>
+      </template>
       <template #settings>
         <SettingsScreen
           :values="store.settings"
@@ -243,6 +251,8 @@ onBeforeUnmount(() => {
           :stopping="store.stoppingRuns"
           :log-lines="store.autoRunLog"
           :log-loading="store.autoRunLogLoading"
+          :setup-rows="store.setupRows"
+          :wake="store.wake"
           v-bind="
             store.status === undefined
               ? {}
@@ -255,9 +265,22 @@ onBeforeUnmount(() => {
           @allow="store.allow"
           @use-another-port="store.useAnotherPort"
           @check-updates="store.checkUpdates"
+          @setup-action="store.runSetup"
+          @wake-toggle="store.setWakeEnabled"
+          @wake-owner="store.setWakeOwner"
           @back="store.closeSettings"
         />
       </template>
     </MainWindow>
   </RooTooltipProvider>
 </template>
+
+<style scoped>
+.setup {
+  box-sizing: border-box;
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--roo-space-group);
+}
+</style>

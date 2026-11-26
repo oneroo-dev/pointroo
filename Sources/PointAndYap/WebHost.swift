@@ -18,6 +18,7 @@ final class WebHost {
     /// True once the page has finished loading (its listeners are set up when the page is mounted, before that point).
     private var pageReady = false
     private var pendingFocus = PendingFocus()
+    private var pendingHints: [Hint] = []
 
     /// The folder inside the app that holds the built screens (Contents/Resources/ui).
     static var bundleFolder: URL? { Bundle.main.resourceURL?.appendingPathComponent("ui", isDirectory: true) }
@@ -58,6 +59,18 @@ final class WebHost {
     private func pageDidLoad() {
         pageReady = true
         if let id = pendingFocus.pageBecameReady() { send(PendingFocus.event(id: id)) }
+        for hint in pendingHints { send(Self.hintEvent(hint)) }
+        pendingHints = []
+    }
+
+    /// The hint.show event for a hint.
+    nonisolated static func hintEvent(_ hint: Hint) -> WebEvents.Event {
+        (name: "hint.show", data: hint.dictionary)
+    }
+
+    /// Shows a hint in the page's toast (event hint.show). If the page has not loaded yet, it waits and goes out after the load.
+    func showHint(_ hint: Hint) {
+        if pageReady { send(Self.hintEvent(hint)) } else { pendingHints.append(hint) }
     }
 
     private func send(_ event: WebEvents.Event) {
@@ -130,16 +143,17 @@ final class WebHost {
             // second would redraw every SwiftUI view that watches it, even when nothing changed.
             let status = AppStatus.readNow()
             let noticeIds = Notices.identifiers(items: items, questions: questions, seen: Set(NoticeStore().seenIds()))
-            await self?.finishRead(items: items, questions: questions, status: status, noticeIds: noticeIds)
+            let setup = SetupStatus.read()
+            await self?.finishRead(items: items, questions: questions, status: status, noticeIds: noticeIds, setup: setup)
         }
     }
 
-    private func finishRead(items: [Item], questions: [Question], status: AppStatus, noticeIds: [String]) {
+    private func finishRead(items: [Item], questions: [Question], status: AppStatus, noticeIds: [String], setup: [[String: Any]]) {
         guard isReadingEvents else { return }   // stopEvents ran while the read was going
         isReadingEvents = false
         guard eventTimer != nil else { return }
         let sent = webEvents.routeSent(items, projectName: { Projects.name(for: $0) })
-        for event in webEvents.items(items) + webEvents.questions(questions) + webEvents.notices(noticeIds) + webEvents.status(status) + sent {
+        for event in webEvents.items(items) + webEvents.questions(questions) + webEvents.notices(noticeIds) + webEvents.status(status) + webEvents.setup(setup) + sent {
             emit(event.name, event.data)
         }
     }

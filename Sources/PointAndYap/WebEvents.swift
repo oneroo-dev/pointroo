@@ -36,13 +36,14 @@ struct WebEvents {
 
     private var lastStatus: AppStatus?
     private var pickerSignature: String?
+    private var setupSignature: String?
 
     init() {}
 
     /// `items.changed` {count, open, inProgress} when any item's id, status, note or project changed (or one came or went).
     mutating func items(_ items: [Item]) -> [Event] {
         let signature = items
-            .map { "\($0.id)\u{1F}\($0.status)\u{1F}\($0.note ?? "")\u{1F}\($0.project ?? "")" }
+            .map { "\($0.id)\u{1F}\($0.status)\u{1F}\($0.note ?? "")\u{1F}\($0.project ?? "")\u{1F}\($0.wake?.result ?? "")" }
             .sorted()
         guard signature != itemSignature else { return [] }
         itemSignature = signature
@@ -98,6 +99,14 @@ struct WebEvents {
         guard status != lastStatus else { return [] }
         lastStatus = status
         return [(name: "status.changed", data: status.dictionary)]
+    }
+
+    /// `setup.changed` {rows} when any Setup row changed (see SetupStatus.rows).
+    mutating func setup(_ rows: [[String: Any]]) -> [Event] {
+        let signature = rows.map { row in row.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: ",") }.joined(separator: "|")
+        guard signature != setupSignature else { return [] }
+        setupSignature = signature
+        return [(name: "setup.changed", data: ["rows": rows])]
     }
 
     /// `picker.changed` {open, session?} when the project picker opened or closed (the countdown alone never emits).

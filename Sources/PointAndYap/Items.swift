@@ -25,6 +25,7 @@ struct Item {
     var duration: Double = 0         // length of the recording in seconds
     var practice: Bool = false       // a practice recording: done by "you" at once, never handed out
     var suggested: String? = nil     // the folder the router would suggest for a recording it did not send (suggest.json)
+    var wake: WakeRecord? = nil      // what the app did to wake the project's Claude session for this recording (wake.json)
 }
 
 struct ItemState: Codable {
@@ -56,9 +57,11 @@ enum Items {
         let id = dir.lastPathComponent
         let source = "session"
         var out = sessionItems(dir)
+        let wake = out.isEmpty ? nil : SessionWake.readWake(dir)
         for i in out.indices {
             out[i].id = "\(id)#\(out[i].n)"
             out[i].session = id
+            out[i].wake = wake
             let route = Router.readRoute(dir)
             out[i].project = route?.path
             out[i].routeHow = route?.how
