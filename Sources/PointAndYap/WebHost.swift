@@ -64,7 +64,7 @@ final class WebHost {
     }
 
     /// The hint.show event for a hint.
-    static func hintEvent(_ hint: Hint) -> WebEvents.Event {
+    nonisolated static func hintEvent(_ hint: Hint) -> WebEvents.Event {
         (name: "hint.show", data: hint.dictionary)
     }
 
