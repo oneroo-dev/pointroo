@@ -144,7 +144,7 @@ export function createFakeBridge(): Bridge {
     const permission = (id: PermissionName, label: string): BridgeSetupRow => {
       if (permissions[id]) return { id, state: 'done' }
       if (id === 'screenRecording' && setupState.screenAsked) return { id, state: 'todo', detail: 'denied', action: 'openScreenRecordingSettings' }
-      return { id, state: 'todo', action: `allow${label}` as BridgeSetupRow['action'] }
+      return { id, state: 'todo', action: `allow${label}` as NonNullable<BridgeSetupRow['action']> }
     }
     const todo = (id: string, done: boolean, action: BridgeSetupRow['action']): BridgeSetupRow => (done ? { id, state: 'done' } : { id, state: 'todo', ...(action === undefined ? {} : { action }) })
     return [
