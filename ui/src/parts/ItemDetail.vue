@@ -10,6 +10,7 @@ import type { Item, Project, RecordingView } from './types'
 import { projectIdFor, projectNameFor, tilesFor } from './projects'
 import { isFinished, markFor, markOwnWords, plainWords } from './words'
 import ProjectMenu from './ProjectMenu.vue'
+import WakeNote from './WakeNote.vue'
 import ProjectTiles from './ProjectTiles.vue'
 import QuestionControls from './QuestionControls.vue'
 
@@ -103,6 +104,7 @@ function pick(projectId: string): void {
           <ProjectMenu v-if="canChoose" :name="projectName" :projects="projects" :current-id="currentId" @pick="pick" />
           <template v-else>{{ projectName }}</template>
           <RooTooltip :text="ageTip"><span class="age">{{ `· ${item.age}` }}</span></RooTooltip>
+          <WakeNote v-if="item.wake" :note="item.wake" />
         </span>
       </span>
       <span class="spacer" />

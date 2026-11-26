@@ -10,6 +10,7 @@ import { projectIdFor, projectNameFor } from './projects'
 import { isFinished, markFor, plainWords } from './words'
 import type { Mark } from './words'
 import ProjectMenu from './ProjectMenu.vue'
+import WakeNote from './WakeNote.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -129,6 +130,7 @@ function onRowKey(event: KeyboardEvent, itemId: string): void {
               <ProjectMenu v-if="canChoose(item)" :name="nameOf(item)" :projects="projects" :current-id="currentIdOf(item)" @pick="(projectId) => pickFor(item, projectId)" />
               <template v-else>{{ nameOf(item) }}</template>
               <span class="age">{{ `· ${item.age}` }}</span>
+              <WakeNote v-if="item.wake" :note="item.wake" />
             </span>
           </span>
         </span>

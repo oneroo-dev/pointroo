@@ -33,6 +33,57 @@ export interface Item {
   question?: { id?: string | undefined; text: string; choices: string[] } | undefined
   /** The recording this item came from. The Recording section needs it. */
   session?: string | undefined
+  /** What happened when Pointroo tried to wake the project's Claude session. Left out when it did not try. */
+  wake?: WakeNote | undefined
+}
+
+/** What the wake did for one recording. `name` is the session that was woken (only for `woke`). */
+export interface WakeNote {
+  kind: 'woke' | 'no-session' | 'busy' | 'too-old'
+  name?: string | undefined
+}
+
+/** One line of the Setup checklist: a green tick when `done`, else one button (or a progress word while `busy`). */
+export interface SetupRow {
+  id: string
+  label: string
+  description?: string | undefined
+  state: 'done' | 'todo' | 'busy'
+  /** The word next to the tick, for example "Allowed". Defaults to "Ready". */
+  doneLabel?: string | undefined
+  /** The button text when `todo`. */
+  actionLabel?: string | undefined
+  /** The word while `busy`, for example "Downloading...". */
+  busyLabel?: string | undefined
+  /** A small quiet line under the row. */
+  note?: string | undefined
+}
+
+/** One open Claude session a project can be tied to. */
+export interface WakeSessionChoice {
+  value: string
+  label: string
+}
+
+/** One project and who owns it. `owner` is "auto" or a session value. */
+export interface WakeOwnerRow {
+  projectId: string
+  name: string
+  owner: string
+}
+
+export interface WakeSettingsView {
+  enabled: boolean
+  owners: WakeOwnerRow[]
+  sessions: WakeSessionChoice[]
+  /** "Last: woke Tinkeroo for tinkeroo, 2 min ago". Left out when nothing woke yet. */
+  lastWake?: string | undefined
+}
+
+export interface HintView {
+  message: string
+  tone: 'ok' | 'muted' | 'warn'
+  actionLabel?: string | undefined
 }
 
 /** A whole recording, ready to draw (see viewModel.toRecordingView). */
