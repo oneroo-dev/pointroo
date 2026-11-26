@@ -98,9 +98,21 @@ enum MCPListener {
 
     /// Called once at launch: a busy port becomes a toast (and shows in Settings), never a crash.
     @MainActor static func startAtLaunch(toast: @escaping @MainActor (String?) -> Void) {
-        guard let message = start(port: mcpPort) else { return }
-        toast(message)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { MainActor.assumeIsolated { toast(nil) } }
+        let port = mcpPort
+        guard start(port: port) != nil else { return }
+        // Busy at launch: try the next free port once (it is saved and the agent install runs again). Only a failure shows.
+        DispatchQueue.global(qos: .utility).async {
+            switch MCPPort.useAnother(current: Int(port)) {
+            case .success(let other): NSLog("pointroo: port \(port) was busy, now using \(other)")
+            case .failure(let error):
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        toast(error.message)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { MainActor.assumeIsolated { toast(nil) } }
+                    }
+                }
+            }
+        }
     }
 
     /// Binds 127.0.0.1:port and starts accepting. Returns nil on success, else a plain message.

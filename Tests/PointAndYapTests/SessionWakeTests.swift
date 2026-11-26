@@ -65,22 +65,113 @@ final class SessionWakeTests: XCTestCase {
         XCTAssertThrowsError(try SessionWake.frame(text: "", sessionId: "s"))
     }
 
-    func testSafeSocketRejectsBadPaths() throws {
-        let directory = "/tmp/pr-wake-dir-\(UUID().uuidString.prefix(8))"
-        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
-        cleanupPaths.append(directory)
-        let prefixes = [directory + "/"]
+    private func bindSocket(at path: String) -> Int32 {
+        let listener = socket(AF_UNIX, SOCK_STREAM, 0)
+        var address = sockaddr_un()
+        address.sun_family = sa_family_t(AF_UNIX)
+        let capacity = MemoryLayout.size(ofValue: address.sun_path)
+        withUnsafeMutablePointer(to: &address.sun_path) { pointer in
+            pointer.withMemoryRebound(to: UInt8.self, capacity: capacity) { bytes in
+                for (offset, byte) in Array(path.utf8).enumerated() { bytes[offset] = byte }
+                bytes[path.utf8.count] = 0
+            }
+        }
+        _ = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.bind(listener, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+            }
+        }
+        return listener
+    }
 
-        XCTAssertFalse(SessionWake.safeSocket("/var/tmp/other.sock"))
+    // A short folder under /tmp (socket paths are limited in length), with the given name and mode.
+    private func makeSocketFolder(name: String, mode: Int = 0o700) throws -> String {
+        let base = "/tmp/pw-\(UUID().uuidString.prefix(6))"
+        let directory = base + "/" + name
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true,
+                                                attributes: [.posixPermissions: mode])
+        cleanupPaths.append(base)
+        return directory
+    }
+
+    func testSafeSocketAcceptsRealSocketInCcSocksFolders() throws {
+        for name in ["cc-socks", "cc-socks-501"] {
+            let directory = try makeSocketFolder(name: name)
+            let path = directory + "/1.sock"
+            let listener = bindSocket(at: path)
+            defer { close(listener) }
+            XCTAssertTrue(SessionWake.safeSocket(path), name)
+        }
+    }
+
+    func testSafeSocketRejectsDotsPlainFilesAndLinks() throws {
+        let directory = try makeSocketFolder(name: "cc-socks")
+        XCTAssertFalse(SessionWake.safeSocket(directory + "/../cc-socks/x.sock"))
         XCTAssertFalse(SessionWake.safeSocket("/tmp/cc-socks/../etc/passwd"))
 
         let plainFile = directory + "/plain.sock"
         FileManager.default.createFile(atPath: plainFile, contents: Data())
-        XCTAssertFalse(SessionWake.safeSocket(plainFile, allowedPrefixes: prefixes))
+        XCTAssertFalse(SessionWake.safeSocket(plainFile))
 
+        let realPath = directory + "/real.sock"
+        let listener = bindSocket(at: realPath)
+        defer { close(listener) }
         let link = directory + "/link.sock"
-        try FileManager.default.createSymbolicLink(atPath: link, withDestinationPath: plainFile)
-        XCTAssertFalse(SessionWake.safeSocket(link, allowedPrefixes: prefixes))
+        try FileManager.default.createSymbolicLink(atPath: link, withDestinationPath: realPath)
+        XCTAssertFalse(SessionWake.safeSocket(link))
+        XCTAssertFalse(SessionWake.safeSocket(directory + "/missing.sock"))
+    }
+
+    func testSafeSocketRejectsSocketOfAnotherUser() throws {
+        let directory = try makeSocketFolder(name: "cc-socks")
+        let path = directory + "/1.sock"
+        let listener = bindSocket(at: path)
+        defer { close(listener) }
+        XCTAssertTrue(SessionWake.safeSocket(path))
+        XCTAssertFalse(SessionWake.safeSocket(path, owner: getuid() &+ 1))
+    }
+
+    func testSafeSocketRejectsWrongFolderNameAndOpenPermissions() throws {
+        for name in ["other", "cc-socks-abc", "cc-socksx", "xcc-socks"] {
+            let directory = try makeSocketFolder(name: name)
+            let path = directory + "/1.sock"
+            let listener = bindSocket(at: path)
+            defer { close(listener) }
+            XCTAssertFalse(SessionWake.safeSocket(path), name)
+        }
+        for mode in [0o770, 0o707, 0o750, 0o755] {
+            let directory = try makeSocketFolder(name: "cc-socks", mode: mode)
+            let path = directory + "/1.sock"
+            let listener = bindSocket(at: path)
+            defer { close(listener) }
+            XCTAssertFalse(SessionWake.safeSocket(path), String(mode, radix: 8))
+        }
+    }
+
+    func testSafeSocketRejectsFolderThatIsALink() throws {
+        let real = try makeSocketFolder(name: "real")
+        let path = real + "/1.sock"
+        let listener = bindSocket(at: path)
+        defer { close(listener) }
+        let linkParent = (real as NSString).deletingLastPathComponent + "/cc-socks"
+        try FileManager.default.createSymbolicLink(atPath: linkParent, withDestinationPath: real)
+        XCTAssertFalse(SessionWake.safeSocket(linkParent + "/1.sock"))
+    }
+
+    func testWakeSaysOldClaudeCodeWhenNoEntryHasASocket() {
+        var sent: [(Data, String)] = []
+        let result = wake(RouteInfo(project: "shop", path: "/work/shop", how: "said"),
+                          entries: [entry(pid: 3, name: "shop", socket: nil)], sent: &sent)
+        XCTAssertEqual(result, "claude code too old for wake (needs 2.1.224+)")
+        XCTAssertEqual(SessionWake.readWake(folder)?.result, result)
+        XCTAssertTrue(sent.isEmpty)
+    }
+
+    func testWakeNoOwnerWhenEntriesHaveSocketsButNoneMatch() {
+        var sent: [(Data, String)] = []
+        let result = wake(RouteInfo(project: "shop", path: "/work/shop", how: "said"),
+                          entries: [entry(pid: 3, name: "other", cwd: "/elsewhere")], sent: &sent)
+        XCTAssertEqual(result, "no owner")
     }
 
     func testSendDeliversExactBytes() throws {

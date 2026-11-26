@@ -95,6 +95,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             DispatchQueue.global(qos: .utility).async { SessionWake.wakeForRoute(info, directory: directory) }
         }
         MCPListener.startAtLaunch { [weak self] in self?.state.toast = $0 }
+        Task.detached(priority: .utility) { await Transcriber.prewarm() }
         state.ownUI = { [weak self] in self?.pillRect() }
         state.onRecordingChanged = { [weak self] on in self?.recording(on) }
         setUpFloatingSurfaces()
@@ -298,7 +299,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    func applicationDidBecomeActive(_ note: Notification) { state.refreshAccess(); state.loadSessions() }
+    func applicationDidBecomeActive(_ note: Notification) {
+        state.refreshAccess()
+        state.loadSessions()
+        // Skipped at launch because no agent was found: look again now (an agent may have been installed since).
+        if AgentInstall.installed, state.askAgents.isEmpty, AgentInstall.shouldAskAgainOnActivate(), AgentInstall.needsAsking() {
+            state.askAgents = AgentInstall.status().map(\.name)
+        }
+    }
 
     /// No headless auto-start run is left behind when the app quits.
     func applicationWillTerminate(_ note: Notification) { AutoStart.shared.stopAll() }
