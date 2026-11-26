@@ -26,7 +26,7 @@ final class SuggestTests: XCTestCase {
     }
 
     private func live(_ cwd: String, pid: Int32 = 1) -> LiveSession {
-        LiveSession(pid: pid, cwd: cwd, agent: "claude", started: Date(), lastSeen: Date())
+        LiveSession(pid: pid, cwd: cwd, agent: "claude", started: Date(), lastSeen: Date(), lastWaited: Date())
     }
 
     private func makeSession(_ id: String) throws -> URL {

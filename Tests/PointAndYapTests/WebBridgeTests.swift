@@ -276,7 +276,7 @@ final class WebBridgeTests: XCTestCase {
     }
 
     private func live(_ cwd: String, agent: String = "claude", pid: Int32 = 1) -> LiveSession {
-        LiveSession(pid: pid, cwd: cwd, agent: agent, started: Date(), lastSeen: Date())
+        LiveSession(pid: pid, cwd: cwd, agent: agent, started: Date(), lastSeen: Date(), lastWaited: Date())
     }
 
     private let projectList = [Project(name: "zeta", path: "/work/zeta"), Project(name: "Alpha", path: "/work/alpha", aliases: ["a"]),
