@@ -27,10 +27,36 @@ enum Transcriber {
     final class PrewarmGate: @unchecked Sendable {
         private let lock = NSLock()
         private var claimed: Set<String> = []
+        private var current = SpeechState.checking
+        /// Called (on any thread) each time the state changes.
+        var onChange: (@Sendable (SpeechState) -> Void)?
+
         func claim(_ identifier: String) -> Bool {
             lock.lock()
             defer { lock.unlock() }
             return claimed.insert(identifier).inserted
+        }
+
+        /// Lets the locale be claimed again (the Retry button).
+        func release(_ identifier: String) {
+            lock.lock()
+            claimed.remove(identifier)
+            lock.unlock()
+        }
+
+        var state: SpeechState {
+            lock.lock()
+            defer { lock.unlock() }
+            return current
+        }
+
+        func set(_ state: SpeechState) {
+            lock.lock()
+            let changed = current != state
+            current = state
+            let callback = onChange
+            lock.unlock()
+            if changed { callback?(state) }
         }
     }
 
@@ -41,8 +67,10 @@ enum Transcriber {
     static func prewarm(locale wanted: Locale = wantedLocale, gate: PrewarmGate = prewarmGate,
                         log: (String) -> Void = { NSLog("pointroo: \($0)") }) async {
         guard gate.claim(wanted.identifier) else { return }
+        gate.set(.checking)
         guard let locale = await SpeechTranscriber.supportedLocale(equivalentTo: wanted) else {
             log("speech model: no on-device model for \(wanted.identifier)")
+            gate.set(.failed)
             return
         }
         let transcriber = SpeechTranscriber(locale: locale, transcriptionOptions: [], reportingOptions: [],
@@ -50,14 +78,23 @@ enum Transcriber {
         do {
             if let request = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
                 log("speech model: downloading for \(locale.identifier)")
+                gate.set(.downloading)
                 try await request.downloadAndInstall()
                 log("speech model: ready for \(locale.identifier)")
             } else {
                 log("speech model: already installed for \(locale.identifier)")
             }
+            gate.set(.ready)
         } catch {
             log("speech model: \(error)")
+            gate.set(.failed)
         }
+    }
+
+    /// The Retry button: lets the language be claimed again and starts the download again.
+    static func retryPrewarm(locale wanted: Locale = wantedLocale, gate: PrewarmGate = prewarmGate) {
+        gate.release(wanted.identifier)
+        Task.detached(priority: .utility) { await prewarm(locale: wanted, gate: gate) }
     }
 
     static func words(from audio: URL, locale wanted: Locale = wantedLocale, hints: [String] = projectHints()) async throws -> [Word] {

@@ -1,6 +1,6 @@
 // Turns what the app sends (types.ts) into what the screen parts draw (parts/types.ts).
-import type { Crop, Item, ItemState, Project, RecordingView, RouteHow } from './parts/types'
-import type { BridgeItem, BridgeProject, BridgeQuestion, BridgeSession, BridgeSessionPoint } from './types'
+import type { Crop, Item, ItemState, Project, RecordingView, RouteHow, SetupRow, WakeNote, WakeSettingsView } from './parts/types'
+import type { BridgeItem, BridgeProject, BridgeQuestion, BridgeSession, BridgeSessionPoint, BridgeSetupRow, BridgeWake, BridgeWakeSettings } from './types'
 
 const routeWords: RouteHow[] = ['said', 'screen', 'followup', 'only', 'picked']
 
@@ -70,6 +70,83 @@ function suggestedProjectId(item: BridgeItem, projects: Project[]): string | und
   return projects.find((project) => project.name === item.suggestedName)?.id
 }
 
+/** What the wake did, as the note next to "Sent to X". Nothing is shown for a result the page does not know. */
+export function toWakeNote(wake: BridgeWake | undefined): WakeNote | undefined {
+  if (wake === undefined) return undefined
+  if (wake.result === 'sent') return wake.name === undefined ? { kind: 'woke' } : { kind: 'woke', name: wake.name }
+  if (wake.result === 'listening') return { kind: 'busy' }
+  if (wake.result.startsWith('claude code too old')) return { kind: 'too-old' }
+  if (wake.result === 'no owner' || wake.result.startsWith('failed')) return { kind: 'no-session' }
+  return undefined
+}
+
+const permissionRows: Record<string, string> = { microphone: 'Microphone', screenRecording: 'Screen recording', accessibility: 'Accessibility' }
+
+/** The Setup rows from the app as the checklist draws them. The words live here; the app only says what is done. */
+export function toSetupRows(rows: BridgeSetupRow[]): SetupRow[] {
+  const result: SetupRow[] = []
+  for (const row of rows) {
+    const done = row.state === 'done'
+    const permission = permissionRows[row.id]
+    if (permission !== undefined) {
+      if (done) result.push({ id: row.id, label: permission, state: 'done', doneLabel: 'Allowed' })
+      else if (row.detail === 'denied') result.push({ id: row.id, label: permission, description: 'You said no before. Turn it on in System Settings.', state: 'todo', actionLabel: 'Open System Settings' })
+      else result.push({ id: row.id, label: permission, state: 'todo', actionLabel: 'Allow' })
+      continue
+    }
+    switch (row.id) {
+      case 'applications':
+        result.push(done ? { id: row.id, label: 'Pointroo is in Applications', state: 'done', doneLabel: 'Yes' } : { id: row.id, label: 'Pointroo is in Applications', state: 'todo', actionLabel: 'Move to Applications' })
+        break
+      case 'claudeCode':
+        result.push(
+          done
+            ? { id: row.id, label: 'Claude Code', description: 'Pointroo found it on this Mac.', state: 'done', doneLabel: 'Found' }
+            : { id: row.id, label: 'Claude Code', description: 'Not found.', state: 'todo', actionLabel: 'Install Claude Code' },
+        )
+        break
+      case 'tool':
+        result.push(
+          done
+            ? { id: row.id, label: 'Pointroo tool in Claude Code', state: 'done', doneLabel: 'Added' }
+            : { id: row.id, label: 'Pointroo tool in Claude Code', state: 'todo', actionLabel: 'Connect', note: 'Restart open Claude sessions to see it.' },
+        )
+        break
+      case 'stopHook':
+        result.push(
+          done
+            ? { id: row.id, label: 'Stop hook', description: 'Tells Pointroo when Claude is done.', state: 'done', doneLabel: 'Added' }
+            : { id: row.id, label: 'Stop hook', description: 'Tells Pointroo when Claude is done.', state: 'todo', actionLabel: 'Add' },
+        )
+        break
+      case 'speech':
+        if (done) result.push({ id: row.id, label: 'Speech model', state: 'done', doneLabel: 'Ready' })
+        else if (row.state === 'busy') result.push({ id: row.id, label: 'Speech model', state: 'busy', busyLabel: 'Downloading...' })
+        else result.push({ id: row.id, label: 'Speech model', description: 'The download did not finish.', state: 'todo', actionLabel: 'Retry' })
+        break
+      case 'wake':
+        result.push(
+          done
+            ? { id: row.id, label: 'Claude Code is new enough to wake', description: 'Version 2.1.224 or newer.', state: 'done', doneLabel: 'Yes' }
+            : { id: row.id, label: 'Claude Code is new enough to wake', state: 'todo', actionLabel: 'Update Claude Code for auto-wake' },
+        )
+        break
+    }
+  }
+  return result
+}
+
+/** The Wake group: every project with its owner, the open sessions to pick from, and the last wake as one quiet line. */
+export function toWakeSettings(wake: BridgeWakeSettings, now: Date): WakeSettingsView {
+  const view: WakeSettingsView = {
+    enabled: wake.enabled,
+    owners: wake.owners.map((entry) => ({ projectId: entry.project, name: entry.project, owner: entry.owner })),
+    sessions: wake.sessions.map((session) => ({ value: session.id, label: session.name })),
+  }
+  if (wake.last !== undefined) view.lastWake = `Last: woke ${wake.last.name ?? 'a session'} for ${wake.last.project}, ${ageText(wake.last.at, now)}`
+  return view
+}
+
 export function toViewItem(item: BridgeItem, question: BridgeQuestion | undefined, now: Date, projects: Project[] = []): Item {
   let state: ItemState
   if (item.status === 'done') state = item.by === undefined ? 'done-by-you' : 'done'
@@ -101,6 +178,8 @@ export function toViewItem(item: BridgeItem, question: BridgeQuestion | undefine
   const suggested = state === 'not-sent' ? suggestedProjectId(item, projects) : undefined
   if (suggested !== undefined) result.suggested = suggested
   if (question !== undefined) result.question = { id: question.id, text: question.text, choices: question.choices }
+  const wake = toWakeNote(item.wake)
+  if (wake !== undefined) result.wake = wake
   return result
 }
 

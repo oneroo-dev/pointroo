@@ -94,7 +94,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         Router.onRouteWritten = { info, directory in
             DispatchQueue.global(qos: .utility).async { SessionWake.wakeForRoute(info, directory: directory) }
         }
-        MCPListener.startAtLaunch { [weak self] in self?.state.toast = $0 }
+        state.onHint = { [weak self] hint in self?.showHint(hint) }
+        MCPListener.startAtLaunch(toast: { [weak self] in self?.state.toast = $0 },
+                                  moved: { [weak self] busy, port in self?.showHint(.portMoved(from: busy, to: port)) })
+        Transcriber.prewarmGate.onChange = { [weak self] speech in
+            guard speech == .failed else { return }
+            DispatchQueue.main.async { MainActor.assumeIsolated { self?.showHint(.speechFailed) } }
+        }
         Task.detached(priority: .utility) { await Transcriber.prewarm() }
         state.ownUI = { [weak self] in self?.pillRect() }
         state.onRecordingChanged = { [weak self] on in self?.recording(on) }
@@ -195,6 +201,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.setFrameAutosaveName("PointMain")
     }
 
+    /// A hint goes to the kit page's toast; with the classic window it is a plain toast.
+    private func showHint(_ hint: Hint) {
+        if windowSwapper?.shown != .classic, let kitHost { kitHost.showHint(hint) } else { state.showToast(hint.message) }
+    }
+
     /// A bridge for one web view: the kit main window, or one of the floating kit panels (each web view has its own).
     /// The bridge runs on the main actor (WebHost hands each page message to it there), so its closures use MainActor.assumeIsolated
     /// to reach AppState. After a change they call loadSessions, so the SwiftUI side and the status item see it too.
@@ -246,7 +257,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             },
             changeRoute: { session in MainActor.assumeIsolated { state.changeProject(session: session) } },
             useAnotherPort: { MainActor.assumeIsolated { state.useAnotherPort() } },
-            checkUpdates: { MainActor.assumeIsolated { Updater.shared.checkNow() } })
+            checkUpdates: { MainActor.assumeIsolated { Updater.shared.checkNow() } },
+            runSetupAction: { id in MainActor.assumeIsolated { state.runSetupAction(id) } })
     }
 
     /// The main window made of the kit screens (a web view). The traffic lights stay native over the page.

@@ -58,14 +58,37 @@ final class AppState: ObservableObject {
 
     func askMic() { Task { _ = await AudioRecorder.askForAccess(); refreshAccess() } }
     func askScreen() {
+        SetupStatus.markAsked("screenRecording")
         Relaunch.armForGrant()
         if !CGRequestScreenCaptureAccess() { openSettings("Privacy_ScreenCapture") }
         refreshAccess()
     }
-    func askAX() { Relaunch.armForGrant(); AXProbe.askForTrust(); openSettings("Privacy_Accessibility") }
+    func askAX() { SetupStatus.markAsked("accessibility"); Relaunch.armForGrant(); AXProbe.askForTrust(); openSettings("Privacy_Accessibility") }
 
     private func openSettings(_ pane: String) {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") { NSWorkspace.shared.open(url) }
+    }
+
+    /// Runs one setup.action id (the Setup checklist buttons) with the same actions the app already has.
+    func runSetupAction(_ id: String) {
+        switch id {
+        case "move": NSWorkspace.shared.activateFileViewerSelecting([Bundle.main.bundleURL])
+        case "allowMicrophone": askMic()
+        case "allowScreenRecording": askScreen()
+        case "allowAccessibility": askAX()
+        case "openMicrophoneSettings": open(settingsPane: "microphone")
+        case "openScreenRecordingSettings": open(settingsPane: "screenRecording")
+        case "openAccessibilitySettings": open(settingsPane: "accessibility")
+        case "install", "updateClaude": if let url = URL(string: SetupStatus.claudeInstallPage) { NSWorkspace.shared.open(url) }
+        case "connect": DispatchQueue.global(qos: .userInitiated).async { AgentInstall.run(force: true) }
+        case "addHook": DispatchQueue.global(qos: .userInitiated).async { AgentInstall.stopHook() }
+        case "retrySpeech": Transcriber.retryPrewarm()
+        default: break
+        }
+    }
+
+    private func open(settingsPane name: String) {
+        if let url = URL(string: SetupStatus.settingsPane(name)) { NSWorkspace.shared.open(url) }
     }
 
     func start(listening: Bool = false) {
@@ -217,7 +240,9 @@ final class AppState: ObservableObject {
     /// are listening and there is a known project to choose; with exactly one listening folder the router already sent it there.
     private func pickProject(_ dir: URL) async {
         guard Router.readRoute(dir) == nil, !Items.items(in: dir, state: nil).items.isEmpty else { return }
-        let choices = Self.pickerChoices(known: Projects.known(), live: LiveSessions.listening())
+        let listening = LiveSessions.listening()
+        let choices = Self.pickerChoices(known: Projects.known(), live: listening)
+        if Self.shouldHintNoSession(choices: choices, listening: listening) { onHint?(.noSession) }
         guard !choices.isEmpty else { return }
         let suggested = Items.items(in: dir, state: nil).items.first?.suggested
         if await routeByPicking(dir, among: choices, suggested: suggested) == nil {
@@ -235,6 +260,14 @@ final class AppState: ObservableObject {
         loadSessions()
         return project
     }
+
+    /// A recording ended with no route, and there is nothing to pick from and no session listening: it stays in the queue unsent.
+    static func shouldHintNoSession(choices: [Project], listening: [LiveSession]) -> Bool {
+        choices.isEmpty && listening.isEmpty
+    }
+
+    /// Called with a short message the page shows in its toast (WebHost.showHint); the app delegate wires it.
+    var onHint: ((Hint) -> Void)?
 
     /// The projects the "Change" picker offers: every known project, the ones with a listening agent session first (`live` is the
     /// listening sessions). The order inside each group is kept.

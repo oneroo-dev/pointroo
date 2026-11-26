@@ -142,4 +142,6 @@ export interface MainToast {
   message: string
   tone: 'ok' | 'muted' | 'warn'
   undo: boolean
+  /** A text button next to the message (a hint's Retry). */
+  actionLabel?: string | undefined
 }

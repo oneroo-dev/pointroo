@@ -98,6 +98,7 @@ const emit = defineEmits<{
   copyHint: []
   undo: []
   undoSent: []
+  toastAction: []
   dismissToast: []
   openSearch: []
   closeSearch: []
@@ -341,7 +342,9 @@ function onBarPress(event: MouseEvent): void {
       :tone="toast.tone"
       :message="toast.message"
       :undo="toast.undo"
+      :action-label="toast.actionLabel ?? ''"
       @undo="emit('undo')"
+      @action="emit('toastAction')"
       @dismiss="emit('dismissToast')"
     />
   </div>

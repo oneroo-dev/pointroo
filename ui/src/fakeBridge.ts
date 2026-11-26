@@ -11,7 +11,10 @@ import type {
   BridgeAppStatus,
   BridgeEventName,
   BridgeEvents,
+  BridgeHint,
   BridgeItem,
+  BridgeSetupRow,
+  BridgeWakeSettings,
   BridgeMethod,
   BridgeMethods,
   BridgeProject,
@@ -39,6 +42,7 @@ declare global {
     pointrooDev?: {
       focusItem(id: string): void
       sent(data: RouteSent): void
+      hint(data: BridgeHint): void
     }
   }
 }
@@ -77,6 +81,10 @@ function toBridgeItem(item: Item): BridgeItem {
   if (item.agent !== undefined && status !== 'open') result.by = item.agent
   if (item.note !== undefined) result.note = item.note
   if (item.how !== 'none') result.routeHow = item.how
+  if (item.wake !== undefined) {
+    const results = { woke: 'sent', 'no-session': 'no owner', busy: 'listening', 'too-old': 'claude code too old for wake (needs 2.1.224+)' }
+    result.wake = item.wake.name === undefined ? { result: results[item.wake.kind] } : { result: results[item.wake.kind], name: item.wake.name }
+  }
   return result
 }
 
@@ -129,6 +137,39 @@ export function createFakeBridge(): Bridge {
 
   // Sample permissions: screen recording starts off so Settings shows an Allow button; asking turns it on.
   const permissions: Record<PermissionName, boolean> = { microphone: true, screenRecording: false, accessibility: true }
+  // Sample setup: a fresh Mac. Each action fixes its row; screen recording says "denied" once it was asked for.
+  const setupState = { inApplications: false, screenAsked: false, tool: false, stopHook: false, speechReady: false }
+
+  function setupRows(): BridgeSetupRow[] {
+    const permission = (id: PermissionName, label: string): BridgeSetupRow => {
+      if (permissions[id]) return { id, state: 'done' }
+      if (id === 'screenRecording' && setupState.screenAsked) return { id, state: 'todo', detail: 'denied', action: 'openScreenRecordingSettings' }
+      return { id, state: 'todo', action: `allow${label}` as BridgeSetupRow['action'] }
+    }
+    const todo = (id: string, done: boolean, action: BridgeSetupRow['action']): BridgeSetupRow => (done ? { id, state: 'done' } : { id, state: 'todo', ...(action === undefined ? {} : { action }) })
+    return [
+      todo('applications', setupState.inApplications, 'move'),
+      permission('microphone', 'Microphone'),
+      permission('screenRecording', 'ScreenRecording'),
+      permission('accessibility', 'Accessibility'),
+      todo('claudeCode', true, 'install'),
+      todo('tool', setupState.tool, 'connect'),
+      todo('stopHook', setupState.stopHook, 'addHook'),
+      setupState.speechReady ? { id: 'speech', state: 'done' } : { id: 'speech', state: 'busy' },
+      todo('wake', true, 'updateClaude'),
+    ]
+  }
+
+  const wakeState: BridgeWakeSettings = {
+    enabled: true,
+    owners: projects.map((project) => ({ project: project.name, owner: 'auto' })),
+    sessions: [
+      { id: 'tinkeroo-main', name: 'Tinkeroo' },
+      { id: 'pointroo-main', name: 'Pointroo lead' },
+    ],
+    last: { project: 'Tinkeroo', name: 'Tinkeroo', at: new Date(Date.now() - 120000).toISOString() },
+  }
+
   // The sample auto-start run goes away when autoRuns.stop is called; changing the Auto-start setting brings it back.
   let sampleRunStopped = false
   const settingValues: Record<SettingKey, SettingValue> = {
@@ -457,6 +498,39 @@ export function createFakeBridge(): Bridge {
       if (wasGoing) emit('status.changed', statusNow())
       return { stopped: wasGoing }
     },
+    'setup.status': () => ({ rows: setupRows() }),
+    'setup.action': (params) => {
+      const actions: Record<string, () => void> = {
+        move: () => (setupState.inApplications = true),
+        allowMicrophone: () => (permissions.microphone = true),
+        allowScreenRecording: () => (setupState.screenAsked = true),
+        allowAccessibility: () => (permissions.accessibility = true),
+        openMicrophoneSettings: () => (permissions.microphone = true),
+        openScreenRecordingSettings: () => (permissions.screenRecording = true),
+        openAccessibilitySettings: () => (permissions.accessibility = true),
+        install: () => undefined,
+        connect: () => (setupState.tool = true),
+        addHook: () => (setupState.stopHook = true),
+        retrySpeech: () => (setupState.speechReady = true),
+        updateClaude: () => undefined,
+      }
+      const run = Object.hasOwn(actions, params.id) ? actions[params.id] : undefined
+      if (run === undefined) throw new BridgeError('bad_params', 'id must be one of the setup actions.')
+      run()
+      emit('status.changed', statusNow())
+      emit('setup.changed', { rows: setupRows() })
+      return { rows: setupRows() }
+    },
+    'wake.get': () => ({ ...wakeState }),
+    'wake.set': (params) => {
+      if (params.enabled !== undefined) wakeState.enabled = params.enabled
+      for (const change of params.owners ?? []) {
+        const entry = wakeState.owners.find((owner) => owner.project === change.project)
+        if (entry === undefined) throw new BridgeError('not_found', 'No such project.')
+        entry.owner = change.owner
+      }
+      return { ...wakeState }
+    },
     'autoRuns.log': (params) => {
       const count = params.lines ?? 50
       if (!Number.isInteger(count) || count < 1 || count > 200) throw new BridgeError('bad_params', 'lines is a whole number from 1 to 200.')
@@ -472,6 +546,7 @@ export function createFakeBridge(): Bridge {
   window.pointrooDev = {
     focusItem: (id) => emit('item.focus', { id }),
     sent: (data) => emit('route.sent', data),
+    hint: (data) => emit('hint.show', data),
   }
 
   return {

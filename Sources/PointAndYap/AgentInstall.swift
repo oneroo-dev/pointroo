@@ -182,6 +182,13 @@ enum AgentInstall {
         return result
     }
 
+    /// True when settings.json already has our Stop hook (the same test stopHook uses to skip). A missing or unreadable file is false.
+    static func hasStopHook(settings: URL = AgentInstall.home.appendingPathComponent(".claude/settings.json")) -> Bool {
+        guard let data = try? Data(contentsOf: settings),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
+        return mergingStopHook(into: object) == nil
+    }
+
     /// Adds the Stop hook to ~/.claude/settings.json (same consent as the MCP add). Backs the file up first. A file with
     /// bad JSON is left alone. When the file is missing it is made only if the ~/.claude folder exists.
     static func stopHook(settings: URL = AgentInstall.home.appendingPathComponent(".claude/settings.json"),

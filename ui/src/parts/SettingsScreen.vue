@@ -7,6 +7,9 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RooButton, RooIconButton, RooSelect, RooSwitch } from '@roo/kit/controls'
 import { RooCollapse, RooIcon, RooSettingRow, RooSettingsGroup, RooStateMark } from '@roo/kit'
 import type { AutoStartChoiceKey, BridgeAutoRun, BridgeLastAutoRun, PermissionName, SettingKey, SettingValue, SettingsValues } from '../types'
+import SetupChecklist from './SetupChecklist.vue'
+import WakeSettings from './WakeSettings.vue'
+import type { SetupRow, WakeSettingsView } from './types'
 import {
   autoStartChoices,
   autoStartOn,
@@ -51,8 +54,12 @@ const props = withDefaults(
     loading?: boolean
     /** "More settings" starts open (the mockups). */
     moreOpen?: boolean
+    /** The Setup checklist at the top. Left out (or empty) while the app has no rows: the group is not drawn. */
+    setupRows?: SetupRow[] | undefined
+    /** The Wake group after the agents group. Left out while the app does not answer: the group is not drawn. */
+    wake?: WakeSettingsView | undefined
   }>(),
-  { permissions: undefined, autoRuns: undefined, lastAutoRun: undefined, stopping: () => [], now: undefined, logLines: undefined, logLoading: false, loading: false, moreOpen: false },
+  { setupRows: undefined, wake: undefined, permissions: undefined, autoRuns: undefined, lastAutoRun: undefined, stopping: () => [], now: undefined, logLines: undefined, logLoading: false, loading: false, moreOpen: false },
 )
 
 const logOpen = computed(() => props.logLines !== undefined || props.logLoading)
@@ -93,6 +100,9 @@ const emit = defineEmits<{
   hideLog: []
   useAnotherPort: []
   checkUpdates: []
+  setupAction: [rowId: string]
+  wakeToggle: [enabled: boolean]
+  wakeOwner: [projectId: string, owner: string]
   back: []
 }>()
 
@@ -222,6 +232,8 @@ function onLanguage(value: string | undefined): void {
         <h2 class="title">Settings</h2>
       </header>
 
+      <SetupChecklist v-if="setupRows !== undefined && setupRows.length > 0" :rows="setupRows" @action="(rowId) => emit('setupAction', rowId)" />
+
       <RooSettingsGroup title="Recording">
         <RooSettingRow v-for="row in recordingRows" :key="row.key" :label="row.label">
           <RooSwitch :model-value="flagValue(row)" :disabled="loading" :aria-label="row.label" @update:model-value="(value) => onFlag(row, value)" />
@@ -308,6 +320,8 @@ function onLanguage(value: string | undefined): void {
           </RooSettingRow>
         </template>
       </RooSettingsGroup>
+
+      <WakeSettings v-if="wake !== undefined" :settings="wake" @toggle="(enabled) => emit('wakeToggle', enabled)" @owner="(projectId, owner) => emit('wakeOwner', projectId, owner)" />
 
       <RooSettingsGroup title="Permissions">
         <RooSettingRow v-if="permissions === undefined" label="Permissions">
