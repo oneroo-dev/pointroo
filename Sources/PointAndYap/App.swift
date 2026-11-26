@@ -10,6 +10,8 @@ struct Main {
         //   Pointroo --items            open and in-progress items
         //   Pointroo --done <id>... [--note "what changed"]
         if args.contains("--items") || args.contains("--done") { QueueCLI.run(args); return }
+        // Wake an open Claude session: Pointroo --wake <local_id or session id> "text"
+        if let index = args.firstIndex(of: "--wake") { exit(SessionWake.run(args, from: index)) }
         // Claude Code Stop hook: Pointroo --hook-stop (JSON on stdin)
         if args.contains("--hook-stop") { HookStop.run(); return }
         // Local MCP server for coding agents: Pointroo --mcp
@@ -87,6 +89,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] n in
             let app = n.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
             MainActor.assumeIsolated { if let app, app != .current { self?.previousApp = app } }
+        }
+        // A new recording wakes the Claude session that owns its project; the send runs off the main thread.
+        Router.onRouteWritten = { info, directory in
+            DispatchQueue.global(qos: .utility).async { SessionWake.wakeForRoute(info, directory: directory) }
         }
         MCPListener.startAtLaunch { [weak self] in self?.state.toast = $0 }
         state.ownUI = { [weak self] in self?.pillRect() }
