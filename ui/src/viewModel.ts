@@ -122,6 +122,7 @@ export function toViewProjects(projects: BridgeProject[]): Project[] {
     name: project.name,
     count: project.open + project.inProgress,
     listening: project.live,
+    sessionOpen: project.sessionOpen,
     folder: project.path,
     recentRank: hasLastUsed ? ranked.findIndex((entry) => entry.index === index) + 1 : index + 1,
   }))

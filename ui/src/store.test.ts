@@ -164,6 +164,32 @@ describe('recording', () => {
   })
 })
 
+describe('no-session banner', () => {
+  function projectReply(live: boolean, sessionOpen: boolean) {
+    return {
+      projects: [{ name: 'Pointroo', path: '~/Workspace/pointroo', aliases: [], live, sessionOpen, agents: live ? ['Claude Code'] : [], open: 0, inProgress: 0 }],
+    }
+  }
+
+  it('it_shows_no_session_when_a_session_runs_but_none_listens', async () => {
+    const stub = createStubBridge({ 'projects.list': () => projectReply(false, true) })
+    const store = createStore(stub.bridge)
+    const stop = store.start()
+    await flush()
+    expect(store.banner?.kind).toBe('no-session')
+    stop()
+  })
+
+  it('it_shows_no_banner_when_one_project_listens', async () => {
+    const stub = createStubBridge({ 'projects.list': () => projectReply(true, false) })
+    const store = createStore(stub.bridge)
+    const stop = store.start()
+    await flush()
+    expect(store.banner).toBeUndefined()
+    stop()
+  })
+})
+
 describe('picker', () => {
   const openReply = {
     open: true,

@@ -296,16 +296,30 @@ final class MCPConnection {
     func waitForNext(timeout: Int, images: Bool) -> [String: Any] {
         let deadline = Date().addingTimeInterval(TimeInterval(timeout))
         var polls = 0
+        markWaiting()
         while true {
             guard isOpen() else { return MCPServer.text("The connection is closed.") }
             let items = Items.openItems(limit: 5, take: true, agent: agent, project: cwd, unrouted: .never, since: startedAt, takerPid: livePid)
             if !items.isEmpty { return MCPServer.handOut(items, take: true, images: images) }
             if Date() >= deadline { break }
             polls += 1
-            if polls % 15 == 0, manageLiveSession { LiveSessions.touch() }
+            if polls % 15 == 0 {
+                if manageLiveSession { LiveSessions.touch() }
+                markWaiting()
+            }
             Thread.sleep(forTimeInterval: 1)
         }
         return MCPServer.text("Nothing new yet. Call wait_for_next again to keep listening.")
+    }
+
+    /// Tells the live file of this session that it listens now. Works for the stdio process (its own pid) and for a
+    /// socket connection (the client's pid in `livePid`).
+    private func markWaiting() {
+        if let livePid {
+            LiveSessions.markWaiting(pid: livePid)
+        } else if manageLiveSession {
+            LiveSessions.markWaiting(pid: getpid())
+        }
     }
 
     func openItems(limit: Int, take: Bool, images: Bool, project: String? = nil) -> [String: Any] {

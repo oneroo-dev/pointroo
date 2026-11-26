@@ -217,7 +217,7 @@ final class AppState: ObservableObject {
     /// are listening and there is a known project to choose; with exactly one listening folder the router already sent it there.
     private func pickProject(_ dir: URL) async {
         guard Router.readRoute(dir) == nil, !Items.items(in: dir, state: nil).items.isEmpty else { return }
-        let choices = Self.pickerChoices(known: Projects.known(), live: LiveSessions.all())
+        let choices = Self.pickerChoices(known: Projects.known(), live: LiveSessions.listening())
         guard !choices.isEmpty else { return }
         let suggested = Items.items(in: dir, state: nil).items.first?.suggested
         if await routeByPicking(dir, among: choices, suggested: suggested) == nil {
@@ -236,8 +236,8 @@ final class AppState: ObservableObject {
         return project
     }
 
-    /// The projects the "Change" picker offers: every known project, the ones with a running agent session first. The order inside
-    /// each group is kept.
+    /// The projects the "Change" picker offers: every known project, the ones with a listening agent session first (`live` is the
+    /// listening sessions). The order inside each group is kept.
     static func changeChoices(known: [Project], live: [LiveSession]) -> [Project] {
         let listening = known.filter { project in live.contains { Router.samePath($0.cwd, project.path) } }
         let others = known.filter { project in !listening.contains { $0.path == project.path } }
@@ -245,7 +245,8 @@ final class AppState: ObservableObject {
     }
 
     /// The projects the picker offers after a recording with no route: nothing when exactly one folder has a listening session
-    /// (that one is sent to without asking), otherwise every known project with the listening ones first.
+    /// (that one is sent to without asking), otherwise every known project with the listening ones first. `live` is the
+    /// listening sessions: a session that is open but does not call wait_for_next does not count.
     static func pickerChoices(known: [Project], live: [LiveSession]) -> [Project] {
         var folders: [String] = []
         for session in live where !folders.contains(where: { Router.samePath($0, session.cwd) }) { folders.append(session.cwd) }
@@ -259,7 +260,7 @@ final class AppState: ObservableObject {
         let dir = Paths.root.appendingPathComponent(session)
         guard !Items.items(in: dir, state: nil).items.isEmpty else { return .missing }
         guard ProjectPicker.snapshot() == nil else { return .busy }
-        let choices = Self.changeChoices(known: Projects.known(), live: LiveSessions.all())
+        let choices = Self.changeChoices(known: Projects.known(), live: LiveSessions.listening())
         guard !choices.isEmpty else { return .missing }
         let current = Router.readRoute(dir)?.path
         Task { _ = await routeByPicking(dir, among: choices, suggested: current) }

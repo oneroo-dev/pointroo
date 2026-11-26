@@ -79,7 +79,10 @@ export interface BridgeProject {
   name: string
   path: string
   aliases: string[]
+  /** An agent session there listens: it called wait_for_next in the last 5 minutes. */
   live: boolean
+  /** A session runs there but does not listen. Never true together with `live`. */
+  sessionOpen: boolean
   agents: string[]
   /** The picker's number key, given to the first nine live projects only. */
   key?: number

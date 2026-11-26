@@ -114,6 +114,8 @@ export function createFakeBridge(): Bridge {
         path: project.folder,
         aliases: [],
         live: project.listening,
+        // Sample: Tableroo has a session open that does not listen, so the "open" hint shows.
+        sessionOpen: project.sessionOpen === true,
         agents: project.listening ? ['Claude Code'] : [],
         open: mine.filter((item) => item.status === 'open').length,
         inProgress: mine.filter((item) => item.status === 'in_progress').length,
