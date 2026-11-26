@@ -101,7 +101,7 @@ final class SessionWakeTests: XCTestCase {
         }
         let bindResult = withUnsafePointer(to: &address) { pointer in
             pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                bind(listener, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+                Darwin.bind(listener, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
             }
         }
         XCTAssertEqual(bindResult, 0)
