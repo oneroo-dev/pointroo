@@ -10,6 +10,8 @@ struct Main {
         //   Pointroo --items            open and in-progress items
         //   Pointroo --done <id>... [--note "what changed"]
         if args.contains("--items") || args.contains("--done") { QueueCLI.run(args); return }
+        // Wake an open Claude session: Pointroo --wake <local_id or session id> "text"
+        if let index = args.firstIndex(of: "--wake") { exit(SessionWake.run(args, from: index)) }
         // Claude Code Stop hook: Pointroo --hook-stop (JSON on stdin)
         if args.contains("--hook-stop") { HookStop.run(); return }
         // Local MCP server for coding agents: Pointroo --mcp
