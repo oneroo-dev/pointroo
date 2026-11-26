@@ -102,7 +102,7 @@ function pick(projectId: string): void {
         <span class="where">
           <ProjectMenu v-if="canChoose" :name="projectName" :projects="projects" :current-id="currentId" @pick="pick" />
           <template v-else>{{ projectName }}</template>
-          <RooTooltip :text="ageTip"><span class="age">{{ ` · ${item.age}` }}</span></RooTooltip>
+          <RooTooltip :text="ageTip"><span class="age">{{ `· ${item.age}` }}</span></RooTooltip>
         </span>
       </span>
       <span class="spacer" />
@@ -233,6 +233,7 @@ function pick(projectId: string): void {
   display: flex;
   min-width: 0;
   align-items: center;
+  gap: var(--roo-space-item);
   white-space: nowrap;
 }
 

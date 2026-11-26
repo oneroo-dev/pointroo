@@ -213,13 +213,14 @@ final class AppState: ObservableObject {
         listenTimer = nil
     }
 
-    /// No rule routed the recording and several agent sessions are running: ask which project it is for, and learn the answer.
+    /// No rule routed the recording: ask which project it is for, and learn the answer. It asks when none or several agent sessions
+    /// are listening and there is a known project to choose; with exactly one listening folder the router already sent it there.
     private func pickProject(_ dir: URL) async {
         guard Router.readRoute(dir) == nil, !Items.items(in: dir, state: nil).items.isEmpty else { return }
-        let live = Projects.liveProjects()
-        guard live.count >= 2 else { return }
+        let choices = Self.pickerChoices(known: Projects.known(), live: LiveSessions.all())
+        guard !choices.isEmpty else { return }
         let suggested = Items.items(in: dir, state: nil).items.first?.suggested
-        if await routeByPicking(dir, among: live, suggested: suggested) == nil {
+        if await routeByPicking(dir, among: choices, suggested: suggested) == nil {
             say("Not sent - kept in the queue")
         }
     }
@@ -241,6 +242,15 @@ final class AppState: ObservableObject {
         let listening = known.filter { project in live.contains { Router.samePath($0.cwd, project.path) } }
         let others = known.filter { project in !listening.contains { $0.path == project.path } }
         return listening + others
+    }
+
+    /// The projects the picker offers after a recording with no route: nothing when exactly one folder has a listening session
+    /// (that one is sent to without asking), otherwise every known project with the listening ones first.
+    static func pickerChoices(known: [Project], live: [LiveSession]) -> [Project] {
+        var folders: [String] = []
+        for session in live where !folders.contains(where: { Router.samePath($0, session.cwd) }) { folders.append(session.cwd) }
+        if folders.count == 1 { return [] }
+        return changeChoices(known: known, live: live)
     }
 
     /// The "Change" button on "Sent to X": opens the picker for a recording that already has a route (or none), with the current
