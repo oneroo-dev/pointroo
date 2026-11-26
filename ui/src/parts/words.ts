@@ -1,5 +1,6 @@
 import type { RooStateMarkState } from '@roo/kit/states'
-import type { Item, ItemState, RouteHow } from './types'
+import { projectNameFor } from './projects'
+import type { Item, ItemState, Project, RouteHow } from './types'
 
 export interface Mark {
   state: RooStateMarkState
@@ -41,10 +42,9 @@ export function plainWords(text: string): string {
 }
 
 /** The quiet part of a row: where it went and when. An item with no project says "Not sent". */
-export function whereLine(item: Item): string {
-  return `${item.project ?? 'Not sent'} · ${item.age}`
+export function whereLine(item: Item, projects: Project[] = []): string {
+  return `${projectNameFor(projects, item.project) ?? 'Not sent'} · ${item.age}`
 }
-
 export function isFinished(item: Item): boolean {
   return item.state === 'done' || item.state === 'done-by-you'
 }
@@ -107,8 +107,8 @@ export function sentToWords(how: RouteHow, followsTitle?: string): string {
   }
 }
 
-export function sentToLine(item: Item): string {
-  return sentToWords(item.how, item.followsTitle).replace('{project}', item.project ?? '')
+export function sentToLine(item: Item, projects: Project[] = []): string {
+  return sentToWords(item.how, item.followsTitle).replace('{project}', projectNameFor(projects, item.project) ?? '')
 }
 
 export function shortReason(how: RouteHow): string {

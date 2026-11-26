@@ -237,6 +237,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     return ProjectPicker.answer(project)
                 }
             },
+            changeRoute: { session in MainActor.assumeIsolated { state.changeProject(session: session) } },
             useAnotherPort: { MainActor.assumeIsolated { state.useAnotherPort() } },
             checkUpdates: { MainActor.assumeIsolated { Updater.shared.checkNow() } })
     }

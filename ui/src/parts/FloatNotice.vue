@@ -3,7 +3,7 @@
 // then "Done in Project", the agent's note (two lines at most), Reply and Open. The keys Enter, R and Esc still work (FloatApp).
 // `question` shows the text (two lines at most), up to three choices with the keys 1 to 3, and Later (L).
 import { RooButton, RooIconButton } from '@roo/kit/controls'
-import { RooIcon, RooKbd, RooStateMark } from '@roo/kit'
+import { RooChip, RooIcon, RooKbd, RooStateMark } from '@roo/kit'
 import FloatingSurface from './FloatingSurface.vue'
 import { doneNoticeNote, noticeChoices, noticeProject } from '../floatModel'
 import type { Notice } from '../types'
@@ -21,14 +21,14 @@ const emit = defineEmits<{ open: [itemId: string]; sayMore: [itemId: string]; di
           <img v-if="notice.cropURL" class="shot-image" :src="notice.cropURL" alt="Before" />
           <RooIcon v-else name="image" :size="16" />
         </span>
-        <figcaption class="shot-tag">Before</figcaption>
+        <figcaption class="shot-tag"><RooChip size="small" shape="pill" label="Before" /></figcaption>
       </figure>
       <figure class="shot">
         <span class="shot-box">
           <img v-if="notice.afterURL" class="shot-image" :src="notice.afterURL" alt="Now" />
           <RooIcon v-else name="image" :size="16" />
         </span>
-        <figcaption class="shot-tag">Now</figcaption>
+        <figcaption class="shot-tag"><RooChip size="small" shape="pill" label="Now" /></figcaption>
       </figure>
     </div>
     <header class="notice-head notice-line">
@@ -158,12 +158,9 @@ const emit = defineEmits<{ open: [itemId: string]; sayMore: [itemId: string]; di
   position: absolute;
   inset-block-end: var(--roo-p-space-1);
   inset-inline-start: var(--roo-p-space-1);
-  padding: 0 var(--roo-p-space-2);
+  display: flex;
   border-radius: var(--roo-p-radius-pill);
   background: var(--roo-surface);
-  font-size: var(--roo-p-size-11);
-  font-weight: 600;
-  line-height: 1.6;
 }
 
 .notice-choices {

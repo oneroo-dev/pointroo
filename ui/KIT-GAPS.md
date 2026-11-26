@@ -36,3 +36,25 @@ Each gap names the stand-in the mockups use today. The app draws none of these i
 | G23 | RooToast has one `actionLabel` plus Undo. The done notice needs two actions (Looks good, Reply) | done notice (H) | Undo button relabelled "Reply" through `undoLabel`, plus `actionLabel="Looks good"` |
 | G24 | RooToastStack is placed on the screen, not inside a frame, so a toast cannot be shown inside a window frame | main window just sent (A, K) | one RooToast placed with `position: absolute` and space tokens inside the frame |
 | G25 | RooLiveDot always shows its word (see G18), so a tile cannot show only the dot | project tiles | large tiles show "Live"; small tiles and list chips leave the dot out |
+
+## Checked against the refreshed kit (K2)
+
+Still open after the refresh (the kit has no part for them): G1, G3, G4, G5, G6, G7, G8, G9, G10, G11, G12, G15, G17, G18, G19, G20, G21,
+G22, G23, G24, G25. G14 and G16 are mock-only. G13 is fixed. The refresh brought KPI note, neutral change tone, person chip, compact table
+meter, chart area fill, RooDialog `iconTone`, rule row lead word width, focus-coloured field border and the single meter readout; none of
+these is a part Pointroo draws, so nothing moved because of them.
+
+Changes from the check:
+- G2: the kit icon `host` draws a monitor, so `monitor` is covered. `mic`, `reply` and `message-circle-question` are still missing.
+- G4 now also covers the places the app draws an image by hand: `parts/ItemList.vue` (112 by 72 crop tile with a count chip),
+  `parts/ItemDetail.vue` (hero image, crop strip buttons, frame strip buttons) and `parts/FloatNotice.vue` (Before and Now tiles).
+  Ask: RooThumb with a fixed aspect, a number chip, a pressed state and a large size for list rows. The count and the Before and Now tags are
+  RooChip now.
+- G3 and G17 apply to `parts/FloatPill.vue` (the 10px red dot with a hidden "Recording" word).
+- G21 applies to `parts/MainWindow.vue` (the project filter row is RooChip pills, an overflow RooMenu and our own "+N").
+
+| # | Gap | Where | What the app does |
+|---|---|---|---|
+| G26 | No callout for a short result note with a tinted fill (RooStateCard has a surface fill and border, so it reads as another card) | `parts/ItemDetail.vue` agent note | own markup on `--roo-ok-bg` with a RooIcon check |
+| G27 | No list row with a large leading image and a two-line clamped title (RooListRow tile is one icon box, title is one line) | `parts/ItemList.vue` queue rows | own row on kit tokens, with RooStateMark and RooProgressLine inside |
+| G28 | No log viewer: wrapping mono lines, role log, scrolls to the newest line (RooCodeBlock scrolls sideways and has no log role) | `parts/SettingsScreen.vue` Auto-start log | own scroll box on kit tokens |

@@ -4,6 +4,7 @@
 import { computed } from 'vue'
 import { RooChip, RooIcon, RooKeyHint, RooListRow, RooLetterTile, RooMeta } from '@roo/kit'
 import type { SearchField } from '../types'
+import { lastFolderName } from './projects'
 import type { SearchHit } from './types'
 
 const props = defineProps<{ results: SearchHit[]; query: string }>()
@@ -63,7 +64,7 @@ function piecesFor(snippet: string): Piece[] {
         @keydown.enter="emit('open', result.item.id)"
       >
         <template #tile>
-          <RooLetterTile v-if="result.item.project !== null" :name="result.item.project" :size="22" />
+          <RooLetterTile v-if="result.item.project !== null" :name="lastFolderName(result.item.project)" :size="22" />
           <RooIcon v-else name="image" :size="16" />
         </template>
         <template #title-trailing>

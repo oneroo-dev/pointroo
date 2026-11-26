@@ -42,10 +42,10 @@ final class FloatingPanelTests: XCTestCase {
         XCTAssertFalse(FloatingChoice.useKit(kitFloating: false, uiAvailable: false))
     }
 
-    func testKitFloatingSettingIsOffWhenNeverSet() throws {
+    func testKitFloatingSettingIsOnWhenNeverSet() throws {
         let key = try XCTUnwrap(WebBridge.allowedSettings.first { $0.key == "kitFloating" })
         guard case .flag(let defaultValue) = key.kind else { return XCTFail("kitFloating must be a flag") }
-        XCTAssertFalse(defaultValue)
+        XCTAssertTrue(defaultValue)
     }
 
     func testPageMessagesAreReadFromWhatTheWebViewPosts() {

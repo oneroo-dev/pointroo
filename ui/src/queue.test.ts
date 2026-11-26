@@ -1,7 +1,7 @@
 // D4: the plain words of a row, the order of the queue and the project chips that fit.
 import { describe, expect, it } from 'vitest'
 
-import { visibleProjects } from './parts/projects'
+import { projectIdFor, projectNameFor, visibleProjects } from './parts/projects'
 import type { Item, ItemState, Project } from './parts/types'
 import { isFinished, orderQueue, plainWords, whereLine } from './parts/words'
 
@@ -21,6 +21,26 @@ describe('the words of a row', () => {
   it('it_says_where_it_went_and_when', () => {
     expect(whereLine(item('a', 'working'))).toBe('Tinkeroo · 4 min ago')
     expect(whereLine(item('b', 'not-sent', null))).toBe('Not sent · 4 min ago')
+  })
+
+  it('it_shows_the_project_name_when_the_item_holds_the_folder_path', () => {
+    const projects: Project[] = [{ ...project('/work/pointroo-app'), name: 'Pointroo' }]
+    expect(whereLine(item('a', 'working', '/work/pointroo-app'), projects)).toBe('Pointroo · 4 min ago')
+    expect(whereLine(item('b', 'working', 'Pointroo'), projects)).toBe('Pointroo · 4 min ago')
+  })
+
+  it('it_falls_back_to_the_last_folder_name_for_a_path_that_is_not_listed', () => {
+    expect(whereLine(item('a', 'working', '/Users/me/Workspace/shellroo/'), [])).toBe('shellroo · 4 min ago')
+    expect(projectNameFor([], '/Users/me/Workspace/shellroo')).toBe('shellroo')
+    expect(projectNameFor([], null)).toBeNull()
+  })
+
+  it('it_finds_the_listed_project_by_path_or_by_name', () => {
+    const projects: Project[] = [{ ...project('/work/pointroo-app'), name: 'Pointroo' }, project('Tinkeroo')]
+    expect(projectIdFor(projects, '/work/pointroo-app')).toBe('/work/pointroo-app')
+    expect(projectIdFor(projects, 'Pointroo')).toBe('/work/pointroo-app')
+    expect(projectIdFor(projects, '/work/missing')).toBeUndefined()
+    expect(projectIdFor(projects, null)).toBeUndefined()
   })
 
   it('it_knows_a_finished_item', () => {

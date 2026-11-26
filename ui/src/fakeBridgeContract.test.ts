@@ -38,6 +38,7 @@ const minimalParams: Record<BridgeMethod, Record<string, unknown>> = {
   'items.reopen': { id: 'nothing' },
   'items.trash': { id: 'nothing' },
   'items.unroute': { id: 'nothing' },
+  'route.change': { session: 'sample' },
   'done.recent': {},
   'session.get': { session: 'sample' },
   'questions.later': { id: 'q1' },

@@ -140,7 +140,7 @@ export function createFakeBridge(): Bridge {
     listenAfterDone: false,
     autoSendSingle: true,
     kitWindow: true,
-    kitFloating: false,
+    kitFloating: true,
     locale: '',
     autoStartAgent: 'off',
     autoStartModel: 'sonnet',
@@ -310,6 +310,16 @@ export function createFakeBridge(): Bridge {
       delete item.routeHow
       changed()
       return { unrouted: true }
+    },
+    'route.change': (params) => {
+      if (typeof params.session !== 'string' || params.session === '' || params.session.includes('/') || params.session.includes('..')) throw new BridgeError('bad_params', 'session is needed.')
+      if (phase === 'picking') throw new BridgeError('busy', 'A project picker is already open.')
+      if (params.session !== 'sample') throw new BridgeError('not_found', 'No such recording.')
+      phase = 'picking'
+      pickerSession = params.session
+      emitRecording()
+      emit('picker.changed', { open: true, session: pickerSession })
+      return { opened: true }
     },
     'items.done': (params) => {
       const item = find(params.id)

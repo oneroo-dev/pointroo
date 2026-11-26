@@ -112,7 +112,7 @@ const moreRows: FlagRow[] = [
   { key: 'listenAfterDone', label: 'Agents keep listening after done', fallback: false },
   { key: 'redactSecrets', label: 'Blur secrets in pictures', description: 'Hides keys and tokens before saving.', fallback: true },
   { key: 'kitWindow', label: 'New window design', description: 'From the next launch.', fallback: true },
-  { key: 'kitFloating', label: 'New floating panels', fallback: false },
+  { key: 'kitFloating', label: 'New floating panels', fallback: true },
 ]
 
 const languages = [

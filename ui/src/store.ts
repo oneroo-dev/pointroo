@@ -20,6 +20,7 @@ import type {
   SettingValue,
   SettingsValues,
 } from './types'
+import { projectFor } from './parts/projects'
 import { sentSeconds } from './floatModel'
 import { matchQuestions, toRecordingView, toViewItem, toViewProjects } from './viewModel'
 
@@ -117,7 +118,7 @@ export function createStore(bridge: Bridge, options: StoreOptions = {}) {
   const rows = computed<Item[]>(() => {
     const list = tab.value === 'now' ? nowItems.value : doneItems.value
     if (filter.value === 'all') return list
-    return list.filter((item) => item.project === filterName.value)
+    return list.filter((item) => item.project === filterName.value || item.project === filter.value)
   })
   /** What the screen draws for each search result: the item the way a queue row has it, and where the words were found. */
   const searchHits = computed<SearchHit[]>(() =>
@@ -273,6 +274,18 @@ export function createStore(bridge: Bridge, options: StoreOptions = {}) {
     clearSent()
     try {
       for (const id of sent.ids) await bridge.call('items.unroute', { id })
+    } catch (error) {
+      fail(error)
+    }
+  }
+
+  /** Change on the pill: the pill goes at once and the app opens the project picker for that recording (route.change). */
+  async function changeSent(): Promise<void> {
+    const sent = lastSent.value
+    if (sent === undefined) return
+    clearSent()
+    try {
+      await bridge.call('route.change', { session: sent.session })
     } catch (error) {
       fail(error)
     }
@@ -550,7 +563,7 @@ export function createStore(bridge: Bridge, options: StoreOptions = {}) {
         if (step.previousName === null) {
           await bridge.call('items.unroute', { id: step.itemId })
         } else {
-          const previous = projects.value.find((project) => project.name === step.previousName)
+          const previous = projectFor(projects.value, step.previousName)
           if (previous === undefined) throw new Error('The old project is not there any more.')
           await bridge.call('items.reroute', { id: step.itemId, project: previous.folder })
         }
@@ -777,6 +790,7 @@ export function createStore(bridge: Bridge, options: StoreOptions = {}) {
     notices,
     lastSent,
     undoSent,
+    changeSent,
     noticeCount: computed(() => notices.value.length),
     searchState,
     searchOpen,
