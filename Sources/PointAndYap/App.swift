@@ -90,6 +90,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let app = n.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
             MainActor.assumeIsolated { if let app, app != .current { self?.previousApp = app } }
         }
+        // A new recording wakes the Claude session that owns its project; the send runs off the main thread.
+        Router.onRouteWritten = { info, directory in
+            DispatchQueue.global(qos: .utility).async { SessionWake.wakeForRoute(info, directory: directory) }
+        }
         MCPListener.startAtLaunch { [weak self] in self?.state.toast = $0 }
         state.ownUI = { [weak self] in self?.pillRect() }
         state.onRecordingChanged = { [weak self] on in self?.recording(on) }

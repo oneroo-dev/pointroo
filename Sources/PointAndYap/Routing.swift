@@ -338,7 +338,7 @@ enum Router {
         return a == b || a.hasPrefix(b + "/") || b.hasPrefix(a + "/")
     }
 
-    private static func canonical(_ path: String) -> String {
+    static func canonical(_ path: String) -> String {
         URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
     }
 
@@ -358,6 +358,9 @@ enum Router {
         (try? Data(contentsOf: routeURL(directory))).flatMap { try? JSONDecoder().decode(RouteInfo.self, from: $0) }
     }
 
+    /// Set once by the GUI app at startup (never by the CLI paths or tests). Called after every route is written.
+    nonisolated(unsafe) static var onRouteWritten: ((RouteInfo, URL) -> Void)?
+
     /// Saves route.json. A recording that is sent no longer needs a suggestion, so suggest.json is removed.
     /// Every route goes through here, so this is where auto-start hears about it (it does nothing while the setting is off).
     static func writeRoute(_ info: RouteInfo, to directory: URL) {
@@ -365,6 +368,7 @@ enum Router {
         removeSuggest(in: directory)
         AutoStart.shared.routed(folder: info.path)
         FloatingWatcher.openReadWindow()
+        onRouteWritten?(info, directory)
     }
 
     static func suggestURL(_ directory: URL) -> URL { directory.appendingPathComponent("suggest.json") }

@@ -128,4 +128,137 @@ final class SessionWakeTests: XCTestCase {
         wait(for: [received], timeout: 5)
         XCTAssertEqual(collected, data)
     }
+
+    private func entry(pid: Int, sessionId: String = "s", host: String? = nil, name: String? = nil,
+                       status: String? = nil, cwd: String? = nil,
+                       socket: String? = "/tmp/cc-socks/x.sock") -> ClaudeSessionEntry {
+        ClaudeSessionEntry(pid: pid, sessionId: sessionId + String(pid), hostSessionId: host, name: name,
+                           messagingSocketPath: socket, status: status, cwd: cwd)
+    }
+
+    private func owner(_ entries: [ClaudeSessionEntry], owners: [String: String] = [:], aliases: [String] = [],
+                       project: String = "shop", path: String = "/work/shop") -> ClaudeSessionEntry? {
+        SessionWake.owner(for: project, path: path, entries: entries, owners: owners, aliases: aliases,
+                          socketCheck: { _ in true })
+    }
+
+    func testOwnerFromOwnersFileWins() {
+        let entries = [entry(pid: 1, name: "shop", cwd: "/work/shop"), entry(pid: 2, host: "local_abc")]
+        XCTAssertEqual(owner(entries, owners: ["shop": "local_abc"])?.pid, 2)
+    }
+
+    func testOwnerNameMatchIgnoresCaseAndUsesAliases() {
+        let entries = [entry(pid: 1, name: "SHOP"), entry(pid: 2, name: "other")]
+        XCTAssertEqual(owner(entries)?.pid, 1)
+        XCTAssertEqual(owner([entry(pid: 3, name: "Store")], aliases: ["store"])?.pid, 3)
+    }
+
+    func testOwnerCwdExactBeatsInside() {
+        let entries = [entry(pid: 1, cwd: "/work/shop/sub"), entry(pid: 2, cwd: "/work/shop")]
+        XCTAssertEqual(owner(entries)?.pid, 2)
+    }
+
+    func testOwnerDeepestInsideWins() {
+        let entries = [entry(pid: 1, cwd: "/work/shop/a"), entry(pid: 2, cwd: "/work/shop/a/b")]
+        XCTAssertEqual(owner(entries)?.pid, 2)
+    }
+
+    func testOwnerTieBreakDesktopThenIdleThenPid() {
+        let desktop = [entry(pid: 5, name: "shop"), entry(pid: 1, host: "local_x", name: "shop")]
+        XCTAssertEqual(owner(desktop)?.pid, 1)
+        let idle = [entry(pid: 5, name: "shop", status: "busy"), entry(pid: 1, name: "shop", status: "idle")]
+        XCTAssertEqual(owner(idle)?.pid, 1)
+        let newest = [entry(pid: 5, name: "shop"), entry(pid: 9, name: "shop")]
+        XCTAssertEqual(owner(newest)?.pid, 9)
+    }
+
+    func testOwnerSkipsUnsafeSocketAndMissingMatch() {
+        let entries = [entry(pid: 1, name: "shop")]
+        let skipped = SessionWake.owner(for: "shop", path: "/work/shop", entries: entries, owners: [:],
+                                        socketCheck: { _ in false })
+        XCTAssertNil(skipped)
+        XCTAssertNil(owner([entry(pid: 2, name: "other", cwd: "/elsewhere")]))
+        XCTAssertNil(owner([entry(pid: 3, name: "shop", socket: nil)]))
+    }
+
+    private func wake(_ info: RouteInfo, entries: [ClaudeSessionEntry], enabled: Bool = true,
+                      listening: [LiveSession] = [], sent: inout [(Data, String)]) -> String? {
+        var captured: [(Data, String)] = []
+        let result = SessionWake.wakeForRoute(info, directory: folder, enabled: enabled, entries: entries, owners: [:],
+                                              projects: [], listening: listening, socketCheck: { _ in true },
+                                              sender: { captured.append(($0, $1)) }, log: { _ in })
+        sent.append(contentsOf: captured)
+        return result
+    }
+
+    func testWakeSendsOnceWithTextAndSessionId() throws {
+        let entries = [entry(pid: 7, host: "local_h", name: "shop")]
+        let info = RouteInfo(project: "shop", path: "/work/shop", how: "said")
+        var sent: [(Data, String)] = []
+        XCTAssertEqual(wake(info, entries: entries, sent: &sent), "sent")
+        XCTAssertEqual(sent.count, 1)
+        XCTAssertEqual(sent[0].1, "/tmp/cc-socks/x.sock")
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: sent[0].0.dropLast()) as? [String: Any])
+        XCTAssertEqual(object["session_id"] as? String, "s7")
+        let message = try XCTUnwrap(object["message"] as? [String: Any])
+        let content = try XCTUnwrap(message["content"] as? String)
+        XCTAssertTrue(content.contains(SessionWake.wakeText(folder: folder.lastPathComponent, project: "shop")))
+
+        let record = try XCTUnwrap(SessionWake.readWake(folder))
+        XCTAssertEqual(record.project, "shop")
+        XCTAssertEqual(record.target, "local_h")
+        XCTAssertEqual(record.pid, 7)
+        XCTAssertEqual(record.result, "sent")
+
+        XCTAssertNil(wake(info, entries: entries, sent: &sent))
+        XCTAssertEqual(sent.count, 1)
+    }
+
+    func testWakeDifferentProjectSendsAgain() {
+        let entries = [entry(pid: 7, name: "shop"), entry(pid: 8, name: "blog")]
+        var sent: [(Data, String)] = []
+        _ = wake(RouteInfo(project: "shop", path: "/work/shop", how: "said"), entries: entries, sent: &sent)
+        _ = wake(RouteInfo(project: "blog", path: "/work/blog", how: "said"), entries: entries, sent: &sent)
+        XCTAssertEqual(sent.count, 2)
+        XCTAssertEqual(SessionWake.readWake(folder)?.project, "blog")
+    }
+
+    func testWakeSkipsListeningProject() {
+        let live = LiveSession(pid: 1, cwd: "/work/shop", agent: "claude", started: Date(), lastSeen: Date())
+        var sent: [(Data, String)] = []
+        let result = wake(RouteInfo(project: "shop", path: "/work/shop", how: "said"),
+                          entries: [entry(pid: 7, name: "shop")], listening: [live], sent: &sent)
+        XCTAssertEqual(result, "listening")
+        XCTAssertTrue(sent.isEmpty)
+        XCTAssertEqual(SessionWake.readWake(folder)?.result, "listening")
+    }
+
+    func testWakeOffSwitchDoesNothing() {
+        var sent: [(Data, String)] = []
+        let result = wake(RouteInfo(project: "shop", path: "/work/shop", how: "said"),
+                          entries: [entry(pid: 7, name: "shop")], enabled: false, sent: &sent)
+        XCTAssertNil(result)
+        XCTAssertTrue(sent.isEmpty)
+        XCTAssertNil(SessionWake.readWake(folder))
+    }
+
+    func testWakeNoOwnerIsRecorded() {
+        var sent: [(Data, String)] = []
+        let result = wake(RouteInfo(project: "shop", path: "/work/shop", how: "said"), entries: [], sent: &sent)
+        XCTAssertEqual(result, "no owner")
+        XCTAssertEqual(SessionWake.readWake(folder)?.result, "no owner")
+    }
+
+    func testWriteRouteCallsHookOnceAndNilHookDoesNothing() {
+        let info = RouteInfo(project: "shop", path: "/work/shop", how: "said")
+        let saved = Router.onRouteWritten
+        defer { Router.onRouteWritten = saved }
+        Router.onRouteWritten = nil
+        Router.writeRoute(info, to: folder)
+        XCTAssertNil(SessionWake.readWake(folder))
+        var calls = 0
+        Router.onRouteWritten = { _, _ in calls += 1 }
+        Router.writeRoute(info, to: folder)
+        XCTAssertEqual(calls, 1)
+    }
 }

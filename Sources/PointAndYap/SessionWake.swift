@@ -9,6 +9,7 @@ struct ClaudeSessionEntry: Decodable, Equatable {
     var name: String?
     var messagingSocketPath: String?
     var status: String?
+    var cwd: String? = nil
 }
 
 enum SessionWake {
@@ -166,6 +167,125 @@ enum SessionWake {
         } catch {
             print("failed: \(error)")
             return 1
+        }
+    }
+}
+
+// What was done for one recording, saved as wake.json in the recording folder.
+struct WakeRecord: Codable, Equatable {
+    var project: String
+    var target: String?
+    var name: String?
+    var pid: Int?
+    var at: Date
+    var result: String
+}
+
+extension SessionWake {
+    static func wakeURL(_ directory: URL) -> URL { directory.appendingPathComponent("wake.json") }
+
+    static func readWake(_ directory: URL) -> WakeRecord? {
+        (try? Data(contentsOf: wakeURL(directory))).flatMap { try? JSONDecoder.iso.decode(WakeRecord.self, from: $0) }
+    }
+
+    // owners.json in the support folder: project name -> hostSessionId or sessionId. Missing file = empty.
+    static func loadOwners(from file: URL = Paths.support.appendingPathComponent("owners.json")) -> [String: String] {
+        guard let data = try? Data(contentsOf: file),
+              let map = try? JSONDecoder().decode([String: String].self, from: data) else { return [:] }
+        var result: [String: String] = [:]
+        for (name, target) in map { result[name.lowercased()] = target }
+        return result
+    }
+
+    static func wakeText(folder: String, project: String) -> String {
+        "New Pointroo recording \(folder) for \(project). Call get_open_items with scope \"all\" (pointroo MCP), "
+            + "take the item(s) for \(project), do them, mark_done with the fix commit in the note. "
+            + "release_items anything that is not yours."
+    }
+
+    // True when the first entry wins over the second: desktop, then idle, then the higher pid.
+    private static func ranksHigher(_ first: ClaudeSessionEntry, _ second: ClaudeSessionEntry) -> Bool {
+        let firstDesktop = first.hostSessionId != nil
+        let secondDesktop = second.hostSessionId != nil
+        if firstDesktop != secondDesktop { return firstDesktop }
+        let firstIdle = first.status == "idle"
+        let secondIdle = second.status == "idle"
+        if firstIdle != secondIdle { return firstIdle }
+        return first.pid > second.pid
+    }
+
+    private static func best(_ candidates: [ClaudeSessionEntry]) -> ClaudeSessionEntry? {
+        candidates.sorted(by: ranksHigher).first
+    }
+
+    // Who owns a project: owners.json, then a session named like the project or an alias (ignoring case),
+    // then a session whose cwd is the project path, else the deepest one inside it.
+    static func owner(for project: String, path: String, entries: [ClaudeSessionEntry],
+                      owners: [String: String], aliases: [String] = [],
+                      socketCheck: (String) -> Bool = { SessionWake.safeSocket($0) }) -> ClaudeSessionEntry? {
+        let usable = entries.filter { entry in
+            guard let socketPath = entry.messagingSocketPath else { return false }
+            return socketCheck(socketPath)
+        }
+        if let target = owners[project.lowercased()] {
+            let matches = usable.filter { $0.hostSessionId == target || $0.sessionId == target }
+            if let found = best(matches) { return found }
+        }
+        let names = ([project] + aliases).map { $0.lowercased() }
+        let named = usable.filter { entry in
+            guard let name = entry.name?.lowercased() else { return false }
+            return names.contains(name)
+        }
+        if let found = best(named) { return found }
+        let projectPath = Router.canonical(path)
+        let exact = usable.filter { entry in entry.cwd.map { Router.canonical($0) == projectPath } ?? false }
+        if let found = best(exact) { return found }
+        let inside = usable.filter { entry in entry.cwd.map { Router.canonical($0).hasPrefix(projectPath + "/") } ?? false }
+        let depths = inside.map { Router.canonical($0.cwd ?? "").count }
+        guard let deepest = depths.max() else { return nil }
+        return best(inside.filter { Router.canonical($0.cwd ?? "").count == deepest })
+    }
+
+    // Wakes the session that owns the routed project and writes wake.json. Returns the result text, or nil when
+    // nothing was done (switch off, or the same project was already handled). Every input can be injected for tests.
+    @discardableResult
+    static func wakeForRoute(_ info: RouteInfo, directory: URL,
+                             enabled: Bool = (UserDefaults.standard.object(forKey: "wakeSessions") as? Bool) ?? true,
+                             entries: [ClaudeSessionEntry]? = nil,
+                             owners: [String: String]? = nil,
+                             projects: [Project]? = nil,
+                             listening: [LiveSession]? = nil,
+                             socketCheck: (String) -> Bool = { SessionWake.safeSocket($0) },
+                             sender: (Data, String) throws -> Void = { try SessionWake.send($0, to: $1) },
+                             now: Date = Date(),
+                             log: (String) -> Void = { NSLog("pointroo: \($0)") }) -> String? {
+        guard enabled else { return nil }
+        if readWake(directory)?.project == info.project { return nil }
+        let folderName = directory.lastPathComponent
+
+        func record(_ target: String?, _ entry: ClaudeSessionEntry?, _ result: String) -> String {
+            writeLogged(WakeRecord(project: info.project, target: target, name: entry?.name,
+                                   pid: entry?.pid, at: now, result: result), to: wakeURL(directory))
+            log("wake \(folderName) for \(info.project): \(result)")
+            return result
+        }
+
+        let listeners = listening ?? LiveSessions.listening()
+        if listeners.contains(where: { Router.samePath($0.cwd, info.path) }) { return record(nil, nil, "listening") }
+
+        let knownProjects = projects ?? Projects.known()
+        let matched = knownProjects.first { Router.samePath($0.path, info.path) || $0.name.lowercased() == info.project.lowercased() }
+        let sessionEntries = entries ?? Self.entries(in: defaultFolder)
+        let found = owner(for: info.project, path: info.path, entries: sessionEntries, owners: owners ?? loadOwners(),
+                          aliases: matched?.aliases ?? [], socketCheck: socketCheck)
+        guard let entry = found, let socketPath = entry.messagingSocketPath else { return record(nil, nil, "no owner") }
+        let target = entry.hostSessionId ?? entry.sessionId
+        do {
+            let data = try frame(text: wakeText(folder: folderName, project: info.project), sessionId: entry.sessionId)
+            try sender(data, socketPath)
+            return record(target, entry, "sent")
+        } catch {
+            return record(target, entry, "failed: \(error)")
         }
     }
 }
