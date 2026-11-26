@@ -23,6 +23,43 @@ enum Transcriber {
         Projects.known().flatMap { [$0.name] + $0.aliases }.filter { !$0.isEmpty }
     }
 
+    /// Lets each locale be claimed once, so the model download starts only once per locale in one app run.
+    final class PrewarmGate: @unchecked Sendable {
+        private let lock = NSLock()
+        private var claimed: Set<String> = []
+        func claim(_ identifier: String) -> Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return claimed.insert(identifier).inserted
+        }
+    }
+
+    static let prewarmGate = PrewarmGate()
+
+    /// At launch: starts the same model download the first recording would, so that recording does not wait or fail.
+    /// Once per locale. Log lines only.
+    static func prewarm(locale wanted: Locale = wantedLocale, gate: PrewarmGate = prewarmGate,
+                        log: (String) -> Void = { NSLog("pointroo: \($0)") }) async {
+        guard gate.claim(wanted.identifier) else { return }
+        guard let locale = await SpeechTranscriber.supportedLocale(equivalentTo: wanted) else {
+            log("speech model: no on-device model for \(wanted.identifier)")
+            return
+        }
+        let transcriber = SpeechTranscriber(locale: locale, transcriptionOptions: [], reportingOptions: [],
+                                            attributeOptions: [.audioTimeRange])
+        do {
+            if let request = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
+                log("speech model: downloading for \(locale.identifier)")
+                try await request.downloadAndInstall()
+                log("speech model: ready for \(locale.identifier)")
+            } else {
+                log("speech model: already installed for \(locale.identifier)")
+            }
+        } catch {
+            log("speech model: \(error)")
+        }
+    }
+
     static func words(from audio: URL, locale wanted: Locale = wantedLocale, hints: [String] = projectHints()) async throws -> [Word] {
         guard let locale = await SpeechTranscriber.supportedLocale(equivalentTo: wanted) else {
             throw Failure.noLocale(wanted.identifier)

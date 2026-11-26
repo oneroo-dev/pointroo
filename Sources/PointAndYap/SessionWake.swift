@@ -33,8 +33,6 @@ enum SessionWake {
         }
     }
 
-    static let allowedPrefixes = ["/tmp/cc-socks/", "/tmp/cc-socks-"]
-
     static var defaultFolder: URL {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".claude/sessions")
@@ -89,13 +87,26 @@ enum SessionWake {
         return data
     }
 
-    static func safeSocket(_ path: String, allowedPrefixes: [String] = SessionWake.allowedPrefixes) -> Bool {
+    // True for a folder named cc-socks or cc-socks-<digits>.
+    static func isSocketFolderName(_ name: String) -> Bool {
+        name.range(of: "^cc-socks(-[0-9]+)?$", options: .regularExpression) != nil
+    }
+
+    // A Claude socket is safe when: no "..", the file is a real socket (not a link) owned by us, and its folder is
+    // named cc-socks or cc-socks-<digits>, is a real folder owned by us, with no group or other permission bits.
+    static func safeSocket(_ path: String, owner: uid_t = getuid()) -> Bool {
         guard !path.contains("..") else { return false }
-        guard allowedPrefixes.contains(where: { path.hasPrefix($0) }) else { return false }
+        let parent = (path as NSString).deletingLastPathComponent
+        guard isSocketFolderName((parent as NSString).lastPathComponent) else { return false }
+        var folderInfo = stat()
+        guard lstat(parent, &folderInfo) == 0 else { return false }
+        guard (folderInfo.st_mode & S_IFMT) == S_IFDIR else { return false }
+        guard folderInfo.st_uid == owner else { return false }
+        guard (folderInfo.st_mode & 0o077) == 0 else { return false }
         var info = stat()
         guard lstat(path, &info) == 0 else { return false }
         guard (info.st_mode & S_IFMT) == S_IFSOCK else { return false }
-        return info.st_uid == getuid()
+        return info.st_uid == owner
     }
 
     static func send(_ data: Data, to path: String) throws {
@@ -278,7 +289,13 @@ extension SessionWake {
         let sessionEntries = entries ?? Self.entries(in: defaultFolder)
         let found = owner(for: info.project, path: info.path, entries: sessionEntries, owners: owners ?? loadOwners(),
                           aliases: matched?.aliases ?? [], socketCheck: socketCheck)
-        guard let entry = found, let socketPath = entry.messagingSocketPath else { return record(nil, nil, "no owner") }
+        guard let entry = found, let socketPath = entry.messagingSocketPath else {
+            // An old Claude Code writes registry files without a socket path: it cannot be woken.
+            if !sessionEntries.isEmpty, sessionEntries.allSatisfy({ $0.messagingSocketPath == nil }) {
+                return record(nil, nil, "claude code too old for wake (needs 2.1.224+)")
+            }
+            return record(nil, nil, "no owner")
+        }
         let target = entry.hostSessionId ?? entry.sessionId
         do {
             let data = try frame(text: wakeText(folder: folderName, project: info.project), sessionId: entry.sessionId)
