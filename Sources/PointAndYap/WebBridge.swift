@@ -505,10 +505,11 @@ final class WebBridge {
         return result
     }
 
-    /// Newest first by the item's date; items with no date go last; equal dates keep their order.
-    private static func newestFirst(_ items: [Item]) -> [Item] {
+    /// Newest first by the item's date, else the time its recording started (an open item has no state date yet, so it
+    /// would otherwise keep the oldest-first order the sessions are read in); items with neither go last; equal dates keep their order.
+    static func newestFirst(_ items: [Item]) -> [Item] {
         items.enumerated().sorted { first, second in
-            switch (first.element.at, second.element.at) {
+            switch (first.element.at ?? Items.recordedAt(first.element.session), second.element.at ?? Items.recordedAt(second.element.session)) {
             case let (one?, two?): return one != two ? one > two : first.offset < second.offset
             case (nil, nil): return first.offset < second.offset
             case (_?, nil): return true

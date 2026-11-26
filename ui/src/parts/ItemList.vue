@@ -128,7 +128,7 @@ function onRowKey(event: KeyboardEvent, itemId: string): void {
             <span class="where">
               <ProjectMenu v-if="canChoose(item)" :name="nameOf(item)" :projects="projects" :current-id="currentIdOf(item)" @pick="(projectId) => pickFor(item, projectId)" />
               <template v-else>{{ nameOf(item) }}</template>
-              <span class="age">{{ ` · ${item.age}` }}</span>
+              <span class="age">{{ `· ${item.age}` }}</span>
             </span>
           </span>
         </span>
@@ -252,6 +252,7 @@ function onRowKey(event: KeyboardEvent, itemId: string): void {
   display: flex;
   min-width: 0;
   align-items: center;
+  gap: var(--roo-space-item);
   white-space: nowrap;
 }
 

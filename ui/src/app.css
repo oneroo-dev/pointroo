@@ -5,6 +5,12 @@ body,
   margin: 0;
 }
 
+/* The kit sets `background: var(--roo-bg)` on :root (tokens/base.css) and WebKit paints the root background over the whole canvas,
+   so a floating panel showed a grey rectangle behind its card. This unlayered rule beats the kit's layered one. */
+html.float-page {
+  background: transparent;
+}
+
 body {
   overflow: hidden;
   background: transparent;
