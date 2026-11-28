@@ -208,9 +208,9 @@ final class PointAndYapTests: XCTestCase {
         let live = LiveSessions.all()
         XCTAssertEqual(live.map(\.cwd), ["/work/live-one"])
         XCTAssertFalse(FileManager.default.fileExists(atPath: LiveSessions.file(2_000_000_000).path), "dead pid file is deleted")
-        let known = Projects.known(file: projects + [Project(name: "x", path: "/work/live-one")], live: live)
+        let known = Projects.known(file: projects + [Project(name: "x", path: "/work/live-one")], live: live, claude: [], owners: [:])
         XCTAssertEqual(known.filter { $0.path == "/work/live-one" }.count, 1)
-        XCTAssertEqual(Projects.known(file: projects, live: live).last?.name, "live-one")
+        XCTAssertEqual(Projects.known(file: projects, live: live, claude: [], owners: [:]).last?.name, "live-one")
         LiveSessions.unregister()
         XCTAssertTrue(LiveSessions.all().isEmpty)
     }
