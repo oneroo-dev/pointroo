@@ -65,12 +65,15 @@ final class FloatingWatcher {
     private var arrivals = QuestionArrivals()
     private var timer: Timer?
     private var isReading = false
-    private var windowOpenedAt: Date?
+    /// When the read window was last opened (nil if never). Readable so a test can see that the notification arrived.
+    private(set) var windowOpenedAt: Date?
     private var lastQuestionCheck: Date?
     private var hasItemBaseline = false
     private var observer: NSObjectProtocol?
     private let onSent: ([String: Any]) -> Void
     private let onQuestion: () -> Void
+    private let now: () -> Date
+    private let usesTimer: Bool
 
     /// Tells the watcher to read items now, for the next 30 seconds. A second call restarts the 30 seconds.
     nonisolated static func openReadWindow() {
@@ -78,20 +81,26 @@ final class FloatingWatcher {
     }
 
     /// `onSent` gets the route.sent event data; `onQuestion` is called once for each look that finds a new question.
-    init(onSent: @escaping ([String: Any]) -> Void, onQuestion: @escaping () -> Void) {
+    /// `now` is the clock and `usesTimer` false skips the one second timer (so only the notification is watched); tests set both.
+    init(onSent: @escaping ([String: Any]) -> Void, onQuestion: @escaping () -> Void,
+         now: @escaping () -> Date = { Date() }, usesTimer: Bool = true) {
         self.onSent = onSent
         self.onQuestion = onQuestion
+        self.now = now
+        self.usesTimer = usesTimer
     }
 
     func start() {
-        guard timer == nil else { return }
-        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.tick() }
+        guard observer == nil else { return }
+        if usesTimer {
+            let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+                Task { @MainActor [weak self] in self?.tick() }
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            self.timer = timer
         }
-        RunLoop.main.add(timer, forMode: .common)
-        self.timer = timer
         observer = NotificationCenter.default.addObserver(forName: .floatingReadWindowOpen, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.windowOpenedAt = Date() }
+            MainActor.assumeIsolated { if let self { self.windowOpenedAt = self.now() } }
         }
     }
 
@@ -112,7 +121,7 @@ final class FloatingWatcher {
             return
         }
         guard !isReading else { return }
-        let now = Date()
+        let now = self.now()
         let reads = WatcherSchedule.reads(now: now, windowOpenedAt: windowOpenedAt, lastQuestionCheck: lastQuestionCheck,
                                           needsBaseline: !hasItemBaseline, kitFloating: true)
         guard reads.items || reads.questions else { return }
