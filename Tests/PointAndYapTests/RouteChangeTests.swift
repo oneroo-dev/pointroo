@@ -117,6 +117,29 @@ final class RouteChangeTests: XCTestCase {
         _ = await other.value
     }
 
+    func testChangeOpensThePickerWithTheListeningProjectFirstAndTheCurrentOneSuggested() async throws {
+        let dir = try T1Support.makeSession("2026-11-28_route-change-opened", project: "/work/backend")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let live = [LiveSession(pid: 1, cwd: "/work/web", agent: "Claude Code", started: Date(), lastSeen: Date())]
+        let state = AppState()
+        let result = state.changeProject(session: dir.lastPathComponent, known: { [backend, web] }, listening: { live })
+        XCTAssertEqual(result, .opened)
+        await waitForPicker()
+        let snapshot = try XCTUnwrap(ProjectPicker.snapshot())
+        XCTAssertEqual(snapshot.session, dir.lastPathComponent)
+        XCTAssertEqual(snapshot.choices.map(\.name), ["web", "backend"])
+        XCTAssertEqual(snapshot.choices.map(\.suggested), [false, true])
+        ProjectPicker.answer(nil)
+    }
+
+    func testChangeIsMissingWhenNoProjectIsKnown() throws {
+        let dir = try T1Support.makeSession("2026-11-28_route-change-no-projects", project: "/work/backend")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let result = AppState().changeProject(session: dir.lastPathComponent, known: { [] }, listening: { [] })
+        XCTAssertEqual(result, .missing)
+        XCTAssertNil(ProjectPicker.snapshot())
+    }
+
     func testTheChoicesPutProjectsWithARunningSessionFirst() {
         let docs = Project(name: "docs", path: "/work/docs")
         let live = [LiveSession(pid: 1, cwd: "/work/docs", agent: "Claude Code", started: Date(), lastSeen: Date())]

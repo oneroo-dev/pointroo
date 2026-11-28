@@ -289,11 +289,13 @@ final class AppState: ObservableObject {
 
     /// The "Change" button on "Sent to X": opens the picker for a recording that already has a route (or none), with the current
     /// project marked as the suggestion. It answers at once; the pick is handled in the background.
-    func changeProject(session: String) -> WebBridge.ChangeRouteResult {
+    /// `known` and `listening` default to the real registry and live sessions; tests give their own.
+    func changeProject(session: String, known: () -> [Project] = { Projects.known() },
+                       listening: () -> [LiveSession] = { LiveSessions.listening() }) -> WebBridge.ChangeRouteResult {
         let dir = Paths.root.appendingPathComponent(session)
         guard !Items.items(in: dir, state: nil).items.isEmpty else { return .missing }
         guard ProjectPicker.snapshot() == nil else { return .busy }
-        let choices = Self.changeChoices(known: Projects.known(), live: LiveSessions.listening())
+        let choices = Self.changeChoices(known: known(), live: listening())
         guard !choices.isEmpty else { return .missing }
         let current = Router.readRoute(dir)?.path
         Task { _ = await routeByPicking(dir, among: choices, suggested: current) }
