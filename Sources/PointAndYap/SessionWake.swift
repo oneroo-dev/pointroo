@@ -33,8 +33,13 @@ enum SessionWake {
         }
     }
 
+    // Tests set POINTANDYAP_SUPPORT (see Paths.support); then the registry is a "claude-sessions" folder beside it,
+    // which is empty unless a test writes there. The app never sets it and reads the real ~/.claude/sessions.
     static var defaultFolder: URL {
-        FileManager.default.homeDirectoryForCurrentUser
+        if let support = ProcessInfo.processInfo.environment["POINTANDYAP_SUPPORT"] {
+            return URL(fileURLWithPath: support).deletingLastPathComponent().appendingPathComponent("claude-sessions")
+        }
+        return FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".claude/sessions")
     }
 

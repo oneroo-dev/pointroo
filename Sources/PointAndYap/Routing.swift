@@ -124,27 +124,47 @@ enum LiveSessions {
 enum Projects {
     static var file: URL { Paths.support.appendingPathComponent("projects.json") }
 
-    static func load() -> [Project] {
-        (try? Data(contentsOf: file)).flatMap { try? JSONDecoder().decode([Project].self, from: $0) } ?? []
+    static func load(from url: URL = file) -> [Project] {
+        (try? Data(contentsOf: url)).flatMap { try? JSONDecoder().decode([Project].self, from: $0) } ?? []
     }
 
-    static func save(_ projects: [Project]) {
-        try? FileManager.default.createDirectory(at: Paths.support, withIntermediateDirectories: true)
-        writeLogged(projects, to: file)
+    static func save(_ projects: [Project], to url: URL = file) {
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        writeLogged(projects, to: url)
     }
 
-    /// The projects file plus the folders of live sessions (named after the folder), one entry per path.
-    static func known(file projects: [Project] = load(), live: [LiveSession] = LiveSessions.all()) -> [Project] {
+    /// The projects file first, then the folders of owners.json sessions (named by the owners.json key), the folders of
+    /// live sessions and the folders of open Claude Code sessions (both named after the folder), one entry per path.
+    /// A Claude session that does not use the pointroo MCP is still a project this way.
+    /// `claude` and `owners` default to the real registry and owners.json; tests give their own.
+    static func known(file projects: [Project] = load(), live: [LiveSession] = LiveSessions.all(),
+                      claude: [ClaudeSessionEntry] = SessionWake.entries(in: SessionWake.defaultFolder),
+                      owners: [String: String] = SessionWake.loadOwners()) -> [Project] {
         var result = projects
-        for session in live where !result.contains(where: { Router.samePath($0.path, session.cwd) }) {
-            result.append(Project(name: URL(fileURLWithPath: session.cwd).lastPathComponent, path: session.cwd))
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        func add(name: String, path: String) {
+            guard !path.isEmpty, path != "/", !Router.samePath(path, home),
+                  !result.contains(where: { Router.samePath($0.path, path) }) else { return }
+            result.append(Project(name: name, path: path))
+        }
+        for (key, target) in owners.sorted(by: { $0.key < $1.key }) {
+            guard let entry = claude.first(where: { $0.hostSessionId == target || $0.sessionId == target }),
+                  let folder = entry.cwd else { continue }
+            add(name: key, path: folder)
+        }
+        for session in live { add(name: URL(fileURLWithPath: session.cwd).lastPathComponent, path: session.cwd) }
+        // Shortest folder first, and a folder inside one already listed (a worktree of a repo) is skipped.
+        let folders = claude.compactMap(\.cwd).sorted { $0.count < $1.count }
+        for folder in folders {
+            let inside = result.contains { Router.canonical(folder).hasPrefix(Router.canonical($0.path) + "/") }
+            if !inside { add(name: URL(fileURLWithPath: folder).lastPathComponent, path: folder) }
         }
         return result
     }
 
     /// The project's name for an item's path; the folder name when it is not a known project.
     static func name(for path: String) -> String {
-        known().first { Router.samePath($0.path, path) }?.name ?? URL(fileURLWithPath: path).lastPathComponent
+        known(claude: [], owners: [:]).first { Router.samePath($0.path, path) }?.name ?? URL(fileURLWithPath: path).lastPathComponent
     }
 
     /// The live sessions as projects (one per folder), for the picker.
@@ -161,25 +181,28 @@ enum Projects {
     }
 
     /// After the user picked a project for a recording: remember its host:port (or window title) for next time.
-    static func learn(from directory: URL, project: Project) {
+    /// The Claude app itself (host claude.ai, window titled "Claude") is never learned: it belongs to every project.
+    static func learn(from directory: URL, project: Project, file projectsFile: URL = file) {
         guard let data = try? Data(contentsOf: directory.appendingPathComponent("events.json")),
               let events = try? JSONDecoder.iso.decode(SessionEvents.self, from: data) else { return }
-        var projects = load()
+        var projects = load(from: projectsFile)
         var index = projects.firstIndex { Router.samePath($0.path, project.path) }
         if index == nil {
             projects.append(Project(name: project.name, path: project.path, aliases: project.aliases))
             index = projects.count - 1
         }
-        let urls = events.points.compactMap(\.url)
+        let urls = events.points.compactMap(\.url).filter { url in
+            !(Router.hostAndPort(url).map { Router.isClaudeAppHost($0) } ?? false)
+        }
         if urls.isEmpty {
-            if let title = events.points.compactMap(\.window).first(where: { !$0.isEmpty }),
+            if let title = events.points.compactMap(\.window).first(where: { !$0.isEmpty && !Router.isClaudeAppWindow($0) }),
                !projects[index!].titles.contains(title) { projects[index!].titles.append(title) }
         } else {
             for host in urls.compactMap({ Router.hostAndPort($0) }) where Router.isDevelopmentHost(host) {
                 if !projects[index!].hosts.contains(host) { projects[index!].hosts.append(host) }
             }
         }
-        save(projects)
+        save(projects, to: projectsFile)
     }
 }
 
@@ -297,17 +320,37 @@ enum Router {
 
     static func matches(_ point: PointEvent, _ project: Project) -> Bool {
         let nameTokens = tokens(project.name)
-        if let url = point.url, let host = hostAndPort(url) {
-            let bare = host.split(separator: ":").first.map(String.init) ?? host
-            if project.hosts.contains(where: { $0.contains(":") ? $0.lowercased() == host : $0.lowercased() == bare }) { return true }
-            if containsWords(tokens(bare), nameTokens) { return true }
+        if let url = point.url {
+            if let folder = fileURLPath(url), canonical(folder).hasPrefix(canonical(project.path) + "/") { return true }
+            if let host = hostAndPort(url), !isClaudeAppHost(host) {
+                let bare = host.split(separator: ":").first.map(String.init) ?? host
+                if project.hosts.contains(where: { $0.contains(":") ? $0.lowercased() == host : $0.lowercased() == bare }) { return true }
+                if containsWords(tokens(bare), nameTokens) { return true }
+            }
         }
-        if let window = point.window, !window.isEmpty {
+        if let window = point.window, !window.isEmpty, !isClaudeAppWindow(window) {
             if containsWords(tokens(window), nameTokens) { return true }
             let lowered = window.lowercased()
             if project.titles.contains(where: { !$0.isEmpty && lowered.contains($0.lowercased()) }) { return true }
         }
         return false
+    }
+
+    /// True for claude.ai and any host under it (a port is ignored): the Claude app is open next to every project.
+    static func isClaudeAppHost(_ hostAndPort: String) -> Bool {
+        let host = (hostAndPort.split(separator: ":").first.map(String.init) ?? hostAndPort).lowercased()
+        return host == "claude.ai" || host.hasSuffix(".claude.ai")
+    }
+
+    /// True for a window titled exactly "Claude" (any case, spaces around ignored).
+    static func isClaudeAppWindow(_ title: String) -> Bool {
+        title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "claude"
+    }
+
+    /// The file path of a file:// URL; nil for any other URL.
+    static func fileURLPath(_ url: String) -> String? {
+        guard url.lowercased().hasPrefix("file://"), let path = URL(string: url)?.path, !path.isEmpty else { return nil }
+        return path
     }
 
     /// "localhost:3000" or "app.example.com" for a URL; nil when it has no host.
@@ -412,8 +455,8 @@ enum Router {
         var votes: [Int: Int] = [:]
         for point in points {
             var texts: [String] = []
-            if let window = point.window, !window.isEmpty { texts.append(compact(window)) }
-            if let url = point.url, let host = hostAndPort(url) {
+            if let window = point.window, !window.isEmpty, !isClaudeAppWindow(window) { texts.append(compact(window)) }
+            if let url = point.url, let host = hostAndPort(url), !isClaudeAppHost(host) {
                 texts.append(compact(host.split(separator: ":").first.map(String.init) ?? host))
             }
             guard !texts.isEmpty else { continue }
